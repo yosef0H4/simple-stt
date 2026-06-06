@@ -398,7 +398,7 @@ fn rms_level(frame: &[i16]) -> f32 {
         })
         .sum::<f32>();
     let rms = (sum / frame.len() as f32).sqrt();
-    (rms * 14.0).powf(0.72).clamp(0.0, 1.0)
+    (rms * 22.0).powf(0.62).clamp(0.0, 1.0)
 }
 
 fn config_mtime() -> Option<std::time::SystemTime> {

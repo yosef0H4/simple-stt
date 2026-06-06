@@ -1566,7 +1566,17 @@ dependencies = [
  "log",
  "slotmap",
  "tinyvec",
- "ttf-parser",
+ "ttf-parser 0.25.1",
+]
+
+[[package]]
+name = "fontdue"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e57e16b3fe8ff4364c0661fdaac543fb38b29ea9bc9c2f45612d90adf931d2b"
+dependencies = [
+ "hashbrown 0.15.5",
+ "ttf-parser 0.21.1",
 ]
 
 [[package]]
@@ -1956,6 +1966,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash 0.1.5",
 ]
 
@@ -2938,6 +2950,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
+name = "lock_api"
+version = "0.4.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "224399e74b87b5f3557511d98dff8b14089b3dadafcab6bb93eab67d3aace965"
+dependencies = [
+ "scopeguard",
+]
+
+[[package]]
 name = "log"
 version = "0.4.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3763,7 +3784,7 @@ version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
 dependencies = [
- "ttf-parser",
+ "ttf-parser 0.25.1",
 ]
 
 [[package]]
@@ -3771,6 +3792,29 @@ name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f38d5652c16fde515bb1ecef450ab0f6a219d619a7274976324d5e377f7dceba"
+
+[[package]]
+name = "parking_lot"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93857453250e3077bd71ff98b6a65ea6621a19bb0f559a85248955ac12c45a1a"
+dependencies = [
+ "lock_api",
+ "parking_lot_core",
+]
+
+[[package]]
+name = "parking_lot_core"
+version = "0.9.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2621685985a2ebf1c516881c026032ac7deafcda1a2c9b7850dc81e3dfcb64c1"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "redox_syscall 0.5.18",
+ "smallvec",
+ "windows-link 0.2.1",
+]
 
 [[package]]
 name = "parlance"
@@ -3994,6 +4038,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd00f0bb2e90d81d1044c2b32617f68fcb9fa3bb7640c23e9c748e53fb30934"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "procmod-overlay"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b98e636ed5fc897aeb758c64369d3141ed53779c8f72d2b2a4d10873c1ad987"
+dependencies = [
+ "fontdue",
+ "thiserror 2.0.18",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -4549,7 +4604,7 @@ dependencies = [
  "core_maths",
  "log",
  "smallvec",
- "ttf-parser",
+ "ttf-parser 0.25.1",
  "unicode-bidi-mirroring",
  "unicode-ccc",
  "unicode-properties",
@@ -5532,6 +5587,12 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "ttf-parser"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c591d83f69777866b9126b24c6dd9a18351f177e49d625920d19f989fd31cf8"
+
+[[package]]
+name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
@@ -5689,7 +5750,7 @@ dependencies = [
  "strict-num",
  "svgtypes",
  "tiny-skia-path 0.12.0",
- "ttf-parser",
+ "ttf-parser 0.25.1",
  "unicode-bidi",
  "unicode-script",
  "unicode-vo",
@@ -5731,6 +5792,7 @@ dependencies = [
  "dirs",
  "image",
  "libloading",
+ "procmod-overlay",
  "raw-window-handle",
  "reqwest",
  "serde",
@@ -5740,6 +5802,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "tracing-subscriber",
+ "windows-capture",
  "windows-sys 0.60.2",
 ]
 
@@ -6139,6 +6202,19 @@ dependencies = [
  "windows-core 0.62.2",
  "windows-future 0.3.2",
  "windows-numerics 0.3.1",
+]
+
+[[package]]
+name = "windows-capture"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f9460c7b82f6b7d314d85b45610481f26a1159a42dadf1e13a329041553e060"
+dependencies = [
+ "parking_lot",
+ "rayon",
+ "thiserror 2.0.18",
+ "windows 0.62.2",
+ "windows-future 0.3.2",
 ]
 
 [[package]]

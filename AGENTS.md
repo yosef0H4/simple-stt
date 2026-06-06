@@ -24,6 +24,8 @@ Do not add random delays, fake mistakes, or anti-detection behavior. Fixed confi
 
 Never create a git commit unless the user's latest message explicitly asks for a commit.
 
+After every code change, run a build/verification step immediately and fix any issue introduced before continuing. The minimum default loop is `cargo check -p uvox`; use broader verification such as `cargo test -p uvox`, scripts, or manual smoke tests when the change touches those surfaces.
+
 ## First Debugging Commands
 
 Run in this order:
@@ -51,7 +53,7 @@ cargo run -p uvox -- run
 | `rust/src/config.rs` | native-only settings and runtime path validation |
 | `rust/src/gui.rs` | Slint settings window and non-blocking UI callbacks |
 | `rust/src/tray.rs` | notification-area icon and tray menu |
-| `rust/src/overlay.rs` | Slint click-through recording visualizer |
+| `rust/src/overlay.rs` | native layered Win32 click-through recording visualizer |
 | `rust/src/screenshots.rs` | real Slint PNG UI screenshots |
 
 ## Runtime Invariants
@@ -77,4 +79,4 @@ cargo run -p uvox -- ui-screenshot --surface settings --section logging --output
 cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
 ```
 
-Inspect the PNGs, adjust layout/colors/sizing, and repeat until the settings window and overlay are readable and not cramped. Then run `cargo check -p uvox` and `cargo test -p uvox`.
+Inspect the PNGs, adjust layout/colors/sizing, and repeat until the settings window and overlay are readable and not cramped. After each edit, run `cargo check -p uvox` right away and fix any breakage before moving on. Finish with `cargo test -p uvox`.
