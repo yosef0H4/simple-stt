@@ -138,6 +138,16 @@ impl WorkerHandle {
         self.send_json(&json!({"type":"start","session_id":session_id}))
     }
 
+    pub fn start_recording(&self, session_id: u64) -> Result<()> {
+        tracing::debug!(session_id, "sending worker recording start");
+        self.send_json(&json!({"type":"transcribe_recording","session_id":session_id}))
+    }
+
+    pub fn finish_recording(&self, session_id: u64) -> Result<()> {
+        tracing::debug!(session_id, "sending worker recording finish");
+        self.send_json(&json!({"type":"finish_recording","session_id":session_id}))
+    }
+
     pub fn cancel_session(&self, session_id: u64) -> Result<()> {
         tracing::debug!(session_id, "sending worker cancel");
         self.send_json(&json!({"type":"cancel","session_id":session_id}))

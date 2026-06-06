@@ -12,6 +12,8 @@ from .constants import EXPECTED_SAMPLE_WORDS, MODEL_NAME
 from .cuda import inspect_cuda, require_cuda
 from .errors import UvoxError
 from .nemotron import NemotronStreamingRecognizer, StreamingConfig, transcribe_file
+from .parakeet import MODEL_NAME as PARAKEET_MODEL_NAME
+from .parakeet import transcribe_file as transcribe_parakeet_file
 from .sample import fetch_sample
 from .server import ServerConfig, serve
 
@@ -88,6 +90,18 @@ def command_stream_file_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_parakeet_file_test(args: argparse.Namespace) -> int:
+    require_cuda()
+    path = Path(args.audio) if args.audio else fetch_sample()
+    validate_nemotron_wav(path)
+    text = transcribe_parakeet_file(path, model_name=args.model)
+    if args.json:
+        print("UVOX_TRANSCRIPT_JSON " + json.dumps({"text": text}, ensure_ascii=False))
+    else:
+        print(text)
+    return 0
+
+
 def command_serve(args: argparse.Namespace) -> int:
     if args.backend != "echo":
         require_cuda()
@@ -126,11 +140,17 @@ def build_parser() -> argparse.ArgumentParser:
     stream.add_argument("--lookahead-ms", type=int, default=80)
     stream.set_defaults(func=command_stream_file_test)
 
+    parakeet = sub.add_parser("parakeet-file-test", help="Whole-file Parakeet CUDA transcription test")
+    parakeet.add_argument("--audio")
+    parakeet.add_argument("--model", default=PARAKEET_MODEL_NAME)
+    parakeet.add_argument("--json", action="store_true")
+    parakeet.set_defaults(func=command_parakeet_file_test)
+
     server = sub.add_parser("serve", help="Connect back to the Rust manager and serve live ASR")
     server.add_argument("--connect", required=True)
     server.add_argument("--token", required=True)
     server.add_argument("--lookahead-ms", type=int, default=80)
-    server.add_argument("--backend", choices=("nemotron", "echo"), default="nemotron")
+    server.add_argument("--backend", choices=("nemotron", "echo", "parakeet-record"), default="nemotron")
     server.set_defaults(func=command_serve)
     return parser
 

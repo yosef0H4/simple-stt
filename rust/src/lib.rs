@@ -14,4 +14,8 @@ pub mod hotkey;
 #[cfg(windows)]
 pub mod input;
 #[cfg(windows)]
+pub mod live_captions_native;
+#[cfg(windows)]
+pub mod parakeet_native;
+#[cfg(windows)]
 pub mod worker;

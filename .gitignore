@@ -16,6 +16,11 @@ logs/
 config.local.json
 *.wav
 !docs/*.wav
+!tests/fixtures/*.wav
+parakeet-windows-cuda-sm86.zip
+external/parakeet-runtime/
+external/parakeet.cpp/
+models/
 artifacts/*.tmp
 artifacts/*.err
 artifacts-*.tmp

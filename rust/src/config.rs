@@ -62,8 +62,11 @@ impl AppConfig {
             "lookahead_ms must be 0, 80, 480, or 1040"
         );
         anyhow::ensure!(
-            matches!(self.worker_backend.as_str(), "nemotron" | "echo"),
-            "worker_backend must be nemotron or echo"
+            matches!(
+                self.worker_backend.as_str(),
+                "nemotron" | "echo" | "parakeet-record"
+            ),
+            "worker_backend must be nemotron, echo, or parakeet-record"
         );
         Ok(())
     }
