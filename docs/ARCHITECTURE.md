@@ -1,63 +1,39 @@
 # Architecture
 
-## Design goals
+## Design Goals
 
 - Record immediately on CapsLock down.
-- Reuse a warm model when available.
-- Free model RAM and VRAM after an idle timeout.
-- Reject CPU-only execution instead of silently becoming slow.
-- Keep the desktop manager native and lightweight.
-- Make failures easy to isolate through CLI commands.
+- Transcribe only after CapsLock release.
+- Reuse a warm native Parakeet engine when available.
+- Free model memory after an idle timeout.
+- Reject missing CUDA/runtime files clearly.
+- Keep the app native Rust without Python or C# helpers.
 
-## Rust process
+## Runtime Flow
 
-Rust owns all latency-sensitive desktop integration:
+Rust owns the full product path:
 
 - low-level CapsLock hook;
 - foreground-window tracking;
 - microphone capture through CPAL;
-- stereo downmix, gain, linear conversion to 16 kHz mono PCM16;
-- bounded cold-start audio ring buffer;
-- Python worker process lifecycle;
-- authenticated loopback TCP connection;
-- fixed-rate Unicode `SendInput` queue;
-- native Win32 settings UI.
+- stereo downmix, gain, and 16 kHz mono PCM16 resampling;
+- completed recording buffer;
+- native `parakeet.dll` loading through `libloading`;
+- fixed-rate Unicode `SendInput` queue.
 
-The Rust process does not perform ML inference.
+On CapsLock down, Rust starts a new recording and loads Parakeet if needed. Audio frames continue to accumulate while the model loads. On CapsLock release, Rust sends the complete clip to the native C API, then types the transcript only if the foreground window still matches the original target.
 
-## Python process
+## Runtime Artifact
 
-The Python worker is disposable and CUDA-only. It owns:
+The CUDA runtime and model are local ignored artifacts:
 
-- CUDA validation through `torch.cuda.is_available()`;
-- NeMo and Nemotron loading;
-- encoder cache state;
-- pre-encode feature cache;
-- chunk accumulation;
-- partial hypotheses;
-- conservative stable-prefix commits.
+```text
+external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll
+external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
+```
 
-The worker is spawned on first dictation and killed after the configured idle timeout.
+Config may override these paths. Missing files are treated as configuration errors.
 
-## Why a ring buffer exists
+## Cancellation and Focus
 
-Loading PyTorch, NeMo, CUDA libraries, and a 600M-parameter model cannot be made instantaneous. The Rust audio callback begins producing 20 ms PCM frames immediately and retains a bounded recent history until the worker reports `ready`. Rust then starts the session and drains the saved frames to Python.
-
-## Cancellation rule
-
-CapsLock release is authoritative:
-
-1. clear Rust session state;
-2. cancel the Rust text sender through shared cancellation state;
-3. send `cancel` to Python if connected;
-4. ignore late events because their session ID no longer matches.
-
-The live path deliberately does not flush a final tail after release.
-
-## Future work
-
-- Add a small partial-transcript overlay.
-- Add a tray icon using native Win32 controls.
-- Persist latency metrics.
-- Add a release installer.
-- Consider named pipes after the loopback TCP implementation is proven stable.
+CapsLock release ends recording and starts transcription. The resulting text is typed only for that recording's session and only into the original focused window. If focus changes, the queued text is cancelled.

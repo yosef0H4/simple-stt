@@ -1,27 +1,35 @@
 # Third-party notices
 
-## NVIDIA NeMo notebook adaptation
+## Native Parakeet runtime
 
-`worker/src/uvox_worker/nemotron.py` adapts the stateful cache-aware streaming approach demonstrated in NVIDIA NeMo's `Online_ASR_Microphone_Demo_Cache_Aware_Streaming.ipynb` notebook:
+Uvox dynamically loads a local native Parakeet CUDA runtime from:
 
-- https://github.com/NVIDIA-NeMo/NeMo/blob/main/tutorials/asr/Online_ASR_Microphone_Demo_Cache_Aware_Streaming.ipynb
+```text
+external\parakeet-runtime\parakeet-windows-cuda
+```
 
-The upstream NeMo repository and notebook are Apache License 2.0 licensed. The adaptation keeps the same essential sequence: configure lookahead, initialize encoder caches, build a streaming preprocessor, retain pre-encode feature cache, and call `conformer_stream_step` for each non-overlapping chunk.
+That runtime bundle is a local artifact and is intentionally not committed to git. Preserve the runtime's own license and notice files when redistributing it.
 
-The project-level GPL-2.0-only license remains applicable to this repository's combined source distribution. Preserve this notice when redistributing modified versions.
+## NVIDIA Parakeet model
 
-## NVIDIA Nemotron model
+The default model path is:
 
-The project downloads and runs `nvidia/nemotron-speech-streaming-en-0.6b` at runtime. Model usage is governed by NVIDIA's Open Model License Agreement, linked from the model card:
+```text
+external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
+```
 
-- https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b
-
-The model weights are not bundled in this repository archive.
+Model usage is governed by the model publisher's terms. The model file is not committed to this repository.
 
 ## Public sample audio
 
-The CLI smoke test downloads the small NeMo sample file used in NVIDIA NeMo examples and discussions:
+The retained smoke-test fixture is based on the public LibriSpeech sample:
 
-- https://dldata-public.s3.us-east-2.amazonaws.com/2086-149220-0033.wav
+```text
+tests\fixtures\parakeet-smoke.wav
+```
 
-The sample is cached locally and is not bundled in this archive.
+Expected transcript anchor:
+
+```text
+Well, I don't wish to see it any more
+```

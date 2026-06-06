@@ -1,77 +1,43 @@
-# Debugging guide
+# Debugging
 
-## 1. Fast tests without CUDA
-
-```powershell
-.\scripts\python-unit-tests.ps1
-cargo test --workspace
-```
-
-Python tests cover CUDA rejection with fakes, audio validation, cached download behavior, protocol framing, session cancellation, stable-prefix commits, and an echo-server round trip.
-
-Rust tests cover JSON and PCM framing, config serialization, resampling, PCM assembly, focus gating, and immediate cancellation of a queued text send.
-
-## 2. CUDA and NeMo environment
+## Fast Checks
 
 ```powershell
-.\scripts\setup-worker.ps1
-.\scripts\doctor.ps1
-```
-
-The expected production behavior is rejection when `torch.cuda.is_available()` is false. Do not add a CPU fallback.
-
-## 3. Whole-file model test
-
-```powershell
-cd worker
-uv run --no-sync uvox-worker smoke-test
-```
-
-This downloads a known public sample once and calls NeMo's ordinary whole-file `transcribe()` API. If this fails, debug the CUDA or NeMo environment before debugging live streaming.
-
-## 4. Cache-aware streaming file test
-
-```powershell
-cd worker
-uv run --no-sync uvox-worker stream-file-test --lookahead-ms 80
-```
-
-This uses the same stateful `conformer_stream_step` path as live microphone input, but feeds a deterministic WAV file.
-
-## 5. Rust microphone path
-
-```powershell
+.\scripts\check-prereqs.ps1
+.\scripts\test-audio.ps1
+cargo test -p uvox
 cargo run -p uvox -- list-inputs
-cargo run -p uvox -- record-test --seconds 5 --output recording-test.wav
 ```
 
-Listen to the generated WAV or inspect it with an audio editor. It should be mono PCM16 at 16 kHz.
+## Audio File Test
 
-## 6. Rust text sender
+Run:
 
 ```powershell
-cargo run -p uvox -- type-test "Uvox literal Unicode typing test: héllo world."
+cargo run -p uvox -- transcribe-file --audio tests\fixtures\parakeet-smoke.wav
 ```
 
-Focus Notepad during the two-second delay. Some restricted or elevated apps can reject injected input by design.
-
-## 7. Live app
-
-```powershell
-$env:RUST_LOG="uvox=debug"
-cargo run -p uvox -- run
-```
-
-Hold CapsLock, speak, then release. Review logs for:
+Expected transcript anchor:
 
 ```text
-microphone capture started
-starting CUDA worker
-CUDA worker is loading Nemotron
-CUDA worker is ready
-partial transcript
+Well, I don't wish to see it any more
 ```
 
-## Echo backend
+The Parakeet runtime should log CUDA device selection. If the runtime or model is missing, fix `parakeet_runtime_dir` or `parakeet_model_path` in config.
 
-For desktop-flow debugging without CUDA, set `worker_backend` to `echo` in the JSON config or settings GUI. This is a development-only backend; production defaults to `nemotron`.
+## Live App Test
+
+Run:
+
+```powershell
+.\scripts\run.ps1
+```
+
+Focus a normal text box, hold CapsLock while speaking, release CapsLock, and wait for the transcript to type. Use `RUST_LOG=uvox=debug` for detailed recording, loading, transcription, focus, and idle-unload logs.
+
+## Common Failures
+
+- Missing `parakeet.dll`: extract the native runtime bundle to the expected `external` path.
+- Missing model: verify `tdt_ctc-110m-f16.gguf` exists under the runtime `models` directory.
+- No typing: make sure the target app accepts `SendInput` and is not elevated above Uvox.
+- Wrong microphone: run `cargo run -p uvox -- list-inputs`, then set `audio_device_contains`.

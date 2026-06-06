@@ -1,23 +1,24 @@
-UVOX STT — START HERE
+UVOX STT - START HERE
 =====================
 
 Target: Windows 10+ with an NVIDIA CUDA-capable GPU.
 
-1. Install Git, Rust stable/Cargo, and Astral uv.
-2. Open PowerShell in this folder.
-3. Run:
+1. Install Rust stable/Cargo and a current NVIDIA driver.
+2. Extract the native Parakeet runtime to:
 
-   .\scripts\first-test.ps1
+   external\parakeet-runtime\parakeet-windows-cuda
 
-This is the first test to run. It installs the Python worker environment, rejects
-CPU-only machines, downloads a small public WAV once, performs whole-file
-Nemotron STT, then exercises the cache-aware streaming path.
+3. Open PowerShell in this folder.
+4. Run:
 
-After it passes:
+   .\scripts\check-prereqs.ps1
+   .\scripts\test-audio.ps1
 
-   .\scripts\run-dev.ps1
+After the audio test passes:
 
-Hold CapsLock while speaking. Release CapsLock to abort the unfinished tail.
+   .\scripts\run.ps1
+
+Hold CapsLock while speaking. Release CapsLock to transcribe and type.
 
 More details: README.md
 Agent entrypoint: AGENTS.md

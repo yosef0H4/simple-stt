@@ -2,18 +2,20 @@
 
 Read `AGENTS.md` first.
 
-Keep changes narrow and testable. Add or update unit tests when changing protocol, cancellation, resampling, config, or stabilization behavior.
+Keep changes narrow and testable. Add or update unit tests when changing config, resampling, text insertion, hotkey state, or the native Parakeet FFI boundary.
 
 Run:
 
 ```powershell
-.\scripts\test-all.ps1
+.\scripts\check-prereqs.ps1
+.\scripts\test-audio.ps1
+cargo test -p uvox
 ```
 
-When changing the real model path, also run:
+For app behavior changes, also manually run:
 
 ```powershell
-.\scripts\first-test.ps1
+.\scripts\run.ps1
 ```
 
-Do not introduce CPU fallback, browser-based GUI frameworks, random anti-detection timing, or hidden behavior intended to bypass target application restrictions.
+Do not introduce CPU fallback, Python/C# helper processes, browser-based GUI frameworks, random anti-detection timing, or hidden behavior intended to bypass target application restrictions.

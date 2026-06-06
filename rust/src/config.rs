@@ -9,13 +9,10 @@ pub struct AppConfig {
     pub idle_timeout_secs: u64,
     pub typing_interval_ms: u64,
     pub typing_chunk_chars: usize,
-    pub ring_buffer_secs: usize,
     pub audio_gain: f32,
     pub audio_device_contains: String,
-    pub lookahead_ms: u32,
-    pub python_executable: String,
-    pub worker_dir: String,
-    pub worker_backend: String,
+    pub parakeet_runtime_dir: String,
+    pub parakeet_model_path: String,
 }
 
 impl Default for AppConfig {
@@ -24,13 +21,12 @@ impl Default for AppConfig {
             idle_timeout_secs: 180,
             typing_interval_ms: 20,
             typing_chunk_chars: 3,
-            ring_buffer_secs: 8,
             audio_gain: 1.0,
             audio_device_contains: String::new(),
-            lookahead_ms: 80,
-            python_executable: r"worker\.venv\Scripts\python.exe".to_owned(),
-            worker_dir: "worker".to_owned(),
-            worker_backend: "nemotron".to_owned(),
+            parakeet_runtime_dir: r"external\parakeet-runtime\parakeet-windows-cuda".to_owned(),
+            parakeet_model_path:
+                r"external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf"
+                    .to_owned(),
         }
     }
 }
@@ -50,23 +46,40 @@ impl AppConfig {
             "typing_chunk_chars must be positive"
         );
         anyhow::ensure!(
-            self.ring_buffer_secs > 0,
-            "ring_buffer_secs must be positive"
-        );
-        anyhow::ensure!(
             self.audio_gain > 0.0 && self.audio_gain <= 10.0,
             "audio_gain must be in (0, 10]"
         );
         anyhow::ensure!(
-            [0, 80, 480, 1040].contains(&self.lookahead_ms),
-            "lookahead_ms must be 0, 80, 480, or 1040"
+            !self.parakeet_runtime_dir.trim().is_empty(),
+            "parakeet_runtime_dir must not be empty"
         );
         anyhow::ensure!(
-            matches!(
-                self.worker_backend.as_str(),
-                "nemotron" | "echo" | "parakeet-record"
-            ),
-            "worker_backend must be nemotron, echo, or parakeet-record"
+            !self.parakeet_model_path.trim().is_empty(),
+            "parakeet_model_path must not be empty"
+        );
+        Ok(())
+    }
+
+    pub fn validate_parakeet_files(&self) -> Result<()> {
+        let runtime = self.parakeet_runtime_dir_path();
+        anyhow::ensure!(
+            runtime.exists(),
+            "Parakeet runtime is missing: {}",
+            runtime.display()
+        );
+        let bin = runtime.join("bin");
+        anyhow::ensure!(
+            bin.exists(),
+            "Parakeet bin directory is missing: {}",
+            bin.display()
+        );
+        let dll = bin.join("parakeet.dll");
+        anyhow::ensure!(dll.exists(), "Parakeet DLL is missing: {}", dll.display());
+        let model = self.parakeet_model_path();
+        anyhow::ensure!(
+            model.exists(),
+            "Parakeet GGUF model is missing: {}",
+            model.display()
         );
         Ok(())
     }
@@ -120,6 +133,14 @@ impl AppConfig {
         } else {
             repo_root().join(path)
         }
+    }
+
+    pub fn parakeet_runtime_dir_path(&self) -> PathBuf {
+        self.resolve_from_repo(&self.parakeet_runtime_dir)
+    }
+
+    pub fn parakeet_model_path(&self) -> PathBuf {
+        self.resolve_from_repo(&self.parakeet_model_path)
     }
 }
 

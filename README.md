@@ -1,168 +1,105 @@
 # Uvox STT
 
-A lightweight, Windows-first, open-source push-to-talk dictation prototype.
+Uvox is a lightweight Windows dictation utility built around native Rust desktop integration and a local CUDA Parakeet runtime.
 
-Hold **CapsLock** to record. The Rust manager starts recording immediately, launches a CUDA-only Python worker when needed, buffers early microphone frames during cold startup, receives stable transcript commits, and inserts literal Unicode text into the focused application at a fixed configurable cadence. Releasing CapsLock cancels the current session immediately and discards any late transcript tail.
+Hold **CapsLock** to record. Release **CapsLock** to transcribe the completed clip with native Parakeet and type the result into the original focused application.
 
-The project intentionally does **not** attempt to disguise synthetic input or bypass application restrictions. Text pacing is fixed and configurable for usability and compatibility with normal text fields.
+Uvox does not try to bypass applications that reject injected input. Text is inserted with normal Win32 Unicode `SendInput` events at a fixed configurable pace.
 
-## Status
-
-This repository is a complete first implementation intended for testing on Windows with an NVIDIA CUDA GPU. The Python worker unit tests are runnable without CUDA. The real Nemotron integration commands deliberately fail if `torch.cuda.is_available()` is false.
-
-The Rust source is included in full, but the generated archive was assembled in an environment without a Rust toolchain or NVIDIA GPU. Run the provided PowerShell tests on a Windows CUDA machine before treating it as production-ready.
-
-## Architecture
+## Current Design
 
 ```text
-CapsLock hook ───────┐
-                     ▼
-Rust manager ── microphone capture ── 16 kHz mono ring buffer
-     │                                      │
-     │ loopback TCP binary IPC              │ PCM16 frames
-     ▼                                      ▼
-Python worker ── CUDA-only NeMo ── Nemotron cache-aware streaming RNNT
-     │
-     ├── partial hypothesis ── logs / future overlay
-     └── conservative stable-prefix commit
-                         │
-                         ▼
-Rust fixed-rate Unicode sender ── focused normal text field
+CapsLock down
+→ Rust records microphone audio immediately
+→ native Parakeet CUDA runtime loads or is reused
+→ CapsLock release stops recording
+→ completed 16 kHz mono PCM16 clip is transcribed
+→ Rust types the transcript into the original focused app
+→ idle timeout unloads Parakeet to free memory
 ```
 
-The model worker is disposable: Rust unloads it after an idle timeout to free RAM and VRAM. The Rust process remains resident and lightweight.
+There is no Python worker, C# helper, browser shell, live translation, or live partial transcription path.
 
 ## Prerequisites
 
-Use Windows 10 or newer with:
+- Windows 10 or newer
+- NVIDIA CUDA-capable GPU and current NVIDIA driver
+- Rust stable with Cargo
+- PowerShell
+- The local native Parakeet runtime extracted at:
 
-- an NVIDIA CUDA-capable GPU and a current NVIDIA driver;
-- Git, because the current NeMo install is sourced from NVIDIA's repository;
-- Rust stable with Cargo;
-- `uv` from Astral;
-- PowerShell.
+```text
+external\parakeet-runtime\parakeet-windows-cuda
+```
 
-The Python environment uses Python 3.11 through `uv` for a conservative NeMo-compatible setup.
+Required runtime files:
 
-## First command to run
+```text
+external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll
+external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
+```
+
+The runtime bundle is intentionally ignored by git because it is large.
+
+## First Test
 
 From PowerShell at the repository root:
 
 ```powershell
-.\scripts\first-test.ps1
+.\scripts\check-prereqs.ps1
+.\scripts\test-audio.ps1
 ```
 
-That command:
+The audio smoke test uses `tests\fixtures\parakeet-smoke.wav`. A good transcript starts with:
 
-1. installs Python 3.11 through `uv` if needed;
-2. creates the worker environment and installs CUDA PyTorch from the PyTorch CUDA wheel index;
-3. rejects the device if CUDA is unavailable;
-4. downloads NVIDIA's small public 16 kHz mono sample WAV only if it is not already cached;
-5. runs a whole-file Nemotron STT smoke test;
-6. runs the stateful cache-aware streaming path on the same file.
+```text
+Well, I don't wish to see it any more
+```
 
-The cached sample is stored below `%USERPROFILE%\.cache\uvox\samples`.
+The Parakeet runtime should log that it is using CUDA.
 
-## Run the desktop prototype
+## Run
 
 ```powershell
-.\scripts\run-dev.ps1
+.\scripts\run.ps1
 ```
 
-Then hold CapsLock while speaking into a normal text box. Release CapsLock to stop immediately and discard the unfinished tail.
+Focus a normal text box, hold CapsLock while speaking, then release CapsLock to transcribe and type.
 
-Open the native Win32 settings window with:
+`scripts\run-dev.ps1` is kept as a compatibility alias for `scripts\run.ps1`.
+
+## Useful Commands
+
+```powershell
+cargo run -p uvox -- run
+cargo run -p uvox -- transcribe-file --audio tests\fixtures\parakeet-smoke.wav
+cargo run -p uvox -- list-inputs
+cargo run -p uvox -- config-show
+cargo run -p uvox -- config-reset
+cargo run -p uvox -- settings
+cargo test -p uvox
+```
+
+## Settings
+
+The config file is stored at the platform config path unless `UVOX_CONFIG` is set. It controls microphone matching, gain, typing pace, idle unload timeout, and Parakeet runtime/model paths.
+
+Open it with:
 
 ```powershell
 .\scripts\settings.ps1
 ```
 
-## Useful commands
-
-```powershell
-# Validate Rust config, CUDA, and NeMo imports
-.\scripts\doctor.ps1
-
-# List microphone input device names
-cargo run -p uvox -- list-inputs
-
-# Capture five seconds through the Rust mic/resampler path
-.\scripts\record-test.ps1
-
-# Send a literal Unicode typing test after a two-second focus delay
-.\scripts\type-test.ps1
-
-# Run Python unit tests, Ruff, and Rust tests
-.\scripts\test-all.ps1
-
-# Build release executable
-.\scripts\build-release.ps1
-```
-
-## Worker-only CLI
-
-Run these from `worker/` after setup:
-
-```powershell
-uv run --no-sync uvox-worker doctor --check-nemo
-uv run --no-sync uvox-worker fetch-sample
-uv run --no-sync uvox-worker smoke-test
-uv run --no-sync uvox-worker stream-file-test --lookahead-ms 80
-```
-
-The whole-file `smoke-test` is deliberately separate from `stream-file-test`. This makes it easier to identify whether a failure is caused by CUDA/model loading or by the stateful streaming path.
-
-## Latency settings
-
-Nemotron supports four lookahead values in this implementation:
-
-| Lookahead setting | Effective audio chunk | Trade-off |
-|---:|---:|---|
-| `0` ms | `80` ms | Lowest delay, lower accuracy |
-| `80` ms | `160` ms | Recommended starting point |
-| `480` ms | `560` ms | More context |
-| `1040` ms | `1120` ms | Highest latency, strongest context |
-
-The default is `80` ms lookahead, meaning 160 ms model chunks.
-
-## Important behavior
-
-- Rust captures the microphone immediately on CapsLock down, even while the Python worker is loading.
-- A bounded ring buffer retains recent audio during cold startup.
-- Every dictation run receives a monotonically increasing session ID.
-- Late model events from cancelled sessions are ignored.
-- Only conservative stable prefixes are typed. Revisable partial text is not injected.
-- Typing aborts if CapsLock is released or the foreground window changes.
-- The worker has no CPU fallback. CUDA rejection is intentional.
-- Text insertion uses Win32 `SendInput` with Unicode events. It cannot type into every restricted or elevated application.
-
-## Repository map
+## Repository Map
 
 ```text
-rust/                         Rust desktop manager
-worker/                       CUDA-only Python NeMo worker
-scripts/                      one-command PowerShell workflows
-docs/                         architecture, protocol, research, debugging
-.agents/skills/               coding-agent runbooks
-AGENTS.md                     coding-agent entrypoint
-THIRD_PARTY_NOTICES.md         attribution and model terms notes
+rust/                 native Windows app and Parakeet FFI
+scripts/              PowerShell launch/test helpers
+tests/fixtures/       retained audio smoke-test fixture
+docs/                 native architecture/debugging notes
+AGENTS.md             coding-agent entrypoint
+THIRD_PARTY_NOTICES.md third-party notes
 ```
-
-## Development notes
-
-Start with `AGENTS.md`. The narrowest debugging sequence is:
-
-```text
-Python unit tests
-→ worker doctor
-→ whole-file smoke test
-→ streaming file test
-→ Rust record-test
-→ Rust type-test
-→ live CapsLock run
-```
-
-See `docs/DEBUGGING.md` for failure isolation.
 
 ## License
 

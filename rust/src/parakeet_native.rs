@@ -16,17 +16,21 @@ pub struct ParakeetNative {
 }
 
 impl ParakeetNative {
-    pub fn load_default() -> Result<Self> {
-        Self::load(&default_model_path()?)
+    pub fn load_from_config(config: &crate::config::AppConfig) -> Result<Self> {
+        config.validate_parakeet_files()?;
+        Self::load(
+            &config.parakeet_runtime_dir_path(),
+            &config.parakeet_model_path(),
+        )
     }
 
-    pub fn load(model_path: &Path) -> Result<Self> {
+    pub fn load(runtime_dir: &Path, model_path: &Path) -> Result<Self> {
         anyhow::ensure!(
             model_path.exists(),
             "Parakeet GGUF model is missing: {}",
             model_path.display()
         );
-        let api = Api::load()?;
+        let api = Api::load(runtime_dir)?;
         let model = CString::new(model_path.to_string_lossy().as_bytes())
             .context("model path contains an interior NUL byte")?;
         let ctx = unsafe { (api.load)(model.as_ptr()) };
@@ -65,7 +69,9 @@ impl ParakeetNative {
             }
             return Err(anyhow!("{operation} failed: {error}"));
         }
-        let text = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
+        let text = unsafe { CStr::from_ptr(ptr) }
+            .to_string_lossy()
+            .into_owned();
         unsafe { (self.api.free_string)(ptr) };
         Ok(text.trim().to_owned())
     }
@@ -91,13 +97,13 @@ struct Api {
 }
 
 impl Api {
-    fn load() -> Result<Self> {
-        let bin = runtime_bin_dir()?;
+    fn load(runtime_dir: &Path) -> Result<Self> {
+        let bin = runtime_bin_dir(runtime_dir)?;
         configure_dll_search(&bin)?;
         let dll = bin.join("parakeet.dll");
         anyhow::ensure!(dll.exists(), "missing {}", dll.display());
-        let lib = unsafe { Library::new(&dll) }
-            .with_context(|| format!("loading {}", dll.display()))?;
+        let lib =
+            unsafe { Library::new(&dll) }.with_context(|| format!("loading {}", dll.display()))?;
         unsafe {
             Ok(Self {
                 load: sym(&lib, b"parakeet_capi_load\0")?,
@@ -116,36 +122,29 @@ unsafe fn sym<T: Copy>(lib: &Library, name: &[u8]) -> Result<T> {
     Ok(*lib.get::<T>(name)?)
 }
 
-pub fn runtime_root() -> Result<PathBuf> {
-    let root = crate::config::repo_root()
-        .join("external")
-        .join("parakeet-runtime")
-        .join("parakeet-windows-cuda");
+fn runtime_bin_dir(runtime_dir: &Path) -> Result<PathBuf> {
+    let bin = runtime_dir.join("bin");
     anyhow::ensure!(
-        root.exists(),
-        "Parakeet runtime is missing: {}",
-        root.display()
+        bin.exists(),
+        "Parakeet bin directory is missing: {}",
+        bin.display()
     );
-    Ok(root)
-}
-
-fn runtime_bin_dir() -> Result<PathBuf> {
-    let bin = runtime_root()?.join("bin");
-    anyhow::ensure!(bin.exists(), "Parakeet bin directory is missing: {}", bin.display());
     Ok(bin)
-}
-
-fn default_model_path() -> Result<PathBuf> {
-    Ok(runtime_root()?.join("models").join("tdt_ctc-110m-f16.gguf"))
 }
 
 fn configure_dll_search(bin: &Path) -> Result<()> {
     unsafe {
-        let ok = SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS);
+        let ok = SetDefaultDllDirectories(
+            LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_USER_DIRS,
+        );
         anyhow::ensure!(ok != 0, "SetDefaultDllDirectories failed");
         let wide = wide_null(&bin.to_string_lossy());
         let cookie = AddDllDirectory(wide.as_ptr());
-        anyhow::ensure!(!cookie.is_null(), "AddDllDirectory failed for {}", bin.display());
+        anyhow::ensure!(
+            !cookie.is_null(),
+            "AddDllDirectory failed for {}",
+            bin.display()
+        );
     }
     Ok(())
 }
