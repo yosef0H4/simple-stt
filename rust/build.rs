@@ -1,4 +1,5 @@
 fn main() {
+    slint_build::compile("ui/settings.slint").expect("compile Slint UI");
     #[cfg(target_os = "windows")]
     {
         println!(

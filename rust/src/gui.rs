@@ -1,49 +1,30 @@
 use anyhow::{Context, Result};
-use std::mem::zeroed;
-use std::ptr::null_mut;
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::CreateSolidBrush;
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, LoadCursorW, MessageBoxW,
-    PostQuitMessage, RegisterClassW, SetWindowTextW, ShowWindow, TranslateMessage, CS_HREDRAW,
-    CS_VREDRAW, CW_USEDEFAULT, IDC_ARROW, MB_ICONINFORMATION, MB_OK, MSG, SW_SHOW, WM_COMMAND,
-    WM_DESTROY, WNDCLASSW, WS_BORDER, WS_CHILD, WS_OVERLAPPEDWINDOW, WS_TABSTOP, WS_VISIBLE,
-};
+use crossbeam_channel::bounded;
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use std::path::Path;
+use std::thread;
+use std::time::Duration;
 
-use crate::config::AppConfig;
+use crate::config::{repo_root, AppConfig, LogLevel};
 use crate::models;
+use crate::parakeet_native::ParakeetNative;
+use crate::slint_ui::SettingsWindow;
 use crate::startup;
-use crate::winutil::{loword, rgb, wide_null};
-
-const CLASS: &str = "UvoxSettingsWindow";
-const ID_SAVE: usize = 2001;
-const ID_RESET: usize = 2002;
-const ID_TEST: usize = 2003;
-const ID_LOG: usize = 2004;
-const ID_STARTUP: usize = 2005;
-const ID_DOWNLOAD: usize = 2006;
-const ID_MODEL_COMBO: usize = 2007;
-const ID_RECORD_TEST: usize = 2008;
-const CB_ADDSTRING: u32 = 0x0143;
-const CB_GETCURSEL: u32 = 0x0147;
-const CB_GETLBTEXT: u32 = 0x0148;
-const CB_SETCURSEL: u32 = 0x014E;
-
-static mut MODEL_COMBO: HWND = null_mut();
-static mut TEST_OUTPUT: HWND = null_mut();
 
 pub fn show_settings() -> Result<()> {
-    AppConfig::load()?.save()?;
-    unsafe {
-        let hwnd = create_window()?;
-        ShowWindow(hwnd, SW_SHOW);
-        let mut message: MSG = zeroed();
-        while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
-            TranslateMessage(&message);
-            DispatchMessageW(&message);
+    let app = create_settings_window()?;
+    app.run().context("running settings window")
+}
+
+pub fn show_settings_on_event_loop() -> Result<()> {
+    slint::invoke_from_event_loop(|| {
+        if let Ok(app) = create_settings_window() {
+            if let Err(error) = app.show() {
+                tracing::error!(%error, "showing settings window failed");
+            }
         }
-    }
-    Ok(())
+    })
+    .context("opening settings on Slint event loop")
 }
 
 pub fn open_latest_log() -> Result<()> {
@@ -54,414 +35,340 @@ pub fn open_latest_log() -> Result<()> {
     Ok(())
 }
 
-unsafe fn create_window() -> Result<HWND> {
-    let class = wide_null(CLASS);
-    let wc = WNDCLASSW {
-        style: CS_HREDRAW | CS_VREDRAW,
-        lpfnWndProc: Some(wnd_proc),
-        hInstance: null_mut(),
-        hIcon: null_mut(),
-        hCursor: LoadCursorW(null_mut(), IDC_ARROW),
-        hbrBackground: CreateSolidBrush(rgb(245, 247, 250)),
-        lpszMenuName: null_mut(),
-        lpszClassName: class.as_ptr(),
-        cbClsExtra: 0,
-        cbWndExtra: 0,
-    };
-    RegisterClassW(&wc);
-    let hwnd = CreateWindowExW(
-        0,
-        class.as_ptr(),
-        wide_null("Uvox Settings").as_ptr(),
-        WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT,
-        CW_USEDEFAULT,
-        980,
-        680,
-        null_mut(),
-        null_mut(),
-        null_mut(),
-        null_mut(),
-    );
-    anyhow::ensure!(!hwnd.is_null(), "creating settings window failed");
-    build_controls(hwnd)?;
-    Ok(hwnd)
+pub fn configure_settings_for_screenshot(app: &SettingsWindow, section: Option<&str>) {
+    apply_config(app, &AppConfig::default());
+    app.set_section_index(section_index(section));
+    app.set_status_title("Ready".into());
+    app.set_status_detail("Hold CapsLock to record. Release to transcribe and type.".into());
+    app.set_microphone("Default microphone".into());
+    app.set_input_level(0.64);
+    app.set_progress_text("Model ready".into());
+    app.set_test_transcript("Well, I don't wish to see it any more...".into());
+    populate_models(app);
 }
 
-unsafe fn build_controls(hwnd: HWND) -> Result<()> {
+fn create_settings_window() -> Result<SettingsWindow> {
+    let app = SettingsWindow::new().context("creating settings window")?;
     let config = AppConfig::load()?;
-    label(hwnd, "Uvox", 28, 24, 180, 28);
-    for (idx, name) in ["General", "Audio", "Model", "Typing", "Logging", "Advanced"]
+    apply_config(&app, &config);
+    populate_models(&app);
+    wire_callbacks(&app);
+    Ok(app)
+}
+
+fn apply_config(app: &SettingsWindow, config: &AppConfig) {
+    app.set_status_title("Ready".into());
+    app.set_status_detail("Hold CapsLock to record. Release to transcribe and type.".into());
+    app.set_microphone(microphone_label(config).into());
+    app.set_active_model(model_label(config).into());
+    app.set_typing_chunk(config.typing_chunk_chars as i32);
+    app.set_typing_interval_ms(config.typing_interval_ms as i32);
+    app.set_idle_timeout_secs(config.idle_timeout_secs as i32);
+    app.set_start_with_windows(config.start_with_windows);
+    app.set_hotkey_enabled(config.hotkey_enabled);
+    app.set_log_level(log_level_name(&config.log_level).into());
+}
+
+fn populate_models(app: &SettingsWindow) {
+    let catalog = models::catalog();
+    let labels = catalog
         .iter()
-        .enumerate()
-    {
-        label(hwnd, name, 28, 82 + idx as i32 * 42, 160, 24);
-    }
-
-    label(hwnd, "Status", 240, 28, 160, 24);
-    label(
-        hwnd,
-        "Ready. Hold CapsLock to record, release to transcribe.",
-        240,
-        58,
-        620,
-        24,
-    );
-
-    label(hwnd, "Audio", 240, 110, 160, 24);
-    label(hwnd, "Microphone", 240, 142, 120, 22);
-    edit(
-        hwnd,
-        &if config.audio_device_contains.is_empty() {
-            "Default microphone".to_owned()
-        } else {
-            config.audio_device_contains.clone()
-        },
-        380,
-        138,
-        390,
-        28,
-    );
-    label(hwnd, "Input level", 240, 184, 120, 22);
-    label(
-        hwnd,
-        "[ live meter appears here while testing ]",
-        380,
-        184,
-        320,
-        22,
-    );
-    button(hwnd, "Record Test", ID_RECORD_TEST, 790, 138, 130, 32);
-
-    label(hwnd, "Model", 240, 240, 160, 24);
-    label(hwnd, "Active model", 240, 272, 120, 22);
-    edit(hwnd, &config.parakeet_model_path, 380, 268, 390, 28);
-    label(
-        hwnd,
-        "Catalog: all mudler/parakeet-cpp-gguf families; F16 recommended.",
-        380,
-        306,
-        420,
-        22,
-    );
-    button(hwnd, "Test Model", ID_TEST, 790, 268, 130, 32);
-    combo(hwnd, 380, 334, 390, 180);
-    button(hwnd, "Download Selected", ID_DOWNLOAD, 790, 334, 130, 32);
-
-    label(hwnd, "Typing", 240, 366, 160, 24);
-    label(
-        hwnd,
-        &format!("Chunk chars: {}", config.typing_chunk_chars),
-        240,
-        398,
-        180,
-        22,
-    );
-    label(
-        hwnd,
-        &format!("Interval: {} ms", config.typing_interval_ms),
-        440,
-        398,
-        180,
-        22,
-    );
-    label(
-        hwnd,
-        &format!("Unload timeout: {} sec", config.idle_timeout_secs),
-        640,
-        398,
-        220,
-        22,
-    );
-
-    label(hwnd, "Logging", 240, 462, 160, 24);
-    label(
-        hwnd,
-        &format!("Current level: {:?}", config.log_level),
-        240,
-        494,
-        250,
-        22,
-    );
-    button(hwnd, "Open Latest Log", ID_LOG, 500, 490, 150, 32);
-    label(hwnd, "Test transcript", 240, 526, 140, 22);
-    output_edit(hwnd, "", 380, 522, 540, 46);
-
-    button(hwnd, "Save", ID_SAVE, 240, 580, 110, 34);
-    button(hwnd, "Reset", ID_RESET, 366, 580, 110, 34);
-    button(
-        hwnd,
-        if config.start_with_windows {
-            "Disable Startup"
-        } else {
-            "Start with Windows"
-        },
-        ID_STARTUP,
-        492,
-        580,
-        170,
-        34,
-    );
-    Ok(())
-}
-
-unsafe extern "system" fn wnd_proc(
-    hwnd: HWND,
-    message: u32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    match message {
-        WM_COMMAND => {
-            match loword(wparam as usize) as usize {
-                ID_SAVE => {
-                    if let Ok(config) = AppConfig::load() {
-                        let _ = config.save();
-                    }
-                    info(hwnd, "Settings saved. Live Uvox will reload safe values.");
-                }
-                ID_RESET => {
-                    let _ = AppConfig::default().save();
-                    info(hwnd, "Settings reset. Reopen settings to refresh values.");
-                }
-                ID_TEST => {
-                    test_model(hwnd);
-                }
-                ID_RECORD_TEST => {
-                    record_test(hwnd);
-                }
-                ID_LOG => {
-                    let _ = open_latest_log();
-                }
-                ID_STARTUP => {
-                    if let Ok(mut config) = AppConfig::load() {
-                        config.start_with_windows = !config.start_with_windows;
-                        let _ = startup::set_start_with_windows(config.start_with_windows);
-                        let _ = config.save();
-                        info(hwnd, "Startup setting changed.");
-                    }
-                }
-                ID_DOWNLOAD => {
-                    download_recommended(hwnd);
-                }
-                _ => {}
-            }
-            0
-        }
-        WM_DESTROY => {
-            PostQuitMessage(0);
-            0
-        }
-        _ => DefWindowProcW(hwnd, message, wparam, lparam),
-    }
-}
-
-unsafe fn record_test(hwnd: HWND) {
-    let result = (|| -> Result<String> {
-        let config = AppConfig::load()?;
-        let (tx, rx) = crossbeam_channel::bounded::<Vec<i16>>(512);
-        let _capture =
-            crate::audio::start_capture(&config.audio_device_contains, config.audio_gain, tx)?;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        let mut samples = Vec::new();
-        while std::time::Instant::now() < deadline {
-            if let Ok(frame) = rx.recv_timeout(std::time::Duration::from_millis(100)) {
-                samples.extend_from_slice(&frame);
-            }
-        }
-        let engine = crate::parakeet_native::ParakeetNative::load_from_config(&config)?;
-        engine.transcribe_pcm16_16k(&samples)
-    })();
-    match result {
-        Ok(text) => {
-            if !TEST_OUTPUT.is_null() {
-                SetWindowTextW(TEST_OUTPUT, wide_null(&text).as_ptr());
-            }
-        }
-        Err(error) => info(hwnd, &format!("Record test failed:\n{error:#}")),
-    }
-}
-
-unsafe fn test_model(hwnd: HWND) {
-    match AppConfig::load().and_then(|config| {
-        let audio = crate::config::repo_root()
-            .join("tests")
-            .join("fixtures")
-            .join("parakeet-smoke.wav");
-        models::smoke_test_model(
-            &config.parakeet_runtime_dir_path(),
-            &config.parakeet_model_path(),
-            &audio,
-        )
-    }) {
-        Ok(text) => info(hwnd, &format!("Model test passed:\n{text}")),
-        Err(error) => info(hwnd, &format!("Model test failed:\n{error:#}")),
-    }
-}
-
-unsafe fn download_recommended(hwnd: HWND) {
-    let result = (|| -> Result<String> {
-        let mut config = AppConfig::load()?;
-        let selected = selected_model_file().unwrap_or_else(|| "tdt_ctc-110m-f16.gguf".to_owned());
-        let path = models::download_model(&selected)?;
-        let audio = crate::config::repo_root()
-            .join("tests")
-            .join("fixtures")
-            .join("parakeet-smoke.wav");
-        let text = models::smoke_test_model(&config.parakeet_runtime_dir_path(), &path, &audio)?;
-        config.parakeet_model_path = path.to_string_lossy().into_owned();
-        config.save()?;
-        Ok(text)
-    })();
-    match result {
-        Ok(text) => info(
-            hwnd,
-            &format!("Downloaded, tested, and selected recommended model:\n{text}"),
-        ),
-        Err(error) => info(hwnd, &format!("Download/test failed:\n{error:#}")),
-    }
-}
-
-unsafe fn output_edit(hwnd: HWND, text: &str, x: i32, y: i32, w: i32, h: i32) {
-    TEST_OUTPUT = CreateWindowExW(
-        WS_BORDER,
-        wide_null("EDIT").as_ptr(),
-        wide_null(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0004 | 0x0040 | 0x00200000,
-        x,
-        y,
-        w,
-        h,
-        hwnd,
-        null_mut(),
-        null_mut(),
-        null_mut(),
-    );
-}
-
-unsafe fn combo(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
-    let combo = CreateWindowExW(
-        0,
-        wide_null("COMBOBOX").as_ptr(),
-        null_mut(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | 0x0003,
-        x,
-        y,
-        w,
-        h,
-        hwnd,
-        ID_MODEL_COMBO as _,
-        null_mut(),
-        null_mut(),
-    );
-    MODEL_COMBO = combo;
-    let mut selected = 0_usize;
-    for (idx, model) in models::catalog().iter().enumerate() {
-        let suffix = if model.recommended {
-            " recommended"
-        } else {
-            ""
-        };
-        let label = format!(
-            "{} | {} | {} MB{}",
-            model.family, model.quant, model.size_mb, suffix
-        );
-        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(
-            combo,
-            CB_ADDSTRING,
-            0,
-            wide_null(&label).as_ptr() as isize,
-        );
-        if model.file == "tdt_ctc-110m-f16.gguf" {
-            selected = idx;
-        }
-    }
-    windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(combo, CB_SETCURSEL, selected, 0);
-}
-
-unsafe fn selected_model_file() -> Option<String> {
-    if MODEL_COMBO.is_null() {
-        return None;
-    }
-    let index =
-        windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(MODEL_COMBO, CB_GETCURSEL, 0, 0);
-    if index < 0 {
-        return None;
-    }
-    let mut buf = [0_u16; 256];
-    windows_sys::Win32::UI::WindowsAndMessaging::SendMessageW(
-        MODEL_COMBO,
-        CB_GETLBTEXT,
-        index as usize,
-        buf.as_mut_ptr() as isize,
-    );
-    let nul = buf
+        .map(|model| {
+            let recommendation = if model.recommended {
+                "recommended"
+            } else {
+                "optional"
+            };
+            SharedString::from(format!(
+                "{} | {} | {} MB | {}",
+                model.family, model.quant, model.size_mb, recommendation
+            ))
+        })
+        .collect::<Vec<_>>();
+    let files = catalog
         .iter()
-        .position(|value| *value == 0)
-        .unwrap_or(buf.len());
-    let label = String::from_utf16_lossy(&buf[..nul]);
-    let mut parts = label.split('|').map(str::trim);
-    let family = parts.next()?;
-    let quant = parts.next()?;
-    Some(format!("{family}-{quant}.gguf"))
+        .map(|model| SharedString::from(model.file.clone()))
+        .collect::<Vec<_>>();
+    app.set_model_labels(ModelRc::new(VecModel::from(labels)));
+    app.set_model_files(ModelRc::new(VecModel::from(files)));
+    set_selected_model_label(app);
 }
 
-unsafe fn label(hwnd: HWND, text: &str, x: i32, y: i32, w: i32, h: i32) {
-    CreateWindowExW(
-        0,
-        wide_null("STATIC").as_ptr(),
-        wide_null(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE,
-        x,
-        y,
-        w,
-        h,
-        hwnd,
-        null_mut(),
-        null_mut(),
-        null_mut(),
-    );
+fn wire_callbacks(app: &SettingsWindow) {
+    let weak = app.as_weak();
+    app.on_save_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            match save_from_window(&app) {
+                Ok(()) => set_status(&app, "Saved", "Settings were written to config.json.", ""),
+                Err(error) => set_status(&app, "Save failed", &error.to_string(), ""),
+            }
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_reset_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            let config = AppConfig::default();
+            match config.save() {
+                Ok(()) => {
+                    let _ = startup::set_start_with_windows(config.start_with_windows);
+                    apply_config(&app, &config);
+                    set_status(&app, "Reset", "Default settings were restored.", "");
+                }
+                Err(error) => set_status(&app, "Reset failed", &error.to_string(), ""),
+            }
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_open_log_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            if let Err(error) = open_latest_log() {
+                set_status(&app, "Log open failed", &error.to_string(), "");
+            }
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_model_test_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            run_background(
+                &app,
+                "Testing model",
+                move || {
+                    let config = AppConfig::load()?;
+                    let audio = fixture_audio();
+                    models::smoke_test_model(
+                        &config.parakeet_runtime_dir_path(),
+                        &config.parakeet_model_path(),
+                        &audio,
+                    )
+                },
+                weak.clone(),
+            );
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_record_test_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            run_background(
+                &app,
+                "Recording test",
+                move || record_and_transcribe_test(),
+                weak.clone(),
+            );
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_download_requested(move |index| {
+        if let Some(app) = weak.upgrade() {
+            let files = app.get_model_files();
+            let Some(file) = files.row_data(index as usize) else {
+                set_status(&app, "Download failed", "No model is selected.", "");
+                return;
+            };
+            let file = file.to_string();
+            run_background(
+                &app,
+                "Downloading model",
+                move || download_test_and_select(&file),
+                weak.clone(),
+            );
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_model_delta(move |delta| {
+        if let Some(app) = weak.upgrade() {
+            let count = app.get_model_labels().row_count() as i32;
+            if count > 0 {
+                let next = (app.get_selected_model_index() + delta).rem_euclid(count);
+                app.set_selected_model_index(next);
+                set_selected_model_label(&app);
+            }
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_typing_chunk_delta(move |delta| {
+        if let Some(app) = weak.upgrade() {
+            app.set_typing_chunk((app.get_typing_chunk() + delta).clamp(1, 20));
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_typing_interval_delta(move |delta| {
+        if let Some(app) = weak.upgrade() {
+            app.set_typing_interval_ms((app.get_typing_interval_ms() + delta).clamp(0, 200));
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_idle_timeout_delta(move |delta| {
+        if let Some(app) = weak.upgrade() {
+            app.set_idle_timeout_secs((app.get_idle_timeout_secs() + delta).clamp(10, 3600));
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_log_level_delta(move |delta| {
+        if let Some(app) = weak.upgrade() {
+            let levels = ["Minimal", "Normal", "Debug", "Extreme"];
+            let current = levels
+                .iter()
+                .position(|level| *level == app.get_log_level().as_str())
+                .unwrap_or(0) as i32;
+            let next = (current + delta).rem_euclid(levels.len() as i32) as usize;
+            app.set_log_level(levels[next].into());
+        }
+    });
 }
 
-unsafe fn edit(hwnd: HWND, text: &str, x: i32, y: i32, w: i32, h: i32) {
-    CreateWindowExW(
-        WS_BORDER,
-        wide_null("EDIT").as_ptr(),
-        wide_null(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        x,
-        y,
-        w,
-        h,
-        hwnd,
-        null_mut(),
-        null_mut(),
-        null_mut(),
-    );
+fn run_background(
+    app: &SettingsWindow,
+    title: &str,
+    work: impl FnOnce() -> Result<String> + Send + 'static,
+    weak: slint::Weak<SettingsWindow>,
+) {
+    app.set_busy(true);
+    set_status(app, title, "Working in the background.", title);
+    thread::spawn(move || {
+        let result = work();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(app) = weak.upgrade() {
+                app.set_busy(false);
+                app.set_progress_text("".into());
+                match result {
+                    Ok(text) => {
+                        app.set_test_transcript(text.clone().into());
+                        set_status(&app, "Complete", "The operation finished successfully.", "");
+                    }
+                    Err(error) => set_status(&app, "Failed", &error.to_string(), ""),
+                }
+            }
+        });
+    });
 }
 
-unsafe fn button(hwnd: HWND, text: &str, id: usize, x: i32, y: i32, w: i32, h: i32) {
-    CreateWindowExW(
-        0,
-        wide_null("BUTTON").as_ptr(),
-        wide_null(text).as_ptr(),
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-        x,
-        y,
-        w,
-        h,
-        hwnd,
-        id as _,
-        null_mut(),
-        null_mut(),
-    );
+fn save_from_window(app: &SettingsWindow) -> Result<()> {
+    let mut config = AppConfig::load()?;
+    let mic = app.get_microphone().to_string();
+    config.audio_device_contains = if mic == "Default microphone" {
+        String::new()
+    } else {
+        mic
+    };
+    config.typing_chunk_chars = app.get_typing_chunk().max(1) as usize;
+    config.typing_interval_ms = app.get_typing_interval_ms().max(0) as u64;
+    config.idle_timeout_secs = app.get_idle_timeout_secs().max(1) as u64;
+    config.start_with_windows = app.get_start_with_windows();
+    config.hotkey_enabled = app.get_hotkey_enabled();
+    config.log_level = parse_log_level(&app.get_log_level());
+    startup::set_start_with_windows(config.start_with_windows)?;
+    config.save()
 }
 
-unsafe fn info(hwnd: HWND, message: &str) {
-    MessageBoxW(
-        hwnd,
-        wide_null(message).as_ptr(),
-        wide_null("Uvox").as_ptr(),
-        MB_OK | MB_ICONINFORMATION,
+fn download_test_and_select(file: &str) -> Result<String> {
+    let model = models::download_model(file)?;
+    let mut config = AppConfig::load()?;
+    let runtime = config.parakeet_runtime_dir_path();
+    let audio = fixture_audio();
+    let transcript = models::smoke_test_model(&runtime, &model, &audio)?;
+    config.parakeet_model_path = path_for_config(&model);
+    config.save()?;
+    Ok(transcript)
+}
+
+fn record_and_transcribe_test() -> Result<String> {
+    let config = AppConfig::load()?;
+    let (tx, rx) = bounded(4096);
+    let capture =
+        crate::audio::start_capture(&config.audio_device_contains, config.audio_gain, tx)?;
+    thread::sleep(Duration::from_secs(3));
+    drop(capture);
+    let mut samples = Vec::new();
+    while let Ok(frame) = rx.try_recv() {
+        samples.extend_from_slice(&frame);
+    }
+    anyhow::ensure!(
+        samples.len() >= 8_000,
+        "record test captured too little audio"
     );
+    let engine = ParakeetNative::load_from_config(&config)?;
+    engine.transcribe_pcm16_16k(&samples)
+}
+
+fn set_status(app: &SettingsWindow, title: &str, detail: &str, progress: &str) {
+    app.set_status_title(title.into());
+    app.set_status_detail(detail.into());
+    app.set_progress_text(progress.into());
+}
+
+fn set_selected_model_label(app: &SettingsWindow) {
+    let labels = app.get_model_labels();
+    if let Some(label) = labels.row_data(app.get_selected_model_index().max(0) as usize) {
+        app.set_selected_model_label(label);
+    }
+}
+
+fn fixture_audio() -> std::path::PathBuf {
+    repo_root()
+        .join("tests")
+        .join("fixtures")
+        .join("parakeet-smoke.wav")
+}
+
+fn path_for_config(path: &Path) -> String {
+    let root = repo_root();
+    path.strip_prefix(&root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('/', "\\")
+}
+
+fn microphone_label(config: &AppConfig) -> String {
+    if config.audio_device_contains.trim().is_empty() {
+        "Default microphone".to_owned()
+    } else {
+        config.audio_device_contains.clone()
+    }
+}
+
+fn model_label(config: &AppConfig) -> String {
+    config
+        .parakeet_model_path()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| config.parakeet_model_path.clone())
+}
+
+fn log_level_name(level: &LogLevel) -> &'static str {
+    match level {
+        LogLevel::Minimal => "Minimal",
+        LogLevel::Normal => "Normal",
+        LogLevel::Debug => "Debug",
+        LogLevel::Extreme => "Extreme",
+    }
+}
+
+fn parse_log_level(value: &SharedString) -> LogLevel {
+    match value.as_str() {
+        "Normal" => LogLevel::Normal,
+        "Debug" => LogLevel::Debug,
+        "Extreme" => LogLevel::Extreme,
+        _ => LogLevel::Minimal,
+    }
+}
+
+fn section_index(section: Option<&str>) -> i32 {
+    match section.unwrap_or("general").to_ascii_lowercase().as_str() {
+        "audio" => 1,
+        "model" => 2,
+        "typing" => 3,
+        "logging" => 4,
+        "advanced" => 5,
+        _ => 0,
+    }
 }

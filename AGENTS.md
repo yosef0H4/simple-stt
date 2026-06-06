@@ -22,6 +22,8 @@ Do not add Python, C#, browser-based desktop frameworks, live translation, or li
 
 Do not add random delays, fake mistakes, or anti-detection behavior. Fixed configurable text pacing exists for normal UX and compatibility. Respect applications that reject injected input.
 
+Never create a git commit unless the user's latest message explicitly asks for a commit.
+
 ## First Debugging Commands
 
 Run in this order:
@@ -47,10 +49,10 @@ cargo run -p uvox -- run
 | `rust/src/transcript.rs` | focus-checked fixed-rate text queue |
 | `rust/src/parakeet_native.rs` | dynamic loading and C API calls for `parakeet.dll` |
 | `rust/src/config.rs` | native-only settings and runtime path validation |
-| `rust/src/gui.rs` | native Win32 settings window |
+| `rust/src/gui.rs` | Slint settings window and non-blocking UI callbacks |
 | `rust/src/tray.rs` | notification-area icon and tray menu |
-| `rust/src/overlay.rs` | click-through recording visualizer |
-| `rust/src/screenshots.rs` | agent-friendly PNG UI rendering |
+| `rust/src/overlay.rs` | Slint click-through recording visualizer |
+| `rust/src/screenshots.rs` | real Slint PNG UI screenshots |
 
 ## Runtime Invariants
 
@@ -71,6 +73,7 @@ When changing UI layout, use deterministic screenshots so agents can inspect the
 ```powershell
 cargo run -p uvox -- ui-screenshot --surface settings --section audio --output artifacts\ui-settings-audio.png
 cargo run -p uvox -- ui-screenshot --surface settings --section model --output artifacts\ui-settings-model.png
+cargo run -p uvox -- ui-screenshot --surface settings --section logging --output artifacts\ui-settings-logging.png
 cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
 ```
 

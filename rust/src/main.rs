@@ -257,11 +257,9 @@ fn run_app() -> Result<()> {
             },
             recv(tray_rx) -> message => match message {
                 Ok(TrayCommand::OpenSettings) => {
-                    std::thread::spawn(|| {
-                        if let Err(error) = uvox::gui::show_settings() {
-                            tracing::error!(%error, "settings window failed");
-                        }
-                    });
+                    if let Err(error) = uvox::gui::show_settings_on_event_loop() {
+                        tracing::error!(%error, "settings window failed");
+                    }
                 }
                 Ok(TrayCommand::ToggleHotkey) => {
                     config.hotkey_enabled = !config.hotkey_enabled;

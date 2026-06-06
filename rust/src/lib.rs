@@ -3,6 +3,7 @@ pub mod logging;
 pub mod models;
 pub mod resample;
 pub mod screenshots;
+pub mod slint_ui;
 pub mod transcript;
 pub mod winutil;
 
