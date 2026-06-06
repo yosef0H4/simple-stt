@@ -2,8 +2,12 @@ use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::mem::zeroed;
 use std::ptr::null_mut;
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -25,20 +29,25 @@ const CURSOR_OFFSET: i32 = 16;
 #[derive(Debug, Clone)]
 pub struct OverlayHandle {
     tx: Sender<OverlayCommand>,
+    latest_level: Arc<AtomicU32>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum OverlayCommand {
     Show(isize),
-    Level(f32),
     Hide,
+    Probe(Instant, Sender<Duration>),
 }
 
 impl OverlayHandle {
     pub fn spawn() -> Result<Self> {
         let (tx, rx) = unbounded::<OverlayCommand>();
-        thread::spawn(move || overlay_thread(rx));
-        Ok(Self { tx })
+        let latest_level = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
+        thread::spawn({
+            let latest_level = Arc::clone(&latest_level);
+            move || overlay_thread(rx, latest_level)
+        });
+        Ok(Self { tx, latest_level })
     }
 
     pub fn show(&self, target_window: isize) {
@@ -46,25 +55,54 @@ impl OverlayHandle {
     }
 
     pub fn set_level(&self, level: f32) {
-        let _ = self.tx.send(OverlayCommand::Level(level));
+        self.latest_level
+            .store(level.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    pub fn level_cell(&self) -> Arc<AtomicU32> {
+        Arc::clone(&self.latest_level)
     }
 
     pub fn hide(&self) {
         let _ = self.tx.send(OverlayCommand::Hide);
     }
+
+    pub fn benchmark_latency(&self, iterations: usize) -> Vec<Duration> {
+        let mut values = Vec::with_capacity(iterations);
+        for index in 0..iterations {
+            self.set_level((index % 2) as f32);
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            if self.tx.send(OverlayCommand::Probe(Instant::now(), tx)).is_err() {
+                break;
+            }
+            if let Ok(value) = rx.recv_timeout(Duration::from_secs(1)) {
+                values.push(value);
+            }
+        }
+        values
+    }
 }
 
-fn overlay_thread(rx: Receiver<OverlayCommand>) {
+fn overlay_thread(rx: Receiver<OverlayCommand>, latest_level: Arc<AtomicU32>) {
     let mut state = TooltipState::new();
     loop {
-        match rx.recv_timeout(Duration::from_millis(16)) {
-            Ok(OverlayCommand::Show(hwnd)) => state.show(hwnd),
-            Ok(OverlayCommand::Level(level)) => state.set_level(level),
-            Ok(OverlayCommand::Hide) => state.hide(),
+        let message = if state.is_visible() {
+            rx.recv_timeout(Duration::from_millis(2))
+        } else {
+            rx.recv().map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
+        };
+        match message {
+            Ok(command) => {
+                state.handle_command(command);
+                while let Ok(command) = rx.try_recv() {
+                    state.handle_command(command);
+                }
+            }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
         }
         pump_messages();
+        state.set_level(f32::from_bits(latest_level.load(Ordering::Relaxed)));
         state.tick();
     }
 }
@@ -120,10 +158,24 @@ impl TooltipState {
         }
     }
 
+    fn handle_command(&mut self, command: OverlayCommand) {
+        match command {
+            OverlayCommand::Show(hwnd) => self.show(hwnd),
+            OverlayCommand::Hide => self.hide(),
+            OverlayCommand::Probe(sent_at, tx) => {
+                let _ = tx.try_send(sent_at.elapsed());
+            }
+        }
+    }
+
     fn set_level(&mut self, level: f32) {
         if self.visible {
             self.target_level = level.clamp(0.0, 1.0);
         }
+    }
+
+    fn is_visible(&self) -> bool {
+        self.visible
     }
 
     fn hide(&mut self) {

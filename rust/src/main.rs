@@ -43,6 +43,11 @@ enum CommandKind {
         #[arg(long)]
         section: Option<String>,
     },
+    #[command(hide = true)]
+    TooltipBench {
+        #[arg(long, default_value_t = 500)]
+        iterations: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -61,6 +66,7 @@ fn main() -> Result<()> {
             output,
             section,
         } => ui_screenshot(surface, output, section.as_deref()),
+        CommandKind::TooltipBench { iterations } => tooltip_bench(iterations),
     }
 }
 
@@ -134,14 +140,18 @@ fn run_app() -> Result<()> {
         uvox::input::set_capslock_state(false);
     }
 
+    let overlay = OverlayHandle::spawn()?;
     let (audio_tx, audio_rx) = bounded::<Vec<i16>>(4096);
-    let _capture =
-        uvox::audio::start_capture(&config.audio_device_contains, config.audio_gain, audio_tx)?;
+    let _capture = uvox::audio::start_capture_with_level(
+        &config.audio_device_contains,
+        config.audio_gain,
+        audio_tx,
+        Some(overlay.level_cell()),
+    )?;
     let (hotkey_tx, hotkey_rx) = unbounded();
     let _hook = hotkey::spawn_capslock_hook(hotkey_tx)?;
     let (tray_tx, tray_rx) = unbounded();
     let tray = TrayHandle::spawn(tray_tx)?;
-    let overlay = OverlayHandle::spawn()?;
     let (exit_tx, exit_rx) = bounded::<()>(1);
     ctrlc::set_handler(move || {
         let _ = exit_tx.try_send(());
@@ -255,7 +265,6 @@ fn run_app() -> Result<()> {
             },
             recv(audio_rx) -> message => {
                 if let (Some(recording), Ok(frame)) = (&mut active, message) {
-                    overlay.set_level(rms_level(&frame));
                     recording.samples.extend_from_slice(&frame);
                     if recording.samples.len() % 16_000 == 0 {
                         tracing::debug!(
@@ -386,19 +395,33 @@ fn ui_screenshot(surface: UiSurfaceArg, output: PathBuf, section: Option<&str>) 
     Ok(())
 }
 
-fn rms_level(frame: &[i16]) -> f32 {
-    if frame.is_empty() {
-        return 0.0;
+#[cfg(windows)]
+fn tooltip_bench(iterations: usize) -> Result<()> {
+    let overlay = uvox::overlay::OverlayHandle::spawn()?;
+    overlay.show(uvox::input::foreground_window_id());
+    std::thread::sleep(Duration::from_millis(50));
+    let mut values = overlay.benchmark_latency(iterations);
+    overlay.hide();
+    values.sort();
+    if values.is_empty() {
+        anyhow::bail!("tooltip benchmark produced no samples");
     }
-    let sum = frame
-        .iter()
-        .map(|sample| {
-            let value = *sample as f32 / 32768.0;
-            value * value
-        })
-        .sum::<f32>();
-    let rms = (sum / frame.len() as f32).sqrt();
-    (rms * 22.0).powf(0.62).clamp(0.0, 1.0)
+    let micros: Vec<u128> = values.iter().map(|value| value.as_micros()).collect();
+    let percentile = |pct: f32| -> u128 {
+        let idx = ((micros.len() - 1) as f32 * pct).round() as usize;
+        micros[idx]
+    };
+    println!("samples: {}", micros.len());
+    println!("p50: {} us", percentile(0.50));
+    println!("p95: {} us", percentile(0.95));
+    println!("p99: {} us", percentile(0.99));
+    println!("max: {} us", micros[micros.len() - 1]);
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn tooltip_bench(_iterations: usize) -> Result<()> {
+    bail!("Tooltip benchmark targets Windows")
 }
 
 fn config_mtime() -> Option<std::time::SystemTime> {

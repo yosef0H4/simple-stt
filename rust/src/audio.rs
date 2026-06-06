@@ -2,7 +2,10 @@ use anyhow::{anyhow, Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream, StreamConfig};
 use crossbeam_channel::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc, Mutex,
+};
 
 use crate::resample::FrameAssembler;
 
@@ -48,6 +51,15 @@ pub fn start_capture(
     gain: f32,
     tx: Sender<Vec<i16>>,
 ) -> Result<CaptureHandle> {
+    start_capture_with_level(device_contains, gain, tx, None)
+}
+
+pub fn start_capture_with_level(
+    device_contains: &str,
+    gain: f32,
+    tx: Sender<Vec<i16>>,
+    latest_level: Option<Arc<AtomicU32>>,
+) -> Result<CaptureHandle> {
     let device = select_device(device_contains)?;
     let supported = device
         .default_input_config()
@@ -65,19 +77,37 @@ pub fn start_capture(
 
     let stream = match sample_format {
         SampleFormat::F32 => {
-            build_stream::<f32>(&device, &config, assembler, tx, error_callback, |value| {
-                value
-            })?
+            build_stream::<f32>(
+                &device,
+                &config,
+                assembler,
+                tx,
+                latest_level,
+                error_callback,
+                |value| value,
+            )?
         }
         SampleFormat::I16 => {
-            build_stream::<i16>(&device, &config, assembler, tx, error_callback, |value| {
-                value as f32 / 32768.0
-            })?
+            build_stream::<i16>(
+                &device,
+                &config,
+                assembler,
+                tx,
+                latest_level,
+                error_callback,
+                |value| value as f32 / 32768.0,
+            )?
         }
         SampleFormat::U16 => {
-            build_stream::<u16>(&device, &config, assembler, tx, error_callback, |value| {
-                (value as f32 - 32768.0) / 32768.0
-            })?
+            build_stream::<u16>(
+                &device,
+                &config,
+                assembler,
+                tx,
+                latest_level,
+                error_callback,
+                |value| (value as f32 - 32768.0) / 32768.0,
+            )?
         }
         other => return Err(anyhow!("unsupported microphone sample format: {other:?}")),
     };
@@ -90,6 +120,7 @@ fn build_stream<T>(
     config: &StreamConfig,
     assembler: Arc<Mutex<FrameAssembler>>,
     tx: Sender<Vec<i16>>,
+    latest_level: Option<Arc<AtomicU32>>,
     error_callback: impl FnMut(cpal::StreamError) + Send + 'static,
     convert: impl Fn(T) -> f32 + Send + Sync + Copy + 'static,
 ) -> Result<Stream>
@@ -101,6 +132,9 @@ where
         move |data: &[T], _| {
             let converted: Vec<f32> = data.iter().copied().map(convert).collect();
             for frame in assembler.lock().unwrap().push(&converted) {
+                if let Some(latest_level) = &latest_level {
+                    latest_level.store(rms_level(&frame).to_bits(), Ordering::Relaxed);
+                }
                 let _ = tx.try_send(frame);
             }
         },
@@ -108,4 +142,19 @@ where
         None,
     )?;
     Ok(stream)
+}
+
+pub fn rms_level(frame: &[i16]) -> f32 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    let sum = frame
+        .iter()
+        .map(|sample| {
+            let value = *sample as f32 / 32768.0;
+            value * value
+        })
+        .sum::<f32>();
+    let rms = (sum / frame.len() as f32).sqrt();
+    (rms * 22.0).powf(0.62).clamp(0.0, 1.0)
 }
