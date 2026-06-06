@@ -20,6 +20,7 @@ config.local.json
 parakeet-windows-cuda-sm86.zip
 external/parakeet-runtime/
 external/parakeet.cpp/
+external/AutoHotkey/
 models/
 artifacts/*.tmp
 artifacts/*.err
