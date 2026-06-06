@@ -1,0 +1,29 @@
+# Rust
+rust/target/
+target/
+**/target/
+# Python
+worker/.venv/
+worker/.pytest_cache/
+worker/.ruff_cache/
+worker/**/__pycache__/
+external/**/__pycache__/
+*.pyc
+# Runtime
+.cache/
+**/.cache/
+logs/
+config.local.json
+*.wav
+!docs/*.wav
+artifacts/*.tmp
+artifacts/*.err
+artifacts-*.tmp
+# Editors
+.vscode/
+.idea/
+
+# Vendored helper generated outputs
+external/windows-live-captions-stt/.git/
+external/windows-live-captions-stt/.build/
+external/windows-live-captions-stt/.venv/

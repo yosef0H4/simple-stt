@@ -1,0 +1,23 @@
+UVOX STT — START HERE
+=====================
+
+Target: Windows 10+ with an NVIDIA CUDA-capable GPU.
+
+1. Install Git, Rust stable/Cargo, and Astral uv.
+2. Open PowerShell in this folder.
+3. Run:
+
+   .\scripts\first-test.ps1
+
+This is the first test to run. It installs the Python worker environment, rejects
+CPU-only machines, downloads a small public WAV once, performs whole-file
+Nemotron STT, then exercises the cache-aware streaming path.
+
+After it passes:
+
+   .\scripts\run-dev.ps1
+
+Hold CapsLock while speaking. Release CapsLock to abort the unfinished tail.
+
+More details: README.md
+Agent entrypoint: AGENTS.md

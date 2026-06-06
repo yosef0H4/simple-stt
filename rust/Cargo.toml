@@ -1,0 +1,31 @@
+[package]
+name = "uvox"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+description = "Lightweight Windows push-to-talk manager for local CUDA Nemotron STT"
+build = "build.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+crossbeam-channel = "0.5"
+ctrlc = "3"
+dirs = "6"
+hound = "3.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+cpal = "0.17"
+windows-sys = { version = "0.60", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
