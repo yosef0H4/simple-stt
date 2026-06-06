@@ -21,6 +21,7 @@ pub enum HotkeyEvent {
 
 static EVENT_TX: OnceLock<Sender<HotkeyEvent>> = OnceLock::new();
 static CAPSLOCK_HELD: AtomicBool = AtomicBool::new(false);
+static HOTKEY_ENABLED: AtomicBool = AtomicBool::new(true);
 
 unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 {
@@ -28,6 +29,9 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         let is_caps = info.vkCode == VK_CAPITAL as u32;
         let injected = info.flags & LLKHF_INJECTED != 0;
         if is_caps && !injected {
+            if !HOTKEY_ENABLED.load(Ordering::SeqCst) {
+                return CallNextHookEx(null_mut(), code, wparam, lparam);
+            }
             let event = match wparam as u32 {
                 WM_KEYDOWN | WM_SYSKEYDOWN => {
                     if CAPSLOCK_HELD.swap(true, Ordering::SeqCst) {
@@ -54,6 +58,13 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         }
     }
     CallNextHookEx(null_mut(), code, wparam, lparam)
+}
+
+pub fn set_enabled(enabled: bool) {
+    HOTKEY_ENABLED.store(enabled, Ordering::SeqCst);
+    if !enabled {
+        CAPSLOCK_HELD.store(false, Ordering::SeqCst);
+    }
 }
 
 pub fn spawn_capslock_hook(tx: Sender<HotkeyEvent>) -> Result<thread::JoinHandle<()>> {

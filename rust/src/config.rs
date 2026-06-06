@@ -4,6 +4,32 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LogLevel {
+    Minimal,
+    Normal,
+    Debug,
+    Extreme,
+}
+
+impl Default for LogLevel {
+    fn default() -> Self {
+        Self::Minimal
+    }
+}
+
+impl LogLevel {
+    pub fn tracing_filter(&self) -> &'static str {
+        match self {
+            Self::Minimal => "uvox=warn",
+            Self::Normal => "uvox=info",
+            Self::Debug => "uvox=debug",
+            Self::Extreme => "uvox=trace",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
     pub idle_timeout_secs: u64,
@@ -13,6 +39,9 @@ pub struct AppConfig {
     pub audio_device_contains: String,
     pub parakeet_runtime_dir: String,
     pub parakeet_model_path: String,
+    pub start_with_windows: bool,
+    pub hotkey_enabled: bool,
+    pub log_level: LogLevel,
 }
 
 impl Default for AppConfig {
@@ -27,6 +56,9 @@ impl Default for AppConfig {
             parakeet_model_path:
                 r"external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf"
                     .to_owned(),
+            start_with_windows: false,
+            hotkey_enabled: true,
+            log_level: LogLevel::Minimal,
         }
     }
 }
@@ -92,6 +124,20 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("uvox")
             .join("config.json")
+    }
+
+    pub fn log_path() -> PathBuf {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("uvox")
+            .join("latest.log")
+    }
+
+    pub fn model_store_dir() -> PathBuf {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("uvox")
+            .join("models")
     }
 
     pub fn load() -> Result<Self> {

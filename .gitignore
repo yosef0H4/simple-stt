@@ -23,6 +23,7 @@ external/parakeet.cpp/
 models/
 artifacts/*.tmp
 artifacts/*.err
+artifacts/*.png
 artifacts-*.tmp
 # Editors
 .vscode/

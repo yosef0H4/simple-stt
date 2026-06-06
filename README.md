@@ -20,6 +20,8 @@ CapsLock down
 
 There is no Python worker, C# helper, browser shell, live translation, or live partial transcription path.
 
+`uvox run` is a resident tray utility. The tray menu opens settings, disables/enables the CapsLock hotkey, reloads config, opens the latest log, tests the model, and exits the app.
+
 ## Prerequisites
 
 - Windows 10 or newer
@@ -77,6 +79,7 @@ cargo run -p uvox -- list-inputs
 cargo run -p uvox -- config-show
 cargo run -p uvox -- config-reset
 cargo run -p uvox -- settings
+cargo run -p uvox -- ui-screenshot --surface settings --output artifacts\ui-settings.png
 cargo test -p uvox
 ```
 
@@ -88,6 +91,27 @@ Open it with:
 
 ```powershell
 .\scripts\settings.ps1
+```
+
+The settings window is native Win32 and organized by General, Audio, Model, Typing, Logging, and Advanced sections. It includes startup toggle support, latest-log access, a model test button, and a recommended-model download/test/select action.
+
+## Logs
+
+Uvox writes one latest-run log file and replaces it on each launch:
+
+```powershell
+cargo run -p uvox -- config-show
+```
+
+The actual log path is under the user local app-data directory as `uvox\latest.log`. Settings and tray can open it directly. Logging levels are `minimal`, `normal`, `debug`, and `extreme`.
+
+## UI Screenshots
+
+Agents can render deterministic UI screenshots while iterating on layout:
+
+```powershell
+cargo run -p uvox -- ui-screenshot --surface settings --section audio --output artifacts\ui-settings-audio.png
+cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
 ```
 
 ## Repository Map

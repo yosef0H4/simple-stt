@@ -1,7 +1,7 @@
 #[cfg(not(windows))]
 use anyhow::bail;
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use uvox::config::AppConfig;
@@ -34,13 +34,21 @@ enum CommandKind {
         #[arg(long)]
         audio: PathBuf,
     },
+    /// Save an agent-friendly PNG rendering of a UI surface.
+    UiScreenshot {
+        #[arg(long, value_enum)]
+        surface: UiSurfaceArg,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        section: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
     let cli = Cli::parse();
+    let config = AppConfig::load().ok();
+    uvox::logging::init(config.as_ref())?;
     match cli.command {
         CommandKind::Run => run_app(),
         CommandKind::Settings => show_settings(),
@@ -48,7 +56,18 @@ fn main() -> Result<()> {
         CommandKind::ConfigReset => config_reset(),
         CommandKind::ListInputs => list_inputs(),
         CommandKind::TranscribeFile { audio } => transcribe_file(audio),
+        CommandKind::UiScreenshot {
+            surface,
+            output,
+            section,
+        } => ui_screenshot(surface, output, section.as_deref()),
     }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum UiSurfaceArg {
+    Settings,
+    Overlay,
 }
 
 fn config_show() -> Result<()> {
@@ -101,18 +120,24 @@ fn run_app() -> Result<()> {
     use std::sync::Arc;
     use uvox::hotkey::{self, HotkeyEvent};
     use uvox::input::{foreground_window_id, WindowsTextSink};
+    use uvox::overlay::OverlayHandle;
     use uvox::parakeet_native::ParakeetNative;
     use uvox::transcript::Typist;
+    use uvox::tray::{TrayCommand, TrayHandle, TrayStatus};
 
-    let config = AppConfig::load()?;
+    let mut config = AppConfig::load()?;
     config.validate()?;
     config.validate_parakeet_files()?;
+    hotkey::set_enabled(config.hotkey_enabled);
 
     let (audio_tx, audio_rx) = bounded::<Vec<i16>>(4096);
     let _capture =
         uvox::audio::start_capture(&config.audio_device_contains, config.audio_gain, audio_tx)?;
     let (hotkey_tx, hotkey_rx) = unbounded();
     let _hook = hotkey::spawn_capslock_hook(hotkey_tx)?;
+    let (tray_tx, tray_rx) = unbounded();
+    let tray = TrayHandle::spawn(tray_tx)?;
+    let overlay = OverlayHandle::spawn()?;
     let (exit_tx, exit_rx) = bounded::<()>(1);
     ctrlc::set_handler(move || {
         let _ = exit_tx.try_send(());
@@ -139,9 +164,14 @@ fn run_app() -> Result<()> {
             recv(exit_rx) -> _ => break,
             recv(hotkey_rx) -> message => match message {
                 Ok(HotkeyEvent::CapsLockDown) if active.is_none() => {
+                    if !config.hotkey_enabled {
+                        continue;
+                    }
                     let session_id = next_session_id;
                     next_session_id += 1;
                     let target_window = foreground_window_id();
+                    overlay.show(target_window);
+                    tray.set_status(TrayStatus::Recording);
                     typist.begin_session(session_id);
                     active = Some(Recording {
                         session_id,
@@ -162,16 +192,20 @@ fn run_app() -> Result<()> {
                 }
                 Ok(HotkeyEvent::CapsLockUp) => {
                     if let Some(recording) = active.take() {
+                        overlay.hide();
+                        tray.set_status(TrayStatus::Transcribing);
                         let samples = recording.samples.len();
                         tracing::info!(session_id = recording.session_id, samples, "CapsLock up: transcribing");
                         if samples < 1_600 {
                             tracing::warn!(session_id = recording.session_id, samples, "ignored very short recording");
                             typist.cancel(recording.session_id);
+                            tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                             continue;
                         }
                         let Some(engine) = &parakeet else {
                             tracing::error!(session_id = recording.session_id, "Parakeet runtime was not loaded");
                             typist.cancel(recording.session_id);
+                            tray.set_status(TrayStatus::Error);
                             continue;
                         };
                         match engine.transcribe_pcm16_16k(&recording.samples) {
@@ -198,9 +232,11 @@ fn run_app() -> Result<()> {
                             Err(error) => {
                                 tracing::error!(session_id = recording.session_id, %error, "native Parakeet transcription failed");
                                 typist.cancel(recording.session_id);
+                                tray.set_status(TrayStatus::Error);
                             }
                         }
                         last_activity = Instant::now();
+                        tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                     }
                 }
                 Ok(_) => {}
@@ -208,6 +244,7 @@ fn run_app() -> Result<()> {
             },
             recv(audio_rx) -> message => {
                 if let (Some(recording), Ok(frame)) = (&mut active, message) {
+                    overlay.set_level(rms_level(&frame));
                     recording.samples.extend_from_slice(&frame);
                     if recording.samples.len() % 16_000 == 0 {
                         tracing::debug!(
@@ -217,6 +254,54 @@ fn run_app() -> Result<()> {
                         );
                     }
                 }
+            },
+            recv(tray_rx) -> message => match message {
+                Ok(TrayCommand::OpenSettings) => {
+                    std::thread::spawn(|| {
+                        if let Err(error) = uvox::gui::show_settings() {
+                            tracing::error!(%error, "settings window failed");
+                        }
+                    });
+                }
+                Ok(TrayCommand::ToggleHotkey) => {
+                    config.hotkey_enabled = !config.hotkey_enabled;
+                    hotkey::set_enabled(config.hotkey_enabled);
+                    let _ = config.save();
+                    tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
+                    tracing::info!(enabled = config.hotkey_enabled, "hotkey setting changed from tray");
+                }
+                Ok(TrayCommand::ReloadConfig) => {
+                    match AppConfig::load() {
+                        Ok(new_config) => {
+                            config = new_config;
+                            hotkey::set_enabled(config.hotkey_enabled);
+                            parakeet = None;
+                            tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
+                            tracing::info!("configuration reloaded");
+                        }
+                        Err(error) => {
+                            tray.set_status(TrayStatus::Error);
+                            tracing::error!(%error, "configuration reload failed");
+                        }
+                    }
+                }
+                Ok(TrayCommand::OpenLog) => {
+                    if let Err(error) = uvox::gui::open_latest_log() {
+                        tracing::error!(%error, "opening latest log failed");
+                    }
+                }
+                Ok(TrayCommand::TestModel) => {
+                    let audio = uvox::config::repo_root().join("tests").join("fixtures").join("parakeet-smoke.wav");
+                    match uvox::models::smoke_test_model(&config.parakeet_runtime_dir_path(), &config.parakeet_model_path(), &audio) {
+                        Ok(text) => tracing::info!(text, "tray model test passed"),
+                        Err(error) => {
+                            tray.set_status(TrayStatus::Error);
+                            tracing::error!(%error, "tray model test failed");
+                        }
+                    }
+                }
+                Ok(TrayCommand::Exit) => break,
+                Err(_) => break,
             },
             default(Duration::from_millis(100)) => {
                 if active.is_none()
@@ -233,6 +318,8 @@ fn run_app() -> Result<()> {
     if let Some(recording) = active {
         typist.cancel(recording.session_id);
     }
+    overlay.hide();
+    tray.shutdown();
     Ok(())
 }
 
@@ -255,4 +342,28 @@ fn transcribe_file(audio: PathBuf) -> Result<()> {
 #[cfg(not(windows))]
 fn transcribe_file(_audio: PathBuf) -> Result<()> {
     bail!("Native Parakeet transcription is implemented for Windows")
+}
+
+fn ui_screenshot(surface: UiSurfaceArg, output: PathBuf, section: Option<&str>) -> Result<()> {
+    let surface = match surface {
+        UiSurfaceArg::Settings => uvox::screenshots::UiSurface::Settings,
+        UiSurfaceArg::Overlay => uvox::screenshots::UiSurface::Overlay,
+    };
+    uvox::screenshots::save(surface, &output, section)?;
+    println!("Wrote {}", output.display());
+    Ok(())
+}
+
+fn rms_level(frame: &[i16]) -> f32 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    let sum = frame
+        .iter()
+        .map(|sample| {
+            let value = *sample as f32 / 32768.0;
+            value * value
+        })
+        .sum::<f32>();
+    (sum / frame.len() as f32).sqrt().min(1.0)
 }

@@ -31,6 +31,8 @@ Run in this order:
 .\scripts\test-audio.ps1
 cargo test -p uvox
 cargo run -p uvox -- list-inputs
+cargo run -p uvox -- ui-screenshot --surface settings --output artifacts\ui-settings.png
+cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
 cargo run -p uvox -- run
 ```
 
@@ -45,7 +47,10 @@ cargo run -p uvox -- run
 | `rust/src/transcript.rs` | focus-checked fixed-rate text queue |
 | `rust/src/parakeet_native.rs` | dynamic loading and C API calls for `parakeet.dll` |
 | `rust/src/config.rs` | native-only settings and runtime path validation |
-| `rust/src/gui.rs` | lightweight settings file opener |
+| `rust/src/gui.rs` | native Win32 settings window |
+| `rust/src/tray.rs` | notification-area icon and tray menu |
+| `rust/src/overlay.rs` | click-through recording visualizer |
+| `rust/src/screenshots.rs` | agent-friendly PNG UI rendering |
 
 ## Runtime Invariants
 
@@ -58,3 +63,15 @@ cargo run -p uvox -- run
 ## Testing Strategy
 
 Rust tests should focus on platform-neutral logic: config, resampling, and transcript queue cancellation. Native CUDA behavior is verified through `transcribe-file` with `tests/fixtures/parakeet-smoke.wav`. Windows desktop behavior must be manually exercised with `run`.
+
+## UI Iteration Loop
+
+When changing UI layout, use deterministic screenshots so agents can inspect the result:
+
+```powershell
+cargo run -p uvox -- ui-screenshot --surface settings --section audio --output artifacts\ui-settings-audio.png
+cargo run -p uvox -- ui-screenshot --surface settings --section model --output artifacts\ui-settings-model.png
+cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
+```
+
+Inspect the PNGs, adjust layout/colors/sizing, and repeat until the settings window and overlay are readable and not cramped. Then run `cargo check -p uvox` and `cargo test -p uvox`.
