@@ -1,3 +1,5 @@
+import { LineEdit } from "std-widgets.slint";
+
 component SectionButton inherits Rectangle {
     in property <string> label;
     in property <bool> active;
@@ -160,13 +162,23 @@ export component SettingsWindow inherits Window {
     in-out property <string> progress-text: "";
     in-out property <bool> busy: false;
 
+    in-out property <[string]> microphone-labels;
+    in-out property <int> selected-microphone-index: 0;
+    in-out property <bool> capslock-always-off: false;
+    in-out property <bool> selected-model-downloaded: false;
+    in-out property <string> parakeet-runtime-dir;
+    in-out property <string> parakeet-model-path;
+    in-out property <bool> recording-test: false;
+
     callback save-requested();
     callback reset-requested();
     callback record-test-requested();
+    callback stop-test-requested();
     callback model-test-requested();
     callback download-requested(int);
     callback open-log-requested();
     callback model-delta(int);
+    callback microphone-delta(int);
     callback typing-chunk-delta(int);
     callback typing-interval-delta(int);
     callback idle-timeout-delta(int);
@@ -216,82 +228,106 @@ export component SettingsWindow inherits Window {
             Text { text: root.progress-text; x: parent.width - 330px; y: 36px; width: 300px; color: #2b9c84; horizontal-alignment: right; font-size: 14px; }
         }
 
-        if root.section-index == 0 : Card {
+        Rectangle {
             height: 512px;
-            Text { text: "General"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
-            Text { text: "Hotkey"; x: 24px; y: 82px; color: #596674; font-size: 15px; }
-            ToggleRow { x: 180px; y: 74px; width: 420px; label: "Enable CapsLock hold-to-record"; checked: root.hotkey-enabled; }
-            Text { text: "Startup"; x: 24px; y: 132px; color: #596674; font-size: 15px; }
-            ToggleRow { x: 180px; y: 124px; width: 420px; label: "Start Uvox with Windows"; checked: root.start-with-windows; }
-            Text { text: "Status"; x: 24px; y: 190px; color: #596674; font-size: 15px; }
-            Text { text: "Tray utility running locally. No Python or webview is used."; x: 180px; y: 190px; color: #1e252c; font-size: 15px; }
-        }
 
-        if root.section-index == 1 : Card {
-            height: 512px;
-            Text { text: "Audio"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
-            Text { text: "Microphone"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
-            ValuePill { x: 180px; y: 78px; width: 360px; value: root.microphone; }
-            Text { text: "Input level"; x: 24px; y: 150px; color: #596674; font-size: 15px; }
-            MeterBar { x: 180px; y: 154px; width: 360px; level: root.input-level; }
-            ActionButton { x: 570px; y: 76px; width: 150px; label: root.busy ? "Recording..." : "Record Test"; enabled: !root.busy; clicked => { root.record-test-requested(); } }
-            Text { text: "Transcript"; x: 24px; y: 214px; color: #596674; font-size: 15px; }
-            Rectangle { x: 180px; y: 210px; width: 540px; height: 170px; border-radius: 8px; background: #f4f7f9; border-width: 1px; border-color: #dce5eb; }
-            Text { x: 196px; y: 226px; width: 508px; height: 130px; text: root.test-transcript; color: #26313b; font-size: 14px; wrap: word-wrap; }
-        }
+            Card {
+                visible: root.section-index == 0;
+                width: parent.width;
+                height: parent.height;
+                Text { text: "General"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
+                Text { text: "Hotkey"; x: 24px; y: 82px; color: #596674; font-size: 15px; }
+                ToggleRow { x: 180px; y: 74px; width: 420px; label: "Enable CapsLock hold-to-record"; checked: root.hotkey-enabled; }
+                Text { text: "Startup"; x: 24px; y: 132px; color: #596674; font-size: 15px; }
+                ToggleRow { x: 180px; y: 124px; width: 420px; label: "Start Uvox with Windows"; checked: root.start-with-windows; }
+                Text { text: "Caps Lock State"; x: 24px; y: 182px; color: #596674; font-size: 15px; }
+                ToggleRow { x: 180px; y: 174px; width: 420px; label: "Always force CapsLock off"; checked: root.capslock-always-off; }
+                Text { text: "Status"; x: 24px; y: 240px; color: #596674; font-size: 15px; }
+                Text { text: "Tray utility running locally. No Python or webview is used."; x: 180px; y: 240px; color: #1e252c; font-size: 15px; }
+            }
 
-        if root.section-index == 2 : Card {
-            height: 512px;
-            Text { text: "Model"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
-            Text { text: "Active model"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
-            Text { text: root.active-model; x: 180px; y: 86px; width: 520px; color: #1e252c; font-size: 15px; }
-            Text { text: "Approved model"; x: 24px; y: 142px; color: #596674; font-size: 15px; }
-            QuietButton { x: 180px; y: 134px; width: 42px; label: "<"; clicked => { root.model-delta(-1); } }
-            ValuePill { x: 232px; y: 134px; width: 366px; value: root.selected-model-label; }
-            QuietButton { x: 608px; y: 134px; width: 42px; label: ">"; clicked => { root.model-delta(1); } }
-            ActionButton { x: 594px; y: 188px; width: 120px; label: "Download"; enabled: !root.busy; clicked => { root.download-requested(root.selected-model-index); } }
-            QuietButton { x: 594px; y: 82px; width: 120px; label: "Test Model"; clicked => { root.model-test-requested(); } }
-            Text { text: "F16 models are recommended. Quantized models use less disk/VRAM but may reduce quality."; x: 180px; y: 250px; width: 520px; color: #596674; font-size: 14px; wrap: word-wrap; }
-        }
+            Card {
+                visible: root.section-index == 1;
+                width: parent.width;
+                height: parent.height;
+                Text { text: "Audio"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
+                Text { text: "Microphone"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
+                QuietButton { x: 180px; y: 78px; width: 42px; label: "<"; clicked => { root.microphone-delta(-1); } }
+                ValuePill { x: 232px; y: 78px; width: 308px; value: root.microphone; }
+                QuietButton { x: 550px; y: 78px; width: 42px; label: ">"; clicked => { root.microphone-delta(1); } }
+                Text { text: "Input level"; x: 24px; y: 150px; color: #596674; font-size: 15px; }
+                MeterBar { x: 180px; y: 154px; width: 360px; level: root.input-level; }
+                if !root.recording-test : ActionButton { x: 604px; y: 76px; width: 110px; label: "Record"; enabled: !root.busy; clicked => { root.record-test-requested(); } }
+                if root.recording-test : ActionButton { x: 604px; y: 76px; width: 110px; label: "Stop"; clicked => { root.stop-test-requested(); } }
+                Text { text: "Transcript"; x: 24px; y: 214px; color: #596674; font-size: 15px; }
+                Rectangle { x: 180px; y: 210px; width: 540px; height: 170px; border-radius: 8px; background: #f4f7f9; border-width: 1px; border-color: #dce5eb; }
+                Text { x: 196px; y: 226px; width: 508px; height: 130px; text: root.test-transcript; color: #26313b; font-size: 14px; wrap: word-wrap; }
+            }
 
-        if root.section-index == 3 : Card {
-            height: 512px;
-            Text { text: "Typing"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
-            Text { text: "Chunk size"; x: 24px; y: 88px; color: #596674; font-size: 15px; }
-            QuietButton { x: 180px; y: 80px; width: 38px; label: "-"; clicked => { root.typing-chunk-delta(-1); } }
-            ValuePill { x: 228px; y: 80px; width: 90px; value: root.typing-chunk; }
-            QuietButton { x: 328px; y: 80px; width: 38px; label: "+"; clicked => { root.typing-chunk-delta(1); } }
-            Text { text: "Typing interval"; x: 24px; y: 148px; color: #596674; font-size: 15px; }
-            MeterBar { x: 180px; y: 154px; width: 300px; level: root.typing-interval-ms / 200; }
-            Text { text: root.typing-interval-ms + " ms"; x: 500px; y: 148px; color: #1e252c; font-size: 15px; }
-            QuietButton { x: 570px; y: 140px; width: 38px; label: "-"; clicked => { root.typing-interval-delta(-5); } }
-            QuietButton { x: 618px; y: 140px; width: 38px; label: "+"; clicked => { root.typing-interval-delta(5); } }
-            Text { text: "Model unload"; x: 24px; y: 208px; color: #596674; font-size: 15px; }
-            QuietButton { x: 180px; y: 200px; width: 38px; label: "-"; clicked => { root.idle-timeout-delta(-30); } }
-            ValuePill { x: 228px; y: 200px; width: 140px; value: root.idle-timeout-secs + " sec"; }
-            QuietButton { x: 378px; y: 200px; width: 38px; label: "+"; clicked => { root.idle-timeout-delta(30); } }
-        }
+            Card {
+                visible: root.section-index == 2;
+                width: parent.width;
+                height: parent.height;
+                Text { text: "Model"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
+                Text { text: "Active model"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
+                Text { text: root.active-model; x: 180px; y: 86px; width: 520px; color: #1e252c; font-size: 15px; }
+                Text { text: "Approved model"; x: 24px; y: 142px; color: #596674; font-size: 15px; }
+                QuietButton { x: 180px; y: 134px; width: 42px; label: "<"; clicked => { root.model-delta(-1); } }
+                ValuePill { x: 232px; y: 134px; width: 366px; value: root.selected-model-label; }
+                QuietButton { x: 608px; y: 134px; width: 42px; label: ">"; clicked => { root.model-delta(1); } }
+                ActionButton { x: 594px; y: 188px; width: 120px; label: root.selected-model-downloaded ? "Select Model" : "Download"; enabled: !root.busy; clicked => { root.download-requested(root.selected-model-index); } }
+                QuietButton { x: 594px; y: 82px; width: 120px; label: "Test Model"; clicked => { root.model-test-requested(); } }
+                Text { text: "F16 models are recommended. Quantized models use less disk/VRAM but may reduce quality."; x: 180px; y: 250px; width: 520px; color: #596674; font-size: 14px; wrap: word-wrap; }
+            }
 
-        if root.section-index == 4 : Card {
-            height: 512px;
-            Text { text: "Logging"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
-            Text { text: "Level"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
-            QuietButton { x: 180px; y: 78px; width: 38px; label: "<"; clicked => { root.log-level-delta(-1); } }
-            ValuePill { x: 228px; y: 78px; width: 172px; value: root.log-level; }
-            QuietButton { x: 410px; y: 78px; width: 38px; label: ">"; clicked => { root.log-level-delta(1); } }
-            QuietButton { x: 480px; y: 78px; width: 160px; label: "Open Latest Log"; clicked => { root.open-log-requested(); } }
-            Text { text: "Each launch replaces latest.log. Extreme logging can grow quickly during hotkey/audio debugging."; x: 180px; y: 140px; width: 500px; color: #596674; font-size: 14px; wrap: word-wrap; }
-        }
+            Card {
+                visible: root.section-index == 3;
+                width: parent.width;
+                height: parent.height;
+                Text { text: "Typing"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
+                Text { text: "Chunk size"; x: 24px; y: 88px; color: #596674; font-size: 15px; }
+                QuietButton { x: 180px; y: 80px; width: 38px; label: "-"; clicked => { root.typing-chunk-delta(-1); } }
+                ValuePill { x: 228px; y: 80px; width: 90px; value: root.typing-chunk; }
+                QuietButton { x: 328px; y: 80px; width: 38px; label: "+"; clicked => { root.typing-chunk-delta(1); } }
+                Text { text: "Typing interval"; x: 24px; y: 148px; color: #596674; font-size: 15px; }
+                MeterBar { x: 180px; y: 154px; width: 300px; level: root.typing-interval-ms / 200; }
+                Text { text: root.typing-interval-ms + " ms"; x: 500px; y: 148px; color: #1e252c; font-size: 15px; }
+                QuietButton { x: 570px; y: 140px; width: 38px; label: "-"; clicked => { root.typing-interval-delta(-5); } }
+                QuietButton { x: 618px; y: 140px; width: 38px; label: "+"; clicked => { root.typing-interval-delta(5); } }
+                Text { text: "Model unload"; x: 24px; y: 208px; color: #596674; font-size: 15px; }
+                LineEdit { x: 180px; y: 200px; width: 140px; height: 36px; text: root.idle-timeout-secs; input-type: number; edited(t) => { root.idle-timeout-secs = t.to-float(); } }
+                Text { text: "seconds"; x: 332px; y: 208px; color: #596674; font-size: 15px; }
+            }
 
-        if root.section-index == 5 : Card {
-            height: 512px;
-            Text { text: "Advanced"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
-            Text { text: "Runtime paths are still stored in config.json. Use Advanced for diagnostics only."; x: 24px; y: 86px; color: #596674; font-size: 15px; }
+            Card {
+                visible: root.section-index == 4;
+                width: parent.width;
+                height: parent.height;
+                Text { text: "Logging"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
+                Text { text: "Level"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
+                QuietButton { x: 180px; y: 78px; width: 38px; label: "<"; clicked => { root.log-level-delta(-1); } }
+                ValuePill { x: 228px; y: 78px; width: 172px; value: root.log-level; }
+                QuietButton { x: 410px; y: 78px; width: 38px; label: ">"; clicked => { root.log-level-delta(1); } }
+                QuietButton { x: 480px; y: 78px; width: 160px; label: "Open Latest Log"; clicked => { root.open-log-requested(); } }
+                Text { text: "Each launch replaces latest.log. Extreme logging can grow quickly during hotkey/audio debugging."; x: 180px; y: 140px; width: 500px; color: #596674; font-size: 14px; wrap: word-wrap; }
+            }
+
+            Card {
+                visible: root.section-index == 5;
+                width: parent.width;
+                height: parent.height;
+                Text { text: "Advanced"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
+                Text { text: "Runtime Directory"; x: 24px; y: 86px; color: #596674; font-size: 15px; }
+                LineEdit { x: 180px; y: 78px; width: 500px; height: 36px; text: root.parakeet-runtime-dir; edited(t) => { root.parakeet-runtime-dir = t; } }
+                Text { text: "Model Path"; x: 24px; y: 146px; color: #596674; font-size: 15px; }
+                LineEdit { x: 180px; y: 138px; width: 500px; height: 36px; text: root.parakeet-model-path; edited(t) => { root.parakeet-model-path = t; } }
+            }
         }
 
         HorizontalLayout {
             alignment: end;
             height: 44px;
+            spacing: 12px;
             QuietButton { width: 110px; label: "Reset"; clicked => { root.reset-requested(); } }
             ActionButton { width: 110px; label: "Save"; clicked => { root.save-requested(); } }
         }
@@ -299,8 +335,8 @@ export component SettingsWindow inherits Window {
 }
 
 export component RecordingOverlay inherits Window {
-    preferred-width: 260px;
-    preferred-height: 64px;
+    preferred-width: 320px;
+    preferred-height: 92px;
     background: transparent;
     no-frame: true;
     always-on-top: true;
@@ -313,15 +349,15 @@ export component RecordingOverlay inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        border-radius: 18px;
-        background: #181d23dd;
+        border-radius: 24px;
+        background: #10161bdd;
     }
-    for bar[index] in 14 : Rectangle {
-        width: 7px;
-        height: 12px + root.level * (18px + Math.mod(index, 5) * 4px);
-        x: 32px + index * 14px;
+    for bar[index] in 16 : Rectangle {
+        width: 10px;
+        height: 18px + root.level * (28px + Math.mod(index, 6) * 6px);
+        x: 39px + index * 15px;
         y: (parent.height - self.height) / 2;
-        border-radius: 4px;
-        background: #35c7a8;
+        border-radius: 5px;
+        background: #45dcc0;
     }
 }

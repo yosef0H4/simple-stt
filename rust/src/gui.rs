@@ -2,6 +2,10 @@ use anyhow::{Context, Result};
 use crossbeam_channel::bounded;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 use std::path::Path;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
 use std::thread;
 use std::time::Duration;
 
@@ -10,6 +14,12 @@ use crate::models;
 use crate::parakeet_native::ParakeetNative;
 use crate::slint_ui::SettingsWindow;
 use crate::startup;
+
+struct ActiveTestRecording {
+    _capture: crate::audio::CaptureHandle,
+    samples: Arc<Mutex<Vec<i16>>>,
+    stop_signal: Arc<AtomicBool>,
+}
 
 pub fn show_settings() -> Result<()> {
     let app = create_settings_window()?;
@@ -36,7 +46,8 @@ pub fn open_latest_log() -> Result<()> {
 }
 
 pub fn configure_settings_for_screenshot(app: &SettingsWindow, section: Option<&str>) {
-    apply_config(app, &AppConfig::default());
+    let config = AppConfig::default();
+    apply_config(app, &config);
     app.set_section_index(section_index(section));
     app.set_status_title("Ready".into());
     app.set_status_detail("Hold CapsLock to record. Release to transcribe and type.".into());
@@ -44,14 +55,14 @@ pub fn configure_settings_for_screenshot(app: &SettingsWindow, section: Option<&
     app.set_input_level(0.64);
     app.set_progress_text("Model ready".into());
     app.set_test_transcript("Well, I don't wish to see it any more...".into());
-    populate_models(app);
+    populate_models(app, &config);
 }
 
 fn create_settings_window() -> Result<SettingsWindow> {
     let app = SettingsWindow::new().context("creating settings window")?;
     let config = AppConfig::load()?;
     apply_config(&app, &config);
-    populate_models(&app);
+    populate_models(&app, &config);
     wire_callbacks(&app);
     Ok(app)
 }
@@ -66,11 +77,39 @@ fn apply_config(app: &SettingsWindow, config: &AppConfig) {
     app.set_idle_timeout_secs(config.idle_timeout_secs as i32);
     app.set_start_with_windows(config.start_with_windows);
     app.set_hotkey_enabled(config.hotkey_enabled);
+    app.set_capslock_always_off(config.capslock_always_off);
     app.set_log_level(log_level_name(&config.log_level).into());
+
+    app.set_parakeet_runtime_dir(config.parakeet_runtime_dir.clone().into());
+    app.set_parakeet_model_path(config.parakeet_model_path.clone().into());
+
+    // Enumerate and populate microphones
+    let devices = crate::audio::list_input_devices().unwrap_or_default();
+    let mic_name = microphone_label(config);
+    let mut selected_index = 0;
+    let labels = devices
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            if name == &mic_name {
+                selected_index = i as i32;
+            }
+            SharedString::from(name.clone())
+        })
+        .collect::<Vec<_>>();
+    app.set_microphone_labels(ModelRc::new(VecModel::from(labels)));
+    app.set_selected_microphone_index(selected_index);
 }
 
-fn populate_models(app: &SettingsWindow) {
+fn populate_models(app: &SettingsWindow, config: &AppConfig) {
     let catalog = models::catalog();
+    let current_model_file = config
+        .parakeet_model_path()
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| config.parakeet_model_path.clone());
+
+    let mut selected_index = 0;
     let labels = catalog
         .iter()
         .map(|model| {
@@ -87,11 +126,28 @@ fn populate_models(app: &SettingsWindow) {
         .collect::<Vec<_>>();
     let files = catalog
         .iter()
-        .map(|model| SharedString::from(model.file.clone()))
+        .enumerate()
+        .map(|(i, model)| {
+            if model.file == current_model_file {
+                selected_index = i as i32;
+            }
+            SharedString::from(model.file.clone())
+        })
         .collect::<Vec<_>>();
     app.set_model_labels(ModelRc::new(VecModel::from(labels)));
     app.set_model_files(ModelRc::new(VecModel::from(files)));
+    app.set_selected_model_index(selected_index);
     set_selected_model_label(app);
+    update_selected_model_downloaded(app);
+}
+
+fn update_selected_model_downloaded(app: &SettingsWindow) {
+    let index = app.get_selected_model_index() as usize;
+    let files = app.get_model_files();
+    if let Some(file) = files.row_data(index) {
+        let path = models::local_model_path(&file.to_string());
+        app.set_selected_model_downloaded(path.exists());
+    }
 }
 
 fn wire_callbacks(app: &SettingsWindow) {
@@ -113,6 +169,7 @@ fn wire_callbacks(app: &SettingsWindow) {
                 Ok(()) => {
                     let _ = startup::set_start_with_windows(config.start_with_windows);
                     apply_config(&app, &config);
+                    populate_models(&app, &config);
                     set_status(&app, "Reset", "Default settings were restored.", "");
                 }
                 Err(error) => set_status(&app, "Reset failed", &error.to_string(), ""),
@@ -150,14 +207,140 @@ fn wire_callbacks(app: &SettingsWindow) {
     });
 
     let weak = app.as_weak();
+    let active_recording = Arc::new(Mutex::new(None::<ActiveTestRecording>));
+    let active_recording_clone = active_recording.clone();
+
     app.on_record_test_requested(move || {
         if let Some(app) = weak.upgrade() {
-            run_background(
+            app.set_test_transcript("".into());
+            app.set_input_level(0.0);
+            app.set_recording_test(true);
+            app.set_busy(true);
+            set_status(
                 &app,
                 "Recording test",
-                move || record_and_transcribe_test(),
-                weak.clone(),
+                "Recording audio from selected microphone. Click Stop to transcribe.",
+                "Recording test",
             );
+
+            let mic_name = app.get_microphone().to_string();
+            let audio_device = if mic_name == "Default microphone" {
+                String::new()
+            } else {
+                mic_name
+            };
+
+            let (tx, rx) = bounded(4096);
+            let config = match AppConfig::load() {
+                Ok(c) => c,
+                Err(e) => {
+                    app.set_recording_test(false);
+                    app.set_busy(false);
+                    set_status(&app, "Recording failed", &e.to_string(), "");
+                    return;
+                }
+            };
+            let capture = match crate::audio::start_capture(&audio_device, config.audio_gain, tx) {
+                Ok(cap) => cap,
+                Err(e) => {
+                    app.set_recording_test(false);
+                    app.set_busy(false);
+                    set_status(&app, "Recording failed", &e.to_string(), "");
+                    return;
+                }
+            };
+
+            let samples = Arc::new(Mutex::new(Vec::new()));
+            let stop_signal = Arc::new(AtomicBool::new(false));
+
+            let samples_thread = samples.clone();
+            let stop_signal_thread = stop_signal.clone();
+            let weak_thread = weak.clone();
+
+            thread::spawn(move || {
+                while !stop_signal_thread.load(Ordering::SeqCst) {
+                    if let Ok(frame) = rx.recv_timeout(Duration::from_millis(50)) {
+                        let level = visualizer_level(&frame);
+                        let _ = slint::invoke_from_event_loop({
+                            let weak = weak_thread.clone();
+                            move || {
+                                if let Some(app) = weak.upgrade() {
+                                    app.set_input_level(level);
+                                }
+                            }
+                        });
+                        samples_thread.lock().unwrap().extend_from_slice(&frame);
+                    }
+                }
+            });
+
+            let mut act = active_recording_clone.lock().unwrap();
+            *act = Some(ActiveTestRecording {
+                _capture: capture,
+                samples,
+                stop_signal,
+            });
+        }
+    });
+
+    let weak = app.as_weak();
+    let active_recording_clone2 = active_recording.clone();
+    app.on_stop_test_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            let recording = {
+                let mut act = active_recording_clone2.lock().unwrap();
+                act.take()
+            };
+
+            if let Some(rec) = recording {
+                rec.stop_signal.store(true, Ordering::SeqCst);
+                app.set_recording_test(false);
+                app.set_input_level(0.0);
+                set_status(
+                    &app,
+                    "Transcribing",
+                    "Transcribing captured audio with Parakeet...",
+                    "Transcribing",
+                );
+
+                let weak_transcribe = weak.clone();
+                thread::spawn(move || {
+                    // Let the thread finish any final reads
+                    thread::sleep(Duration::from_millis(100));
+                    let samples = rec.samples.lock().unwrap().clone();
+                    let result = (|| -> Result<String> {
+                        anyhow::ensure!(
+                            samples.len() >= 8_000,
+                            "record test captured too little audio (need at least 0.5s)"
+                        );
+                        let config = AppConfig::load()?;
+                        let engine = ParakeetNative::load_from_config(&config)?;
+                        engine.transcribe_pcm16_16k(&samples)
+                    })();
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(app) = weak_transcribe.upgrade() {
+                            app.set_busy(false);
+                            match result {
+                                Ok(text) => {
+                                    app.set_test_transcript(text.into());
+                                    set_status(
+                                        &app,
+                                        "Complete",
+                                        "The operation finished successfully.",
+                                        "",
+                                    );
+                                }
+                                Err(error) => set_status(&app, "Failed", &error.to_string(), ""),
+                            }
+                        }
+                    });
+                });
+            } else {
+                app.set_recording_test(false);
+                app.set_busy(false);
+                set_status(&app, "Failed", "No active recording found.", "");
+            }
         }
     });
 
@@ -170,10 +353,22 @@ fn wire_callbacks(app: &SettingsWindow) {
                 return;
             };
             let file = file.to_string();
+            let weak_done = weak.clone();
             run_background(
                 &app,
-                "Downloading model",
-                move || download_test_and_select(&file),
+                "Activating model",
+                move || {
+                    let trans = download_test_and_select(&file)?;
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(app) = weak_done.upgrade() {
+                            if let Ok(config) = AppConfig::load() {
+                                app.set_active_model(model_label(&config).into());
+                            }
+                            update_selected_model_downloaded(&app);
+                        }
+                    });
+                    Ok(trans)
+                },
                 weak.clone(),
             );
         }
@@ -187,6 +382,22 @@ fn wire_callbacks(app: &SettingsWindow) {
                 let next = (app.get_selected_model_index() + delta).rem_euclid(count);
                 app.set_selected_model_index(next);
                 set_selected_model_label(&app);
+                update_selected_model_downloaded(&app);
+            }
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_microphone_delta(move |delta| {
+        if let Some(app) = weak.upgrade() {
+            let labels = app.get_microphone_labels();
+            let count = labels.row_count() as i32;
+            if count > 0 {
+                let next = (app.get_selected_microphone_index() + delta).rem_euclid(count);
+                app.set_selected_microphone_index(next);
+                if let Some(name) = labels.row_data(next as usize) {
+                    app.set_microphone(name);
+                }
             }
         }
     });
@@ -265,7 +476,12 @@ fn save_from_window(app: &SettingsWindow) -> Result<()> {
     config.idle_timeout_secs = app.get_idle_timeout_secs().max(1) as u64;
     config.start_with_windows = app.get_start_with_windows();
     config.hotkey_enabled = app.get_hotkey_enabled();
+    config.capslock_always_off = app.get_capslock_always_off();
     config.log_level = parse_log_level(&app.get_log_level());
+
+    config.parakeet_runtime_dir = app.get_parakeet_runtime_dir().to_string();
+    config.parakeet_model_path = app.get_parakeet_model_path().to_string();
+
     startup::set_start_with_windows(config.start_with_windows)?;
     config.save()
 }
@@ -279,25 +495,6 @@ fn download_test_and_select(file: &str) -> Result<String> {
     config.parakeet_model_path = path_for_config(&model);
     config.save()?;
     Ok(transcript)
-}
-
-fn record_and_transcribe_test() -> Result<String> {
-    let config = AppConfig::load()?;
-    let (tx, rx) = bounded(4096);
-    let capture =
-        crate::audio::start_capture(&config.audio_device_contains, config.audio_gain, tx)?;
-    thread::sleep(Duration::from_secs(3));
-    drop(capture);
-    let mut samples = Vec::new();
-    while let Ok(frame) = rx.try_recv() {
-        samples.extend_from_slice(&frame);
-    }
-    anyhow::ensure!(
-        samples.len() >= 8_000,
-        "record test captured too little audio"
-    );
-    let engine = ParakeetNative::load_from_config(&config)?;
-    engine.transcribe_pcm16_16k(&samples)
 }
 
 fn set_status(app: &SettingsWindow, title: &str, detail: &str, progress: &str) {
@@ -370,5 +567,61 @@ fn section_index(section: Option<&str>) -> i32 {
         "logging" => 4,
         "advanced" => 5,
         _ => 0,
+    }
+}
+
+fn visualizer_level(frame: &[i16]) -> f32 {
+    if frame.is_empty() {
+        return 0.0;
+    }
+    let sum = frame
+        .iter()
+        .map(|sample| {
+            let value = *sample as f32 / 32768.0;
+            value * value
+        })
+        .sum::<f32>();
+    let rms = (sum / frame.len() as f32).sqrt();
+    (rms * 14.0).powf(0.72).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_from_window_persists_general_settings() {
+        std::env::set_var("SLINT_BACKEND", "winit-software");
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        std::env::set_var("UVOX_CONFIG", &path);
+
+        let app = SettingsWindow::new().unwrap();
+        app.set_microphone("Default microphone".into());
+        app.set_typing_chunk(7);
+        app.set_typing_interval_ms(55);
+        app.set_idle_timeout_secs(240);
+        app.set_start_with_windows(true);
+        app.set_hotkey_enabled(false);
+        app.set_capslock_always_off(true);
+        app.set_log_level("Extreme".into());
+        app.set_parakeet_runtime_dir("external\\parakeet-runtime\\parakeet-windows-cuda".into());
+        app.set_parakeet_model_path(
+            "external\\parakeet-runtime\\parakeet-windows-cuda\\models\\tdt_ctc-110m-f16.gguf"
+                .into(),
+        );
+
+        save_from_window(&app).unwrap();
+
+        let saved = AppConfig::load().unwrap();
+        assert_eq!(saved.typing_chunk_chars, 7);
+        assert_eq!(saved.typing_interval_ms, 55);
+        assert_eq!(saved.idle_timeout_secs, 240);
+        assert!(saved.start_with_windows);
+        assert!(!saved.hotkey_enabled);
+        assert!(saved.capslock_always_off);
+        assert_eq!(saved.log_level, LogLevel::Extreme);
+
+        std::env::remove_var("UVOX_CONFIG");
     }
 }

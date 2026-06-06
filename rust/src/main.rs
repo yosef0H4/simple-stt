@@ -68,6 +68,7 @@ fn main() -> Result<()> {
 enum UiSurfaceArg {
     Settings,
     Overlay,
+    OverlayDesktop,
 }
 
 fn config_show() -> Result<()> {
@@ -129,6 +130,9 @@ fn run_app() -> Result<()> {
     config.validate()?;
     config.validate_parakeet_files()?;
     hotkey::set_enabled(config.hotkey_enabled);
+    if config.capslock_always_off {
+        uvox::input::set_capslock_state(false);
+    }
 
     let (audio_tx, audio_rx) = bounded::<Vec<i16>>(4096);
     let _capture =
@@ -154,6 +158,7 @@ fn run_app() -> Result<()> {
     let mut active: Option<Recording> = None;
     let mut next_session_id = 1_u64;
     let mut last_activity = Instant::now();
+    let mut last_config_mtime = config_mtime();
 
     println!("Uvox is running.");
     println!("Hold CapsLock to record. Release CapsLock to transcribe with native CUDA Parakeet and type.");
@@ -166,6 +171,9 @@ fn run_app() -> Result<()> {
                 Ok(HotkeyEvent::CapsLockDown) if active.is_none() => {
                     if !config.hotkey_enabled {
                         continue;
+                    }
+                    if config.capslock_always_off {
+                        uvox::input::set_capslock_state(false);
                     }
                     let session_id = next_session_id;
                     next_session_id += 1;
@@ -191,6 +199,9 @@ fn run_app() -> Result<()> {
                     tracing::info!(session_id, target_window, "CapsLock down: recording");
                 }
                 Ok(HotkeyEvent::CapsLockUp) => {
+                    if config.capslock_always_off {
+                        uvox::input::set_capslock_state(false);
+                    }
                     if let Some(recording) = active.take() {
                         overlay.hide();
                         tray.set_status(TrayStatus::Transcribing);
@@ -273,6 +284,9 @@ fn run_app() -> Result<()> {
                         Ok(new_config) => {
                             config = new_config;
                             hotkey::set_enabled(config.hotkey_enabled);
+                            if config.capslock_always_off {
+                                uvox::input::set_capslock_state(false);
+                            }
                             parakeet = None;
                             tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                             tracing::info!("configuration reloaded");
@@ -302,6 +316,25 @@ fn run_app() -> Result<()> {
                 Err(_) => break,
             },
             default(Duration::from_millis(100)) => {
+                let current_mtime = config_mtime();
+                if current_mtime != last_config_mtime {
+                    last_config_mtime = current_mtime;
+                    match AppConfig::load() {
+                        Ok(new_config) => {
+                            config = new_config;
+                            hotkey::set_enabled(config.hotkey_enabled);
+                            if config.capslock_always_off {
+                                uvox::input::set_capslock_state(false);
+                            }
+                            tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
+                            tracing::info!("configuration file changed; reloaded live settings");
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "configuration file changed but reload failed");
+                            tray.set_status(TrayStatus::Error);
+                        }
+                    }
+                }
                 if active.is_none()
                     && parakeet.is_some()
                     && last_activity.elapsed() >= Duration::from_secs(config.idle_timeout_secs)
@@ -346,6 +379,7 @@ fn ui_screenshot(surface: UiSurfaceArg, output: PathBuf, section: Option<&str>) 
     let surface = match surface {
         UiSurfaceArg::Settings => uvox::screenshots::UiSurface::Settings,
         UiSurfaceArg::Overlay => uvox::screenshots::UiSurface::Overlay,
+        UiSurfaceArg::OverlayDesktop => uvox::screenshots::UiSurface::OverlayDesktop,
     };
     uvox::screenshots::save(surface, &output, section)?;
     println!("Wrote {}", output.display());
@@ -363,5 +397,12 @@ fn rms_level(frame: &[i16]) -> f32 {
             value * value
         })
         .sum::<f32>();
-    (sum / frame.len() as f32).sqrt().min(1.0)
+    let rms = (sum / frame.len() as f32).sqrt();
+    (rms * 14.0).powf(0.72).clamp(0.0, 1.0)
+}
+
+fn config_mtime() -> Option<std::time::SystemTime> {
+    std::fs::metadata(AppConfig::config_path())
+        .ok()
+        .and_then(|meta| meta.modified().ok())
 }

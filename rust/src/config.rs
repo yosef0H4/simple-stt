@@ -41,6 +41,7 @@ pub struct AppConfig {
     pub parakeet_model_path: String,
     pub start_with_windows: bool,
     pub hotkey_enabled: bool,
+    pub capslock_always_off: bool,
     pub log_level: LogLevel,
 }
 
@@ -58,6 +59,7 @@ impl Default for AppConfig {
                     .to_owned(),
             start_with_windows: false,
             hotkey_enabled: true,
+            capslock_always_off: false,
             log_level: LogLevel::Minimal,
         }
     }

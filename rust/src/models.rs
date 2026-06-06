@@ -153,6 +153,10 @@ pub fn download_model(file: &str) -> Result<PathBuf> {
     let spec = find_by_file(file).with_context(|| format!("unknown approved model: {file}"))?;
     fs::create_dir_all(AppConfig::model_store_dir())?;
     let target = local_model_path(&spec.file);
+    if target.exists() {
+        tracing::info!(target = %target.display(), "model file already exists locally; skipping download");
+        return Ok(target);
+    }
     let partial = target.with_extension("gguf.partial");
     let url = format!("{BASE_URL}/{}", spec.file);
     tracing::info!(%url, target = %target.display(), "downloading model");
@@ -166,8 +170,12 @@ pub fn download_model(file: &str) -> Result<PathBuf> {
             break;
         }
         out.write_all(&buf[..read])?;
+        let prev_mb = downloaded / (10 * 1024 * 1024);
         downloaded += read as u64;
-        tracing::debug!(downloaded, "downloaded model bytes");
+        let curr_mb = downloaded / (10 * 1024 * 1024);
+        if curr_mb > prev_mb {
+            tracing::info!(downloaded, "downloaded model bytes");
+        }
     }
     out.flush()?;
     fs::rename(&partial, &target)?;

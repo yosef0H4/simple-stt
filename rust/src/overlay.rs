@@ -1,9 +1,30 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use crossbeam_channel::{bounded, unbounded, Sender};
-use slint::ComponentHandle;
+use std::mem::zeroed;
+use std::ptr::null_mut;
 use std::thread;
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::Graphics::Gdi::{
+    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, GetMonitorInfoW,
+    GetStockObject, InvalidateRect, MonitorFromWindow, RoundRect, SelectObject, HBRUSH,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT, WHITE_BRUSH,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostMessageW, RegisterClassW,
+    SetLayeredWindowAttributes, SetWindowPos, ShowWindow, TranslateMessage, CS_HREDRAW, CS_VREDRAW,
+    HWND_TOPMOST, MSG, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNA, WM_APP, WM_PAINT,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_EX_TRANSPARENT, WS_POPUP,
+};
 
-use crate::slint_ui::RecordingOverlay;
+use crate::winutil::{rgb, wide_null};
+
+const CLASS: &str = "UvoxRecordingOverlay";
+const WIDTH: i32 = 320;
+const HEIGHT: i32 = 92;
+const WM_OVERLAY_SHOW: u32 = WM_APP + 20;
+const WM_OVERLAY_LEVEL: u32 = WM_APP + 21;
+const WM_OVERLAY_HIDE: u32 = WM_APP + 22;
 
 #[derive(Debug, Clone)]
 pub struct OverlayHandle {
@@ -21,52 +42,40 @@ impl OverlayHandle {
     pub fn spawn() -> Result<Self> {
         let (tx, rx) = unbounded::<OverlayCommand>();
         let (ready_tx, ready_rx) = bounded(1);
-        thread::spawn(move || {
-            let app = match RecordingOverlay::new() {
-                Ok(app) => app,
-                Err(error) => {
-                    let _ =
-                        ready_tx.send(Err(anyhow!(error).context("creating recording overlay")));
-                    return;
-                }
-            };
-            app.set_level(0.0);
-            if let Err(error) = app.show() {
-                let _ = ready_tx.send(Err(anyhow!(error).context("showing recording overlay")));
+        thread::spawn(move || unsafe {
+            let hwnd = create_window();
+            if hwnd.is_null() {
+                let _ = ready_tx.send(Err(anyhow!("creating overlay window failed")));
                 return;
             }
-            app.hide().ok();
-            let weak = app.as_weak();
             let _ = ready_tx.send(Ok(()));
+
+            let hwnd_value = hwnd as isize;
             thread::spawn(move || {
                 while let Ok(command) = rx.recv() {
-                    let weak = weak.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(app) = weak.upgrade() {
-                            match command {
-                                OverlayCommand::Show(target_window) => {
-                                    position_overlay(&app, target_window);
-                                    if let Err(error) = app.show() {
-                                        tracing::error!(%error, "showing Slint overlay failed");
-                                    }
-                                    apply_click_through(&app);
-                                }
-                                OverlayCommand::Level(level) => {
-                                    app.set_level(level.clamp(0.0, 1.0));
-                                }
-                                OverlayCommand::Hide => {
-                                    let _ = app.hide();
-                                }
-                            }
+                    let hwnd = hwnd_value as HWND;
+                    match command {
+                        OverlayCommand::Show(target) => {
+                            let _ = PostMessageW(hwnd, WM_OVERLAY_SHOW, target as WPARAM, 0);
                         }
-                    });
+                        OverlayCommand::Level(level) => {
+                            let scaled = (level.clamp(0.0, 1.0) * 10_000.0) as WPARAM;
+                            let _ = PostMessageW(hwnd, WM_OVERLAY_LEVEL, scaled, 0);
+                        }
+                        OverlayCommand::Hide => {
+                            let _ = PostMessageW(hwnd, WM_OVERLAY_HIDE, 0, 0);
+                        }
+                    }
                 }
             });
-            if let Err(error) = slint::run_event_loop_until_quit() {
-                tracing::error!(%error, "Slint overlay event loop failed");
+
+            let mut message: MSG = zeroed();
+            while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
             }
         });
-        ready_rx.recv().context("waiting for overlay UI")??;
+        ready_rx.recv()??;
         Ok(Self { tx })
     }
 
@@ -83,66 +92,124 @@ impl OverlayHandle {
     }
 }
 
-#[cfg(windows)]
-fn position_overlay(app: &RecordingOverlay, target_window: isize) {
-    use std::mem::zeroed;
-    use windows_sys::Win32::Foundation::HWND;
-    use windows_sys::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    };
+static mut DISPLAY_LEVEL: f32 = 0.0;
 
-    unsafe {
-        let monitor = MonitorFromWindow(target_window as HWND, MONITOR_DEFAULTTONEAREST);
-        let mut info: MONITORINFO = zeroed();
-        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        if GetMonitorInfoW(monitor, &mut info) != 0 {
-            let width = 260_i32;
-            let height = 64_i32;
-            let work = info.rcWork;
-            let x = work.left + ((work.right - work.left) - width) / 2;
-            let y = work.bottom - height - 56;
-            app.window()
-                .set_position(slint::PhysicalPosition::new(x, y));
+unsafe fn create_window() -> HWND {
+    let class = wide_null(CLASS);
+    let wc = WNDCLASSW {
+        style: CS_HREDRAW | CS_VREDRAW,
+        lpfnWndProc: Some(wnd_proc),
+        hInstance: null_mut(),
+        hIcon: null_mut(),
+        hCursor: null_mut(),
+        hbrBackground: GetStockObject(WHITE_BRUSH) as HBRUSH,
+        lpszMenuName: null_mut(),
+        lpszClassName: class.as_ptr(),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+    };
+    RegisterClassW(&wc);
+    let hwnd = CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+        class.as_ptr(),
+        wide_null("Uvox Recording").as_ptr(),
+        WS_POPUP,
+        0,
+        0,
+        WIDTH,
+        HEIGHT,
+        null_mut(),
+        null_mut(),
+        null_mut(),
+        null_mut(),
+    );
+    if !hwnd.is_null() {
+        SetLayeredWindowAttributes(hwnd, 0, 255, 0x00000002);
+    }
+    hwnd
+}
+
+unsafe extern "system" fn wnd_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match message {
+        WM_OVERLAY_SHOW => {
+            position_overlay(hwnd, wparam as HWND);
+            ShowWindow(hwnd, SW_SHOWNA);
+            0
         }
+        WM_OVERLAY_LEVEL => {
+            let target = (wparam as f32 / 10_000.0).clamp(0.0, 1.0);
+            // Smooth enough to avoid flicker but still react strongly while speaking.
+            DISPLAY_LEVEL = DISPLAY_LEVEL * 0.45 + target * 0.55;
+            InvalidateRect(hwnd, null_mut(), 1);
+            0
+        }
+        WM_OVERLAY_HIDE => {
+            DISPLAY_LEVEL = 0.0;
+            ShowWindow(hwnd, SW_HIDE);
+            0
+        }
+        WM_PAINT => {
+            paint(hwnd);
+            0
+        }
+        _ => DefWindowProcW(hwnd, message, wparam, lparam),
     }
 }
 
-#[cfg(not(windows))]
-fn position_overlay(_app: &RecordingOverlay, _target_window: isize) {}
-
-#[cfg(windows)]
-fn apply_click_through(app: &RecordingOverlay) {
-    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE,
-        WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
-    };
-
-    let window_handle = app.window().window_handle();
-    let handle = match window_handle.window_handle() {
-        Ok(handle) => handle,
-        Err(error) => {
-            tracing::warn!(%error, "Slint overlay native window handle is unavailable");
-            return;
-        }
-    };
-    let RawWindowHandle::Win32(handle) = handle.as_raw() else {
-        tracing::warn!("Slint overlay did not expose a Win32 window handle");
-        return;
-    };
-    unsafe {
-        let hwnd = handle.hwnd.get();
-        let current = GetWindowLongPtrW(hwnd as _, GWL_EXSTYLE);
-        let desired = current
-            | WS_EX_LAYERED as isize
-            | WS_EX_TRANSPARENT as isize
-            | WS_EX_NOACTIVATE as isize
-            | WS_EX_TOOLWINDOW as isize;
-        if SetWindowLongPtrW(hwnd as _, GWL_EXSTYLE, desired) == 0 {
-            tracing::warn!("setting Slint overlay click-through styles may have failed");
-        }
-    }
+unsafe fn position_overlay(hwnd: HWND, target: HWND) {
+    let monitor = MonitorFromWindow(target, MONITOR_DEFAULTTONEAREST);
+    let mut info: MONITORINFO = zeroed();
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    GetMonitorInfoW(monitor, &mut info);
+    let work = info.rcWork;
+    let x = work.left + ((work.right - work.left) - WIDTH) / 2;
+    let y = work.bottom - HEIGHT - 72;
+    SetWindowPos(
+        hwnd,
+        HWND_TOPMOST,
+        x,
+        y,
+        WIDTH,
+        HEIGHT,
+        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+    );
 }
 
-#[cfg(not(windows))]
-fn apply_click_through(_app: &RecordingOverlay) {}
+unsafe fn paint(hwnd: HWND) {
+    let mut ps: PAINTSTRUCT = zeroed();
+    let hdc = BeginPaint(hwnd, &mut ps);
+
+    let bg = CreateSolidBrush(rgb(16, 22, 27));
+    let accent = CreateSolidBrush(rgb(69, 220, 192));
+    let accent_dim = CreateSolidBrush(rgb(34, 110, 98));
+
+    let old = SelectObject(hdc, bg);
+    RoundRect(hdc, 0, 0, WIDTH, HEIGHT, 24, 24);
+    SelectObject(hdc, old);
+
+    let level = DISPLAY_LEVEL.clamp(0.0, 1.0);
+    for idx in 0..16 {
+        let phase = ((idx as f32 / 15.0) - 0.5).abs();
+        let height_bias = 1.0 - (phase * 0.55);
+        let dynamic = (22.0 + level * 44.0 * height_bias).round() as i32;
+        let x = 40 + idx * 15;
+        let y = (HEIGHT - dynamic) / 2;
+        let rect = RECT {
+            left: x,
+            top: y,
+            right: x + 10,
+            bottom: y + dynamic,
+        };
+        FillRect(hdc, &rect, if level > 0.06 { accent } else { accent_dim });
+    }
+
+    DeleteObject(bg as _);
+    DeleteObject(accent as _);
+    DeleteObject(accent_dim as _);
+    EndPaint(hwnd, &ps);
+}

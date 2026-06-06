@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use std::mem::size_of;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    keybd_event, GetKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, VK_CAPITAL,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
 
@@ -60,5 +61,18 @@ impl TextSink for WindowsTextSink {
 
     fn send_text(&self, text: &str) -> Result<()> {
         send_unicode_text(text)
+    }
+}
+
+pub fn is_capslock_on() -> bool {
+    unsafe { (GetKeyState(VK_CAPITAL as i32) & 1) != 0 }
+}
+
+pub fn set_capslock_state(on: bool) {
+    if is_capslock_on() != on {
+        unsafe {
+            keybd_event(VK_CAPITAL as u8, 0x45, 0, 0);
+            keybd_event(VK_CAPITAL as u8, 0x45, KEYEVENTF_KEYUP, 0);
+        }
     }
 }
