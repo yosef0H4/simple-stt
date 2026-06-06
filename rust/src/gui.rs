@@ -27,14 +27,12 @@ pub fn show_settings() -> Result<()> {
 }
 
 pub fn show_settings_on_event_loop() -> Result<()> {
-    slint::invoke_from_event_loop(|| {
-        if let Ok(app) = create_settings_window() {
-            if let Err(error) = app.show() {
-                tracing::error!(%error, "showing settings window failed");
-            }
-        }
-    })
-    .context("opening settings on Slint event loop")
+    let exe = std::env::current_exe().context("finding current Uvox executable")?;
+    std::process::Command::new(exe)
+        .arg("settings")
+        .spawn()
+        .context("starting settings window process")?;
+    Ok(())
 }
 
 pub fn open_latest_log() -> Result<()> {
@@ -623,5 +621,13 @@ mod tests {
         assert_eq!(saved.log_level, LogLevel::Extreme);
 
         std::env::remove_var("UVOX_CONFIG");
+    }
+
+    #[test]
+    fn general_toggles_use_two_way_bindings() {
+        let source = include_str!("../ui/settings.slint");
+        assert!(source.contains("checked <=> root.hotkey-enabled"));
+        assert!(source.contains("checked <=> root.start-with-windows"));
+        assert!(source.contains("checked <=> root.capslock-always-off"));
     }
 }

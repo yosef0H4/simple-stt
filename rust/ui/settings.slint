@@ -237,11 +237,11 @@ export component SettingsWindow inherits Window {
                 height: parent.height;
                 Text { text: "General"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
                 Text { text: "Hotkey"; x: 24px; y: 82px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 74px; width: 420px; label: "Enable CapsLock hold-to-record"; checked: root.hotkey-enabled; }
+                ToggleRow { x: 180px; y: 74px; width: 420px; label: "Enable CapsLock hold-to-record"; checked <=> root.hotkey-enabled; }
                 Text { text: "Startup"; x: 24px; y: 132px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 124px; width: 420px; label: "Start Uvox with Windows"; checked: root.start-with-windows; }
+                ToggleRow { x: 180px; y: 124px; width: 420px; label: "Start Uvox with Windows"; checked <=> root.start-with-windows; }
                 Text { text: "Caps Lock State"; x: 24px; y: 182px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 174px; width: 420px; label: "Always force CapsLock off"; checked: root.capslock-always-off; }
+                ToggleRow { x: 180px; y: 174px; width: 420px; label: "Always force CapsLock off"; checked <=> root.capslock-always-off; }
                 Text { text: "Status"; x: 24px; y: 240px; color: #596674; font-size: 15px; }
                 Text { text: "Tray utility running locally. No Python or webview is used."; x: 180px; y: 240px; color: #1e252c; font-size: 15px; }
             }
