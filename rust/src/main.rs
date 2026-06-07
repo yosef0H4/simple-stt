@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 #[cfg(not(windows))]
 use anyhow::bail;
 use anyhow::{Context, Result};
@@ -160,6 +162,38 @@ fn run_app() -> Result<()> {
     // Cross-process reload signal: the settings subprocess writes a sentinel
     // file when config is saved. We forward that notification into this loop.
     let reload_rx = uvox::reload_event::create_reload_channel()?;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+    use std::time::UNIX_EPOCH;
+
+    enum ControlCommand {
+        UnloadParakeetContext,
+    }
+
+    let (control_tx, control_rx) = unbounded::<ControlCommand>();
+    let last_activity_ts = Arc::new(AtomicU64::new(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    ));
+    let idle_timeout_atomic = Arc::new(AtomicU64::new(config.idle_timeout_secs));
+
+    // Background watcher: periodically requests context unload when idle.
+    {
+        let last_activity_ts = last_activity_ts.clone();
+        let idle_timeout_atomic = idle_timeout_atomic.clone();
+        let control_tx = control_tx.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+            let last = last_activity_ts.load(Ordering::SeqCst);
+            let idle = idle_timeout_atomic.load(Ordering::SeqCst);
+            if idle > 0 && now.saturating_sub(last) >= idle {
+                let _ = control_tx.try_send(ControlCommand::UnloadParakeetContext);
+            }
+        });
+    }
     let (exit_tx, exit_rx) = bounded::<()>(1);
     ctrlc::set_handler(move || {
         let _ = exit_tx.try_send(());
@@ -225,6 +259,8 @@ fn run_app() -> Result<()> {
                         tracing::info!("native CUDA Parakeet runtime ready");
                     }
                     last_activity = Instant::now();
+                    let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                    last_activity_ts.store(now_secs, Ordering::SeqCst);
                     tracing::info!(session_id, target_window, hotkey = record_hotkey.label, "hotkey down: recording");
                 }
                 Ok(HotkeyEvent::HotkeyUp) => {
@@ -276,6 +312,8 @@ fn run_app() -> Result<()> {
                             }
                         }
                         last_activity = Instant::now();
+                        let now_secs = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                        last_activity_ts.store(now_secs, Ordering::SeqCst);
                         tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                     }
                 }
@@ -379,12 +417,26 @@ fn run_app() -> Result<()> {
                         }
                         tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                         tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration reloaded from settings");
+                        idle_timeout_atomic.store(config.idle_timeout_secs, Ordering::SeqCst);
                     }
                     Err(error) => {
                         tray.set_status(TrayStatus::Error);
                         tracing::error!(%error, "configuration reload from settings failed");
                     }
                 }
+            },
+            recv(control_rx) -> message => match message {
+                Ok(ControlCommand::UnloadParakeetContext) => {
+                    if active.is_none() && parakeet.is_some() {
+                        if last_activity.elapsed() >= Duration::from_secs(config.idle_timeout_secs) {
+                            tracing::info!("idle timeout reached (watcher); releasing native CUDA Parakeet context");
+                            if let Some(engine) = &mut parakeet {
+                                engine.unload_context();
+                            }
+                        }
+                    }
+                }
+                Err(_) => {}
             },
             default(Duration::from_millis(100)) => {
                 let current_fingerprint = config_fingerprint();
@@ -428,6 +480,7 @@ fn run_app() -> Result<()> {
                             }
                             tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                             tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration file changed; reloaded live settings");
+                            idle_timeout_atomic.store(config.idle_timeout_secs, Ordering::SeqCst);
                         }
                         Err(error) => {
                             tracing::error!(%error, "configuration file changed but reload failed");
