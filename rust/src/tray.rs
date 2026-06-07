@@ -65,6 +65,14 @@ pub enum TrayCommand {
     Exit,
 }
 
+pub fn request_config_reload() {
+    if let Some(tx) = COMMAND_TX.get() {
+        let _ = tx.send(TrayCommand::ReloadConfig);
+    } else {
+        tracing::debug!("tray command channel unavailable; config reload request skipped");
+    }
+}
+
 pub struct TrayHandle {
     hwnd: HWND,
 }

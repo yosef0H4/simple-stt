@@ -144,7 +144,7 @@ export component SettingsWindow inherits Window {
 
     in-out property <int> section-index: 0;
     in-out property <string> status-title: "Ready";
-    in-out property <string> status-detail: "Hold CapsLock to record. Release to transcribe and type.";
+    in-out property <string> status-detail: "Hold the configured hotkey to record. Release the final key to transcribe and type.";
     in-out property <string> microphone: "Default microphone";
     in-out property <float> input-level: 0.0;
     in-out property <string> active-model: "tdt_ctc-110m-f16.gguf";
@@ -157,6 +157,7 @@ export component SettingsWindow inherits Window {
     in-out property <int> idle-timeout-secs: 180;
     in-out property <bool> start-with-windows: false;
     in-out property <bool> hotkey-enabled: true;
+    in-out property <string> record-hotkey: "CapsLock+S";
     in-out property <string> log-level: "Minimal";
     in-out property <string> test-transcript: "";
     in-out property <string> progress-text: "";
@@ -169,6 +170,7 @@ export component SettingsWindow inherits Window {
     in-out property <string> parakeet-runtime-dir;
     in-out property <string> parakeet-model-path;
     in-out property <bool> recording-test: false;
+    in-out property <bool> recording-hotkey: false;
 
     callback save-requested();
     callback reset-requested();
@@ -177,6 +179,9 @@ export component SettingsWindow inherits Window {
     callback model-test-requested();
     callback download-requested(int);
     callback open-log-requested();
+    callback record-hotkey-requested();
+    callback clear-hotkey-requested();
+    callback reset-hotkey-requested();
     callback model-delta(int);
     callback microphone-delta(int);
     callback typing-chunk-delta(int);
@@ -237,13 +242,18 @@ export component SettingsWindow inherits Window {
                 height: parent.height;
                 Text { text: "General"; x: 24px; y: 22px; color: #1e252c; font-size: 24px; font-weight: 800; }
                 Text { text: "Hotkey"; x: 24px; y: 82px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 74px; width: 420px; label: "Enable CapsLock hold-to-record"; checked <=> root.hotkey-enabled; }
-                Text { text: "Startup"; x: 24px; y: 132px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 124px; width: 420px; label: "Start Uvox with Windows"; checked <=> root.start-with-windows; }
-                Text { text: "Caps Lock State"; x: 24px; y: 182px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 174px; width: 420px; label: "Always force CapsLock off"; checked <=> root.capslock-always-off; }
-                Text { text: "Status"; x: 24px; y: 240px; color: #596674; font-size: 15px; }
-                Text { text: "Tray utility running locally. No Python or webview is used."; x: 180px; y: 240px; color: #1e252c; font-size: 15px; }
+                ToggleRow { x: 180px; y: 74px; width: 420px; label: "Enable dictation hotkey"; checked <=> root.hotkey-enabled; }
+                Text { text: "Current hotkey"; x: 24px; y: 132px; color: #596674; font-size: 15px; }
+                ValuePill { x: 180px; y: 124px; width: 210px; value: root.record-hotkey; }
+                QuietButton { x: 404px; y: 124px; width: 126px; label: root.recording-hotkey ? "Cancel" : "Record Hotkey"; clicked => { root.record-hotkey-requested(); } }
+                QuietButton { x: 544px; y: 124px; width: 72px; label: "Clear"; clicked => { root.clear-hotkey-requested(); } }
+                QuietButton { x: 630px; y: 124px; width: 118px; label: "Reset Default"; clicked => { root.reset-hotkey-requested(); } }
+                Text { text: "Startup"; x: 24px; y: 194px; color: #596674; font-size: 15px; }
+                ToggleRow { x: 180px; y: 186px; width: 420px; label: "Start Uvox with Windows"; checked <=> root.start-with-windows; }
+                Text { text: "Caps Lock State"; x: 24px; y: 244px; color: #596674; font-size: 15px; }
+                ToggleRow { x: 180px; y: 236px; width: 420px; label: "Always force CapsLock off"; checked <=> root.capslock-always-off; }
+                Text { text: "Status"; x: 24px; y: 302px; color: #596674; font-size: 15px; }
+                Text { text: "Tray utility running locally. Some reserved Windows shortcuts cannot be intercepted."; x: 180px; y: 302px; width: 560px; color: #1e252c; font-size: 15px; wrap: word-wrap; }
             }
 
             Card {

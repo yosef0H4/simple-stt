@@ -48,7 +48,9 @@ pub fn configure_settings_for_screenshot(app: &SettingsWindow, section: Option<&
     apply_config(app, &config);
     app.set_section_index(section_index(section));
     app.set_status_title("Ready".into());
-    app.set_status_detail("Hold CapsLock to record. Release to transcribe and type.".into());
+    app.set_status_detail(
+        "Hold the configured hotkey to record. Release the final key to transcribe and type.".into(),
+    );
     app.set_microphone("Default microphone".into());
     app.set_input_level(0.64);
     app.set_progress_text("Model ready".into());
@@ -67,7 +69,9 @@ fn create_settings_window() -> Result<SettingsWindow> {
 
 fn apply_config(app: &SettingsWindow, config: &AppConfig) {
     app.set_status_title("Ready".into());
-    app.set_status_detail("Hold CapsLock to record. Release to transcribe and type.".into());
+    app.set_status_detail(
+        "Hold the configured hotkey to record. Release the final key to transcribe and type.".into(),
+    );
     app.set_microphone(microphone_label(config).into());
     app.set_active_model(model_label(config).into());
     app.set_typing_chunk(config.typing_chunk_chars as i32);
@@ -75,6 +79,12 @@ fn apply_config(app: &SettingsWindow, config: &AppConfig) {
     app.set_idle_timeout_secs(config.idle_timeout_secs as i32);
     app.set_start_with_windows(config.start_with_windows);
     app.set_hotkey_enabled(config.hotkey_enabled);
+    app.set_record_hotkey(
+        crate::hotkey::HotkeySpec::parse(&config.record_hotkey)
+            .map(|spec| spec.label)
+            .unwrap_or_else(|_| config.record_hotkey.clone())
+            .into(),
+    );
     app.set_capslock_always_off(config.capslock_always_off);
     app.set_log_level(log_level_name(&config.log_level).into());
 
@@ -153,7 +163,10 @@ fn wire_callbacks(app: &SettingsWindow) {
     app.on_save_requested(move || {
         if let Some(app) = weak.upgrade() {
             match save_from_window(&app) {
-                Ok(()) => set_status(&app, "Saved", "Settings were written to config.json.", ""),
+                Ok(()) => {
+                    crate::tray::request_config_reload();
+                    set_status(&app, "Saved", "Settings were written to config.json.", "");
+                }
                 Err(error) => set_status(&app, "Save failed", &error.to_string(), ""),
             }
         }
@@ -181,6 +194,145 @@ fn wire_callbacks(app: &SettingsWindow) {
             if let Err(error) = open_latest_log() {
                 set_status(&app, "Log open failed", &error.to_string(), "");
             }
+        }
+    });
+
+    let weak = app.as_weak();
+    let active_hotkey_capture = Arc::new(Mutex::new(None::<crate::hotkey::HotkeyCaptureHandle>));
+    let active_hotkey_previous = Arc::new(Mutex::new(None::<String>));
+    let active_hotkey_capture_for_callback = active_hotkey_capture.clone();
+    let active_hotkey_previous_for_callback = active_hotkey_previous.clone();
+    app.on_record_hotkey_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            if app.get_recording_hotkey() {
+                tracing::info!("settings hotkey capture cancel requested");
+                if let Some(handle) = active_hotkey_capture_for_callback.lock().unwrap().take() {
+                    handle.cancel();
+                }
+                if let Some(previous) = active_hotkey_previous_for_callback.lock().unwrap().take() {
+                    app.set_record_hotkey(previous.into());
+                }
+                app.set_recording_hotkey(false);
+                app.set_busy(false);
+                set_status(&app, "Hotkey capture cancelled", "No hotkey was changed.", "");
+                return;
+            }
+
+            app.set_busy(true);
+            app.set_recording_hotkey(true);
+            tracing::info!(current = %app.get_record_hotkey(), "settings hotkey capture requested");
+            set_status(
+                &app,
+                "Record hotkey",
+                "Hold modifiers, then press the final key. Release modifiers to clear them.",
+                "Listening",
+            );
+            *active_hotkey_previous_for_callback.lock().unwrap() =
+                Some(app.get_record_hotkey().to_string());
+            let weak_done = weak.clone();
+            let active_done = active_hotkey_capture_for_callback.clone();
+            let previous_done = active_hotkey_previous_for_callback.clone();
+            let (handle, rx) = crate::hotkey::start_hotkey_capture();
+            *active_hotkey_capture_for_callback.lock().unwrap() = Some(handle);
+            thread::spawn(move || {
+                for event in rx {
+                    let done = matches!(
+                        event,
+                        crate::hotkey::HotkeyCaptureEvent::Complete(_)
+                            | crate::hotkey::HotkeyCaptureEvent::Cancelled
+                            | crate::hotkey::HotkeyCaptureEvent::Error(_)
+                    );
+                    let active_done = active_done.clone();
+                    let previous_done = previous_done.clone();
+                    let weak_done = weak_done.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(app) = weak_done.upgrade() {
+                            match event {
+                                crate::hotkey::HotkeyCaptureEvent::Preview(label) => {
+                                    tracing::debug!(preview = %label, "settings hotkey capture preview received");
+                                    app.set_record_hotkey(label.into());
+                                    if app.get_recording_hotkey() {
+                                        set_status(
+                                            &app,
+                                            "Record hotkey",
+                                            "Hold modifiers, then press the final key.",
+                                            "Listening",
+                                        );
+                                    }
+                                }
+                                crate::hotkey::HotkeyCaptureEvent::Complete(spec) => {
+                                    tracing::info!(hotkey = %spec.label, "settings hotkey capture complete");
+                                    app.set_record_hotkey(spec.label.into());
+                                    app.set_recording_hotkey(false);
+                                    app.set_busy(false);
+                                    active_done.lock().unwrap().take();
+                                    previous_done.lock().unwrap().take();
+                                    set_status(
+                                        &app,
+                                        "Hotkey captured",
+                                        "Press Save to persist this hotkey.",
+                                        "",
+                                    );
+                                }
+                                crate::hotkey::HotkeyCaptureEvent::Cancelled => {
+                                    tracing::info!("settings hotkey capture cancelled");
+                                    app.set_recording_hotkey(false);
+                                    app.set_busy(false);
+                                    active_done.lock().unwrap().take();
+                                    if let Some(previous) = previous_done.lock().unwrap().take() {
+                                        app.set_record_hotkey(previous.into());
+                                    }
+                                    set_status(
+                                        &app,
+                                        "Hotkey capture cancelled",
+                                        "No hotkey was changed.",
+                                        "",
+                                    );
+                                }
+                                crate::hotkey::HotkeyCaptureEvent::Error(error) => {
+                                    tracing::warn!(error = %error, "settings hotkey capture failed");
+                                    app.set_recording_hotkey(false);
+                                    app.set_busy(false);
+                                    active_done.lock().unwrap().take();
+                                    if let Some(previous) = previous_done.lock().unwrap().take() {
+                                        app.set_record_hotkey(previous.into());
+                                    }
+                                    set_status(&app, "Hotkey capture failed", &error, "");
+                                }
+                            }
+                        } else if done {
+                            if let Some(handle) = active_done.lock().unwrap().take() {
+                                handle.cancel();
+                            }
+                            previous_done.lock().unwrap().take();
+                        }
+                    });
+                    if done {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_clear_hotkey_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            app.set_record_hotkey("".into());
+            set_status(
+                &app,
+                "Hotkey cleared",
+                "Choose Record Hotkey or Reset Default before saving.",
+                "",
+            );
+        }
+    });
+
+    let weak = app.as_weak();
+    app.on_reset_hotkey_requested(move || {
+        if let Some(app) = weak.upgrade() {
+            app.set_record_hotkey(crate::hotkey::HotkeySpec::default().label.into());
+            set_status(&app, "Default hotkey", "CapsLock+S restored. Press Save to persist.", "");
         }
     });
 
@@ -474,6 +626,7 @@ fn save_from_window(app: &SettingsWindow) -> Result<()> {
     config.idle_timeout_secs = app.get_idle_timeout_secs().max(1) as u64;
     config.start_with_windows = app.get_start_with_windows();
     config.hotkey_enabled = app.get_hotkey_enabled();
+    config.record_hotkey = crate::hotkey::HotkeySpec::parse(&app.get_record_hotkey())?.label;
     config.capslock_always_off = app.get_capslock_always_off();
     config.log_level = parse_log_level(&app.get_log_level());
 
@@ -601,6 +754,7 @@ mod tests {
         app.set_idle_timeout_secs(240);
         app.set_start_with_windows(true);
         app.set_hotkey_enabled(false);
+        app.set_record_hotkey("Ctrl+Win+CapsLock+A".into());
         app.set_capslock_always_off(true);
         app.set_log_level("Extreme".into());
         app.set_parakeet_runtime_dir("external\\parakeet-runtime\\parakeet-windows-cuda".into());
@@ -617,6 +771,7 @@ mod tests {
         assert_eq!(saved.idle_timeout_secs, 240);
         assert!(saved.start_with_windows);
         assert!(!saved.hotkey_enabled);
+        assert_eq!(saved.record_hotkey, "Ctrl+Win+CapsLock+A");
         assert!(saved.capslock_always_off);
         assert_eq!(saved.log_level, LogLevel::Extreme);
 
@@ -627,6 +782,7 @@ mod tests {
     fn general_toggles_use_two_way_bindings() {
         let source = include_str!("../ui/settings.slint");
         assert!(source.contains("checked <=> root.hotkey-enabled"));
+        assert!(source.contains("record-hotkey-requested"));
         assert!(source.contains("checked <=> root.start-with-windows"));
         assert!(source.contains("checked <=> root.capslock-always-off"));
     }

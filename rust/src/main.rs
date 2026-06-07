@@ -135,6 +135,7 @@ fn run_app() -> Result<()> {
     let mut config = AppConfig::load()?;
     config.validate()?;
     config.validate_parakeet_files()?;
+    let mut record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
     hotkey::set_enabled(config.hotkey_enabled);
     if config.capslock_always_off {
         uvox::input::set_capslock_state(false);
@@ -149,7 +150,7 @@ fn run_app() -> Result<()> {
         Some(overlay.level_cell()),
     )?;
     let (hotkey_tx, hotkey_rx) = unbounded();
-    let _hook = hotkey::spawn_capslock_hook(hotkey_tx)?;
+    let _hook = hotkey::spawn_hotkey_hook(record_hotkey.clone(), hotkey_tx)?;
     let (tray_tx, tray_rx) = unbounded();
     let tray = TrayHandle::spawn(tray_tx)?;
     let (exit_tx, exit_rx) = bounded::<()>(1);
@@ -171,14 +172,17 @@ fn run_app() -> Result<()> {
     let mut last_config_mtime = config_mtime();
 
     println!("Uvox is running.");
-    println!("Hold CapsLock to record. Release CapsLock to transcribe with native CUDA Parakeet and type.");
+    println!(
+        "Hold {} to record. Release the final key to transcribe with native CUDA Parakeet and type.",
+        record_hotkey.label
+    );
     println!("Press Ctrl+C to exit.");
 
     loop {
         select! {
             recv(exit_rx) -> _ => break,
             recv(hotkey_rx) -> message => match message {
-                Ok(HotkeyEvent::CapsLockDown) if active.is_none() => {
+                Ok(HotkeyEvent::HotkeyDown) if active.is_none() => {
                     if !config.hotkey_enabled {
                         continue;
                     }
@@ -206,9 +210,9 @@ fn run_app() -> Result<()> {
                         tracing::info!("native CUDA Parakeet runtime ready");
                     }
                     last_activity = Instant::now();
-                    tracing::info!(session_id, target_window, "CapsLock down: recording");
+                    tracing::info!(session_id, target_window, hotkey = record_hotkey.label, "hotkey down: recording");
                 }
-                Ok(HotkeyEvent::CapsLockUp) => {
+                Ok(HotkeyEvent::HotkeyUp) => {
                     if config.capslock_always_off {
                         uvox::input::set_capslock_state(false);
                     }
@@ -216,7 +220,7 @@ fn run_app() -> Result<()> {
                         overlay.hide();
                         tray.set_status(TrayStatus::Transcribing);
                         let samples = recording.samples.len();
-                        tracing::info!(session_id = recording.session_id, samples, "CapsLock up: transcribing");
+                        tracing::info!(session_id = recording.session_id, samples, hotkey = record_hotkey.label, "hotkey up: transcribing");
                         if samples < 1_600 {
                             tracing::warn!(session_id = recording.session_id, samples, "ignored very short recording");
                             typist.cancel(recording.session_id);
@@ -292,13 +296,15 @@ fn run_app() -> Result<()> {
                     match AppConfig::load() {
                         Ok(new_config) => {
                             config = new_config;
+                            record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
+                            hotkey::set_record_hotkey(record_hotkey.clone());
                             hotkey::set_enabled(config.hotkey_enabled);
                             if config.capslock_always_off {
                                 uvox::input::set_capslock_state(false);
                             }
                             parakeet = None;
                             tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
-                            tracing::info!("configuration reloaded");
+                            tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration reloaded");
                         }
                         Err(error) => {
                             tray.set_status(TrayStatus::Error);
@@ -331,12 +337,14 @@ fn run_app() -> Result<()> {
                     match AppConfig::load() {
                         Ok(new_config) => {
                             config = new_config;
+                            record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
+                            hotkey::set_record_hotkey(record_hotkey.clone());
                             hotkey::set_enabled(config.hotkey_enabled);
                             if config.capslock_always_off {
                                 uvox::input::set_capslock_state(false);
                             }
                             tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
-                            tracing::info!("configuration file changed; reloaded live settings");
+                            tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration file changed; reloaded live settings");
                         }
                         Err(error) => {
                             tracing::error!(%error, "configuration file changed but reload failed");

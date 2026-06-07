@@ -41,6 +41,7 @@ pub struct AppConfig {
     pub parakeet_model_path: String,
     pub start_with_windows: bool,
     pub hotkey_enabled: bool,
+    pub record_hotkey: String,
     pub capslock_always_off: bool,
     pub log_level: LogLevel,
 }
@@ -59,6 +60,7 @@ impl Default for AppConfig {
                     .to_owned(),
             start_with_windows: false,
             hotkey_enabled: true,
+            record_hotkey: "capslock+s".to_owned(),
             capslock_always_off: false,
             log_level: LogLevel::Minimal,
         }
@@ -91,6 +93,7 @@ impl AppConfig {
             !self.parakeet_model_path.trim().is_empty(),
             "parakeet_model_path must not be empty"
         );
+        crate::hotkey::HotkeySpec::parse(&self.record_hotkey)?;
         Ok(())
     }
 
@@ -158,6 +161,9 @@ impl AppConfig {
         let value: Self =
             serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
         value.validate()?;
+        if !raw.contains("\"record_hotkey\"") {
+            value.save_to(path)?;
+        }
         Ok(value)
     }
 
@@ -218,6 +224,31 @@ mod tests {
         };
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path).unwrap(), config);
+    }
+
+    #[test]
+    fn old_config_defaults_to_capslock_s_hotkey() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            r#"{
+  "idle_timeout_secs": 180,
+  "typing_interval_ms": 20,
+  "typing_chunk_chars": 3,
+  "audio_gain": 1.0,
+  "audio_device_contains": "",
+  "parakeet_runtime_dir": "external\\parakeet-runtime\\parakeet-windows-cuda",
+  "parakeet_model_path": "external\\parakeet-runtime\\parakeet-windows-cuda\\models\\tdt_ctc-110m-f16.gguf",
+  "start_with_windows": false,
+  "hotkey_enabled": true,
+  "capslock_always_off": false,
+  "log_level": "minimal"
+}"#,
+        )
+        .unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.record_hotkey, "capslock+s");
     }
 
     #[test]
