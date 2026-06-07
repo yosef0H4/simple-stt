@@ -30,7 +30,8 @@ const ID_DISABLE: usize = 1002;
 const ID_RELOAD: usize = 1003;
 const ID_LOG: usize = 1004;
 const ID_TEST: usize = 1005;
-const ID_EXIT: usize = 1006;
+const ID_UNLOAD: usize = 1006;
+const ID_EXIT: usize = 1007;
 
 static COMMAND_TX: OnceLock<Sender<TrayCommand>> = OnceLock::new();
 
@@ -61,16 +62,9 @@ pub enum TrayCommand {
     ToggleHotkey,
     ReloadConfig,
     OpenLog,
+    UnloadModel,
     TestModel,
     Exit,
-}
-
-pub fn request_config_reload() {
-    if let Some(tx) = COMMAND_TX.get() {
-        let _ = tx.send(TrayCommand::ReloadConfig);
-    } else {
-        tracing::debug!("tray command channel unavailable; config reload request skipped");
-    }
 }
 
 pub struct TrayHandle {
@@ -182,6 +176,7 @@ unsafe extern "system" fn wnd_proc(
                 ID_DISABLE => Some(TrayCommand::ToggleHotkey),
                 ID_RELOAD => Some(TrayCommand::ReloadConfig),
                 ID_LOG => Some(TrayCommand::OpenLog),
+                ID_UNLOAD => Some(TrayCommand::UnloadModel),
                 ID_TEST => Some(TrayCommand::TestModel),
                 ID_EXIT => Some(TrayCommand::Exit),
                 _ => None,
@@ -252,6 +247,12 @@ unsafe fn show_menu(hwnd: HWND) {
         MF_STRING,
         ID_RELOAD,
         wide_null("Reload Config").as_ptr(),
+    );
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_UNLOAD,
+        wide_null("Unload Model").as_ptr(),
     );
     AppendMenuW(
         menu,

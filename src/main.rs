@@ -474,6 +474,20 @@ fn run_app() -> Result<()> {
                         }
                     }
                 }
+                Ok(TrayCommand::UnloadModel) => {
+                    if let Some(engine) = &mut parakeet {
+                        if active.is_none() {
+                            engine.unload_context();
+                            overlay.notify_info("Speech model unloaded", Some(Duration::from_secs(2)));
+                            tracing::info!("native CUDA Parakeet context unloaded from tray");
+                        } else {
+                            overlay.notify_error("Cannot unload while recording", Duration::from_secs(5));
+                            tracing::warn!("cannot unload Parakeet while recording is active");
+                        }
+                    } else {
+                        overlay.notify_info("No speech model loaded", Some(Duration::from_secs(2)));
+                    }
+                }
                 Ok(TrayCommand::OpenLog) => {
                     if let Err(error) = uvox::gui::open_latest_log() {
                         overlay.notify_error("Could not open log", Duration::from_secs(5));

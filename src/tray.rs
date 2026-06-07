@@ -30,7 +30,8 @@ const ID_DISABLE: usize = 1002;
 const ID_RELOAD: usize = 1003;
 const ID_LOG: usize = 1004;
 const ID_TEST: usize = 1005;
-const ID_EXIT: usize = 1006;
+const ID_UNLOAD: usize = 1006;
+const ID_EXIT: usize = 1007;
 
 static COMMAND_TX: OnceLock<Sender<TrayCommand>> = OnceLock::new();
 
@@ -61,6 +62,7 @@ pub enum TrayCommand {
     ToggleHotkey,
     ReloadConfig,
     OpenLog,
+    UnloadModel,
     TestModel,
     Exit,
 }
@@ -252,6 +254,12 @@ unsafe fn show_menu(hwnd: HWND) {
         MF_STRING,
         ID_RELOAD,
         wide_null("Reload Config").as_ptr(),
+    );
+    AppendMenuW(
+        menu,
+        MF_STRING,
+        ID_UNLOAD,
+        wide_null("Unload Model").as_ptr(),
     );
     AppendMenuW(
         menu,

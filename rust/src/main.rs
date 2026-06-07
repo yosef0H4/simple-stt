@@ -375,6 +375,18 @@ fn run_app() -> Result<()> {
                         }
                     }
                 }
+                Ok(TrayCommand::UnloadModel) => {
+                    if let Some(engine) = &mut parakeet {
+                        if active.is_none() {
+                            engine.unload_context();
+                            tracing::info!("native CUDA Parakeet context unloaded from tray");
+                        } else {
+                            tracing::warn!("cannot unload Parakeet while recording is active");
+                        }
+                    } else {
+                        tracing::info!("no Parakeet engine loaded to unload");
+                    }
+                }
                 Ok(TrayCommand::OpenLog) => {
                     if let Err(error) = uvox::gui::open_latest_log() {
                         tracing::error!(%error, "opening latest log failed");
