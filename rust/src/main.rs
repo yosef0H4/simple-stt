@@ -157,6 +157,9 @@ fn run_app() -> Result<()> {
     let _hook = hotkey::spawn_hotkey_hook(record_hotkey.clone(), hotkey_tx)?;
     let (tray_tx, tray_rx) = unbounded();
     let tray = TrayHandle::spawn(tray_tx)?;
+    // Cross-process reload signal: the settings subprocess writes a sentinel
+    // file when config is saved. We forward that notification into this loop.
+    let reload_rx = uvox::reload_event::create_reload_channel()?;
     let (exit_tx, exit_rx) = bounded::<()>(1);
     ctrlc::set_handler(move || {
         let _ = exit_tx.try_send(());
@@ -211,6 +214,14 @@ fn run_app() -> Result<()> {
                             "loading native CUDA Parakeet runtime"
                         );
                         parakeet = Some(ParakeetNative::load_from_config(&config)?);
+                        tracing::info!("native CUDA Parakeet runtime ready");
+                    } else if !parakeet.as_ref().unwrap().is_context_loaded() {
+                        tracing::info!(
+                            runtime_dir = %config.parakeet_runtime_dir_path().display(),
+                            model = %config.parakeet_model_path().display(),
+                            "reloading native CUDA Parakeet context"
+                        );
+                        parakeet.as_mut().unwrap().load_context(&config.parakeet_model_path())?;
                         tracing::info!("native CUDA Parakeet runtime ready");
                     }
                     last_activity = Instant::now();
@@ -299,6 +310,10 @@ fn run_app() -> Result<()> {
                 Ok(TrayCommand::ReloadConfig) => {
                     match AppConfig::load() {
                         Ok(new_config) => {
+                            let runtime_changed =
+                                config.parakeet_runtime_dir_path() != new_config.parakeet_runtime_dir_path();
+                            let model_changed =
+                                config.parakeet_model_path() != new_config.parakeet_model_path();
                             config = new_config;
                             record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
                             hotkey::set_record_hotkey(record_hotkey.clone());
@@ -306,7 +321,13 @@ fn run_app() -> Result<()> {
                             if config.capslock_always_off {
                                 uvox::input::set_capslock_state(false);
                             }
-                            parakeet = None;
+                            if runtime_changed {
+                                parakeet = None;
+                            } else if model_changed {
+                                if let Some(engine) = &mut parakeet {
+                                    engine.unload_context();
+                                }
+                            }
                             tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                             tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration reloaded");
                         }
@@ -334,6 +355,37 @@ fn run_app() -> Result<()> {
                 Ok(TrayCommand::Exit) => break,
                 Err(_) => break,
             },
+            recv(reload_rx) -> _ => {
+                tracing::info!("settings subprocess signalled config reload");
+                match AppConfig::load() {
+                    Ok(new_config) => {
+                        let runtime_changed =
+                            config.parakeet_runtime_dir_path() != new_config.parakeet_runtime_dir_path();
+                        let model_changed =
+                            config.parakeet_model_path() != new_config.parakeet_model_path();
+                        config = new_config;
+                        record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
+                        hotkey::set_record_hotkey(record_hotkey.clone());
+                        hotkey::set_enabled(config.hotkey_enabled);
+                        if config.capslock_always_off {
+                            uvox::input::set_capslock_state(false);
+                        }
+                        if runtime_changed {
+                            parakeet = None;
+                        } else if model_changed {
+                            if let Some(engine) = &mut parakeet {
+                                engine.unload_context();
+                            }
+                        }
+                        tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
+                        tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration reloaded from settings");
+                    }
+                    Err(error) => {
+                        tray.set_status(TrayStatus::Error);
+                        tracing::error!(%error, "configuration reload from settings failed");
+                    }
+                }
+            },
             default(Duration::from_millis(100)) => {
                 let current_fingerprint = config_fingerprint();
                 let mut loaded_config = None;
@@ -356,12 +408,23 @@ fn run_app() -> Result<()> {
                     last_config_fingerprint = current_fingerprint;
                     match loaded_config.map(Ok).unwrap_or_else(AppConfig::load) {
                         Ok(new_config) => {
+                            let runtime_changed =
+                                config.parakeet_runtime_dir_path() != new_config.parakeet_runtime_dir_path();
+                            let model_changed =
+                                config.parakeet_model_path() != new_config.parakeet_model_path();
                             config = new_config;
                             record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
                             hotkey::set_record_hotkey(record_hotkey.clone());
                             hotkey::set_enabled(config.hotkey_enabled);
                             if config.capslock_always_off {
                                 uvox::input::set_capslock_state(false);
+                            }
+                            if runtime_changed {
+                                parakeet = None;
+                            } else if model_changed {
+                                if let Some(engine) = &mut parakeet {
+                                    engine.unload_context();
+                                }
                             }
                             tray.set_status(if config.hotkey_enabled { TrayStatus::Ready } else { TrayStatus::Disabled });
                             tracing::info!(hotkey = %record_hotkey.label, enabled = config.hotkey_enabled, "configuration file changed; reloaded live settings");
@@ -376,8 +439,10 @@ fn run_app() -> Result<()> {
                     && parakeet.is_some()
                     && last_activity.elapsed() >= Duration::from_secs(config.idle_timeout_secs)
                 {
-                    tracing::info!("idle timeout reached; unloading native CUDA Parakeet runtime");
-                    parakeet = None;
+                    tracing::info!("idle timeout reached; releasing native CUDA Parakeet context");
+                    if let Some(engine) = &mut parakeet {
+                        engine.unload_context();
+                    }
                 }
             },
         }

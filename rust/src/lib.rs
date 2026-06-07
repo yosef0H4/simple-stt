@@ -20,6 +20,8 @@ pub mod overlay;
 #[cfg(windows)]
 pub mod parakeet_native;
 #[cfg(windows)]
+pub mod reload_event;
+#[cfg(windows)]
 pub mod startup;
 #[cfg(windows)]
 pub mod tray;

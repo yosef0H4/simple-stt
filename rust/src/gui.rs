@@ -641,6 +641,10 @@ fn save_from_window(app: &SettingsWindow) -> Result<()> {
         path = %AppConfig::config_path().display(),
         "settings saved"
     );
+    // Signal the run process to reload config immediately. This works
+    // cross-process: the settings window is spawned as a subprocess and the
+    // tray command channel is not available here, so we use a sentinel file.
+    crate::reload_event::signal_reload();
     Ok(())
 }
 
