@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::sync::{Arc, Mutex};
 use tracing_subscriber::fmt::MakeWriter;
 
@@ -37,6 +37,14 @@ impl std::io::Write for LogGuard {
 }
 
 pub fn init(config: Option<&AppConfig>) -> Result<()> {
+    init_with_append(config, false)
+}
+
+pub fn init_append(config: Option<&AppConfig>) -> Result<()> {
+    init_with_append(config, true)
+}
+
+fn init_with_append(config: Option<&AppConfig>, append: bool) -> Result<()> {
     let level = config
         .map(|config| config.log_level.clone())
         .unwrap_or(LogLevel::Normal);
@@ -44,7 +52,15 @@ pub fn init(config: Option<&AppConfig>) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
-    let file = File::create(&path).with_context(|| format!("creating {}", path.display()))?;
+    let file = if append {
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("opening {}", path.display()))?
+    } else {
+        File::create(&path).with_context(|| format!("creating {}", path.display()))?
+    };
     let writer = LogWriter {
         file: Arc::new(Mutex::new(file)),
     };
@@ -53,6 +69,6 @@ pub fn init(config: Option<&AppConfig>) -> Result<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
         .with_writer(writer)
         .init();
-    tracing::info!(path = %path.display(), "logging initialized");
+    tracing::info!(path = %path.display(), append, "logging initialized");
     Ok(())
 }

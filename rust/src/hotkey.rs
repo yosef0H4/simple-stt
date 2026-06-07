@@ -26,8 +26,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 const MOD_CAPSLOCK: u8 = 0b00001;
 const MOD_CTRL: u8 = 0b00010;
 const MOD_SHIFT: u8 = 0b00100;
-const MOD_ALT: u8 = 0b01000;
-const MOD_WIN: u8 = 0b10000;
+const MOD_WIN: u8 = 0b01000;
+const MOD_LALT: u8 = 0b10000;
+const MOD_RALT: u8 = 0b100000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HotkeyEvent {
@@ -98,11 +99,14 @@ impl HotkeySpec {
         if modifiers & MOD_SHIFT != 0 {
             parts.push("Shift".to_owned());
         }
-        if modifiers & MOD_ALT != 0 {
-            parts.push("Alt".to_owned());
-        }
         if modifiers & MOD_WIN != 0 {
             parts.push("Win".to_owned());
+        }
+        if modifiers & MOD_LALT != 0 {
+            parts.push("LAlt".to_owned());
+        }
+        if modifiers & MOD_RALT != 0 {
+            parts.push("RAlt".to_owned());
         }
         if modifiers & MOD_CAPSLOCK != 0 {
             parts.push("CapsLock".to_owned());
@@ -131,8 +135,11 @@ impl HotkeySpec {
         if self.modifiers & MOD_SHIFT != 0 {
             keys.extend([VK_LSHIFT as u32, VK_RSHIFT as u32]);
         }
-        if self.modifiers & MOD_ALT != 0 {
-            keys.extend([VK_LMENU as u32, VK_RMENU as u32]);
+        if self.modifiers & MOD_LALT != 0 {
+            keys.push(VK_LMENU as u32);
+        }
+        if self.modifiers & MOD_RALT != 0 {
+            keys.push(VK_RMENU as u32);
         }
         if self.modifiers & MOD_WIN != 0 {
             keys.extend([VK_LWIN as u32, VK_RWIN as u32]);
@@ -169,12 +176,7 @@ impl HookState {
     }
 
     fn exact_match(&self, spec: &HotkeySpec) -> bool {
-        self.down_modifiers == spec.modifiers
-            && self
-                .down_keys
-                .iter()
-                .copied()
-                .all(|vk| vk == spec.final_vk || modifier_bit_for_vk(vk).is_some())
+        exact_match_from_parts(spec, self.down_modifiers, self.down_keys.iter().copied())
     }
 
     fn should_suppress_while_active(&self, spec: &HotkeySpec, physical_vk: u32) -> bool {
@@ -215,6 +217,7 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         .and_then(|spec| spec.lock().ok().map(|spec| spec.clone()))
         .unwrap_or_default();
     let physical_vk = resolve_physical_vk(info);
+    let physical_modifiers = current_modifier_bits();
     let mut suppress = false;
     let mut event = None;
     let mut replay_capslock = false;
@@ -255,10 +258,40 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
             }
             if is_up && physical_vk == spec.final_vk {
                 repair_suppressed_modifiers(&state.repaired_modifiers);
+                force_release_hotkey_keys(&spec);
+                force_release_all_modifiers();
                 state.reset_active();
                 event = Some(HotkeyEvent::HotkeyUp);
             }
-        } else if is_down && physical_vk == spec.final_vk && !was_down && state.exact_match(&spec) {
+        }
+        let hook_match = state.exact_match(&spec);
+        let physical_match =
+            exact_match_from_parts(&spec, physical_modifiers, std::iter::once(physical_vk));
+        let relevant = physical_vk == spec.final_vk || modifier_bit_for_vk(physical_vk).is_some();
+        if relevant {
+            tracing::debug!(
+                vk = physical_vk,
+                key = key_label(physical_vk),
+                is_down,
+                is_up,
+                was_down,
+                active = state.active,
+                hook_modifiers = state.down_modifiers,
+                physical_modifiers,
+                expected_modifiers = spec.modifiers,
+                hook_match,
+                physical_match,
+                hotkey = %spec.label,
+                "runtime hotkey event"
+            );
+        }
+
+        if !state.active
+            && is_down
+            && physical_vk == spec.final_vk
+            && !was_down
+            && (hook_match || physical_match)
+        {
             suppress = true;
             state.active = true;
             state.capslock_consumed = spec.uses_capslock();
@@ -284,6 +317,12 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
 
 pub fn set_enabled(enabled: bool) {
     HOTKEY_ENABLED.store(enabled, Ordering::SeqCst);
+    let spec = SPEC
+        .get()
+        .and_then(|spec| spec.lock().ok().map(|spec| spec.clone()))
+        .unwrap_or_default();
+    force_release_hotkey_keys(&spec);
+    force_release_all_modifiers();
     if !enabled {
         if let Some(state) = STATE.get() {
             *state.lock().unwrap() = HookState::default();
@@ -292,6 +331,12 @@ pub fn set_enabled(enabled: bool) {
 }
 
 pub fn set_record_hotkey(spec: HotkeySpec) {
+    let previous = SPEC
+        .get()
+        .and_then(|spec| spec.lock().ok().map(|spec| spec.clone()))
+        .unwrap_or_default();
+    force_release_hotkey_keys(&previous);
+    force_release_all_modifiers();
     let lock = SPEC.get_or_init(|| Mutex::new(HotkeySpec::default()));
     *lock.lock().unwrap() = spec;
     if let Some(state) = STATE.get() {
@@ -307,6 +352,7 @@ pub fn spawn_hotkey_hook(
         .set(tx)
         .map_err(|_| anyhow!("hotkey hook already initialized"))?;
     set_record_hotkey(spec.clone());
+    force_release_all_modifiers();
     Ok(thread::spawn(move || unsafe {
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), null_mut(), 0);
         if hook.is_null() {
@@ -348,6 +394,7 @@ pub fn start_hotkey_capture() -> (HotkeyCaptureHandle, crossbeam_channel::Receiv
     let thread_cancel = Arc::clone(&cancel);
     let thread_completed = Arc::clone(&completed);
     let thread_id_out = Arc::clone(&thread_id);
+    let thread_id_for_poll = Arc::clone(&thread_id);
     thread::spawn(move || unsafe {
         CAPTURE_DONE.store(false, Ordering::SeqCst);
         let thread_id = GetCurrentThreadId();
@@ -369,7 +416,9 @@ pub fn start_hotkey_capture() -> (HotkeyCaptureHandle, crossbeam_channel::Receiv
         let poll_cancel = (*capture).cancel.clone();
         let poll_completed = (*capture).completed.clone();
         let poll_tx = (*capture).tx.clone();
-        let poll_thread = thread::spawn(move || poll_hotkey_capture(poll_tx, poll_cancel, poll_completed));
+        let poll_thread = thread::spawn(move || {
+            poll_hotkey_capture(poll_tx, poll_cancel, poll_completed, thread_id_for_poll)
+        });
         while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
             if message.message == WM_APP + 0x70 {
                 break;
@@ -433,6 +482,9 @@ unsafe extern "system" fn capture_proc(code: i32, wparam: WPARAM, lparam: LPARAM
         CAPTURE_DONE.store(true, Ordering::SeqCst);
         return 1;
     }
+    if state.completed.load(Ordering::SeqCst) || CAPTURE_DONE.load(Ordering::SeqCst) {
+        return CallNextHookEx(null_mut(), code, wparam, lparam);
+    }
     let is_down = matches!(wparam as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
     let is_up = matches!(wparam as u32, WM_KEYUP | WM_SYSKEYUP);
     if !is_down && !is_up {
@@ -455,6 +507,7 @@ fn poll_hotkey_capture(
     tx: Sender<HotkeyCaptureEvent>,
     cancel: Arc<AtomicBool>,
     completed: Arc<AtomicBool>,
+    thread_id: Arc<Mutex<Option<u32>>>,
 ) {
     let mut preview = String::new();
     while !cancel.load(Ordering::SeqCst) && !CAPTURE_DONE.load(Ordering::SeqCst) {
@@ -496,6 +549,11 @@ fn poll_hotkey_capture(
                     }
                 }
                 CAPTURE_DONE.store(true, Ordering::SeqCst);
+                if let Some(thread_id) = *thread_id.lock().unwrap() {
+                    unsafe {
+                        let _ = PostThreadMessageW(thread_id, WM_APP + 0x70, 0, 0);
+                    }
+                }
                 break;
             }
         }
@@ -521,16 +579,54 @@ fn current_modifier_bits() -> u8 {
     {
         modifiers |= MOD_SHIFT;
     }
-    if is_key_physically_down(VK_MENU as u32)
-        || is_key_physically_down(VK_LMENU as u32)
-        || is_key_physically_down(VK_RMENU as u32)
-    {
-        modifiers |= MOD_ALT;
+    if is_key_physically_down(VK_LMENU as u32) {
+        modifiers |= MOD_LALT;
+    }
+    if is_key_physically_down(VK_RMENU as u32) {
+        modifiers |= MOD_RALT;
     }
     if is_key_physically_down(VK_LWIN as u32) || is_key_physically_down(VK_RWIN as u32) {
         modifiers |= MOD_WIN;
     }
     modifiers
+}
+
+fn exact_match_from_parts(
+    spec: &HotkeySpec,
+    modifiers: u8,
+    keys: impl IntoIterator<Item = u32>,
+) -> bool {
+    let modifiers = normalized_match_modifiers(spec, modifiers);
+    if modifiers != spec.modifiers {
+        return false;
+    }
+    let mut saw_final = false;
+    for vk in keys {
+        if vk == spec.final_vk {
+            saw_final = true;
+        } else if modifier_bit_for_vk(vk).is_none() || !modifier_vk_allowed_for_spec(spec, vk) {
+            return false;
+        }
+    }
+    saw_final
+}
+
+fn normalized_match_modifiers(spec: &HotkeySpec, modifiers: u8) -> u8 {
+    if spec.modifiers & MOD_RALT != 0 && spec.modifiers & MOD_CTRL == 0 {
+        modifiers & !MOD_CTRL
+    } else {
+        modifiers
+    }
+}
+
+fn modifier_vk_allowed_for_spec(spec: &HotkeySpec, vk: u32) -> bool {
+    let Some(bit) = modifier_bit_for_vk(vk) else {
+        return false;
+    };
+    if spec.modifiers & bit != 0 {
+        return true;
+    }
+    bit == MOD_CTRL && spec.modifiers & MOD_RALT != 0 && spec.modifiers & MOD_CTRL == 0
 }
 
 fn is_key_physically_down(vk: u32) -> bool {
@@ -567,7 +663,8 @@ fn modifier_bit(token: &str) -> Option<u8> {
         "capslock" | "caps" | "caps_lock" => Some(MOD_CAPSLOCK),
         "ctrl" | "control" => Some(MOD_CTRL),
         "shift" => Some(MOD_SHIFT),
-        "alt" => Some(MOD_ALT),
+        "alt" | "lalt" | "leftalt" | "left_alt" => Some(MOD_LALT),
+        "ralt" | "rightalt" | "right_alt" | "altgr" => Some(MOD_RALT),
         "win" | "windows" | "meta" => Some(MOD_WIN),
         _ => None,
     }
@@ -661,6 +758,18 @@ fn key_label(vk: u32) -> &'static str {
         x if x == VK_DOWN as u32 => "Down",
         x if x == VK_LEFT as u32 => "Left",
         x if x == VK_RIGHT as u32 => "Right",
+        x if x == VK_CAPITAL as u32 => "CapsLock",
+        x if x == VK_CONTROL as u32 => "Ctrl",
+        x if x == VK_LCONTROL as u32 => "LCtrl",
+        x if x == VK_RCONTROL as u32 => "RCtrl",
+        x if x == VK_SHIFT as u32 => "Shift",
+        x if x == VK_LSHIFT as u32 => "LShift",
+        x if x == VK_RSHIFT as u32 => "RShift",
+        x if x == VK_MENU as u32 => "LAlt",
+        x if x == VK_LMENU as u32 => "LAlt",
+        x if x == VK_RMENU as u32 => "RAlt",
+        x if x == VK_LWIN as u32 => "LWin",
+        x if x == VK_RWIN as u32 => "RWin",
         x if x == VK_F1 as u32 => "F1",
         x if x == VK_F1 as u32 + 1 => "F2",
         x if x == VK_F1 as u32 + 2 => "F3",
@@ -685,11 +794,14 @@ fn label_from_parts(modifiers: u8, final_vk: u32) -> String {
     if modifiers & MOD_SHIFT != 0 {
         parts.push("Shift");
     }
-    if modifiers & MOD_ALT != 0 {
-        parts.push("Alt");
-    }
     if modifiers & MOD_WIN != 0 {
         parts.push("Win");
+    }
+    if modifiers & MOD_LALT != 0 {
+        parts.push("LAlt");
+    }
+    if modifiers & MOD_RALT != 0 {
+        parts.push("RAlt");
     }
     if modifiers & MOD_CAPSLOCK != 0 {
         parts.push("CapsLock");
@@ -706,11 +818,14 @@ fn modifier_label(modifiers: u8) -> String {
     if modifiers & MOD_SHIFT != 0 {
         parts.push("Shift");
     }
-    if modifiers & MOD_ALT != 0 {
-        parts.push("Alt");
-    }
     if modifiers & MOD_WIN != 0 {
         parts.push("Win");
+    }
+    if modifiers & MOD_LALT != 0 {
+        parts.push("LAlt");
+    }
+    if modifiers & MOD_RALT != 0 {
+        parts.push("RAlt");
     }
     if modifiers & MOD_CAPSLOCK != 0 {
         parts.push("CapsLock");
@@ -727,7 +842,8 @@ fn modifier_bit_for_vk(vk: u32) -> Option<u8> {
         x if x == VK_SHIFT as u32 || x == VK_LSHIFT as u32 || x == VK_RSHIFT as u32 => {
             Some(MOD_SHIFT)
         }
-        x if x == VK_MENU as u32 || x == VK_LMENU as u32 || x == VK_RMENU as u32 => Some(MOD_ALT),
+        x if x == VK_MENU as u32 || x == VK_LMENU as u32 => Some(MOD_LALT),
+        x if x == VK_RMENU as u32 => Some(MOD_RALT),
         x if x == VK_LWIN as u32 || x == VK_RWIN as u32 => Some(MOD_WIN),
         _ => None,
     }
@@ -768,10 +884,56 @@ fn resolve_physical_vk(info: &KBDLLHOOKSTRUCT) -> u32 {
 fn repair_suppressed_modifiers(modifiers: &HashSet<u32>) {
     for vk in modifiers.iter().copied() {
         if modifier_bit_for_vk(vk).is_some() {
-            unsafe {
-                keybd_event(vk as u8, 0, 0x0002, 0);
-            }
+            send_key_up(vk);
         }
+    }
+}
+
+fn force_release_hotkey_keys(spec: &HotkeySpec) {
+    for vk in spec.modifier_vks().into_iter().chain([spec.final_vk]) {
+        send_key_up(vk);
+    }
+    tracing::debug!(hotkey = %spec.label, "sent hotkey key-up repair events");
+}
+
+fn force_release_all_modifiers() {
+    for vk in [
+        VK_CAPITAL as u32,
+        VK_LCONTROL as u32,
+        VK_RCONTROL as u32,
+        VK_LSHIFT as u32,
+        VK_RSHIFT as u32,
+        VK_LMENU as u32,
+        VK_RMENU as u32,
+        VK_LWIN as u32,
+        VK_RWIN as u32,
+    ] {
+        send_key_up(vk);
+    }
+    tracing::debug!("sent global modifier key-up repair events");
+}
+
+fn send_key_up(vk: u32) {
+    let extended = matches!(
+        vk,
+        x if x == VK_RMENU as u32
+            || x == VK_RCONTROL as u32
+            || x == VK_LWIN as u32
+            || x == VK_RWIN as u32
+            || x == VK_INSERT as u32
+            || x == VK_DELETE as u32
+            || x == VK_HOME as u32
+            || x == VK_END as u32
+            || x == VK_PRIOR as u32
+            || x == VK_NEXT as u32
+            || x == VK_UP as u32
+            || x == VK_DOWN as u32
+            || x == VK_LEFT as u32
+            || x == VK_RIGHT as u32
+    );
+    let flags = 0x0002 | if extended { 0x0001 } else { 0 };
+    unsafe {
+        keybd_event(vk as u8, 0, flags, 0);
     }
 }
 
@@ -794,6 +956,9 @@ mod tests {
             "Ctrl+Win+CapsLock+A"
         );
         assert_eq!(HotkeySpec::parse("shift+f12").unwrap().label, "Shift+F12");
+        assert_eq!(HotkeySpec::parse("lalt+a").unwrap().label, "LAlt+A");
+        assert_eq!(HotkeySpec::parse("ralt+a").unwrap().label, "RAlt+A");
+        assert_eq!(HotkeySpec::parse("alt+a").unwrap().label, "LAlt+A");
     }
 
     #[test]
@@ -812,6 +977,70 @@ mod tests {
         assert!(state.exact_match(&spec));
         state.update_key_state(VK_LSHIFT as u32, true);
         assert!(!state.exact_match(&spec));
+    }
+
+    #[test]
+    fn left_and_right_alt_are_distinct_modifiers() {
+        let left = HotkeySpec::parse("lalt+a").unwrap();
+        let right = HotkeySpec::parse("ralt+a").unwrap();
+        assert_ne!(left.modifiers, right.modifiers);
+
+        let mut state = HookState::default();
+        state.update_key_state(VK_LMENU as u32, true);
+        state.update_key_state('A' as u32, true);
+        assert!(state.exact_match(&left));
+        assert!(!state.exact_match(&right));
+
+        let mut state = HookState::default();
+        state.update_key_state(VK_RMENU as u32, true);
+        state.update_key_state('A' as u32, true);
+        assert!(state.exact_match(&right));
+        assert!(!state.exact_match(&left));
+    }
+
+    #[test]
+    fn right_alt_allows_windows_altgr_synthetic_ctrl() {
+        let spec = HotkeySpec::parse("ralt+z").unwrap();
+        assert!(exact_match_from_parts(
+            &spec,
+            MOD_CTRL | MOD_RALT,
+            [VK_RMENU as u32, VK_LCONTROL as u32, 'Z' as u32]
+        ));
+
+        let left = HotkeySpec::parse("lalt+z").unwrap();
+        assert!(!exact_match_from_parts(
+            &left,
+            MOD_CTRL | MOD_LALT,
+            [VK_LMENU as u32, VK_LCONTROL as u32, 'Z' as u32]
+        ));
+    }
+
+    #[test]
+    fn configured_modifiers_pass_through_before_final_key() {
+        let mut state = HookState::default();
+        state.update_key_state(VK_LWIN as u32, true);
+        assert!(!state.active);
+        assert!(!state.exact_match(&HotkeySpec::parse("win+z").unwrap()));
+    }
+
+    #[test]
+    fn physical_exact_match_accepts_win_modifier_and_rejects_extras() {
+        let spec = HotkeySpec::parse("ctrl+shift+win+z").unwrap();
+        assert!(exact_match_from_parts(
+            &spec,
+            MOD_CTRL | MOD_SHIFT | MOD_WIN,
+            ['Z' as u32]
+        ));
+        assert!(!exact_match_from_parts(
+            &spec,
+            MOD_CTRL | MOD_SHIFT | MOD_WIN | MOD_LALT,
+            ['Z' as u32]
+        ));
+        assert!(!exact_match_from_parts(
+            &spec,
+            MOD_CTRL | MOD_SHIFT | MOD_WIN,
+            ['Z' as u32, 'X' as u32]
+        ));
     }
 
     #[test]
@@ -853,6 +1082,7 @@ mod tests {
         assert_eq!(modifier_label(MOD_CAPSLOCK), "CapsLock");
         assert_eq!(modifier_label(MOD_CTRL | MOD_WIN | MOD_CAPSLOCK), "Ctrl+Win+CapsLock");
         assert_eq!(label_from_parts(MOD_CTRL | MOD_WIN | MOD_CAPSLOCK, 'A' as u32), "Ctrl+Win+CapsLock+A");
+        assert_eq!(label_from_parts(MOD_RALT, 'A' as u32), "RAlt+A");
     }
 
     #[test]
@@ -861,7 +1091,7 @@ mod tests {
         for vk in ['A' as u32, 'S' as u32, '0' as u32, VK_F12 as u32, VK_RETURN as u32] {
             assert!(keys.contains(&vk), "capture key set should contain {vk}");
         }
-        for vk in [VK_CAPITAL as u32, VK_LSHIFT as u32, VK_LCONTROL as u32, VK_LMENU as u32, VK_LWIN as u32] {
+        for vk in [VK_CAPITAL as u32, VK_LSHIFT as u32, VK_LCONTROL as u32, VK_LMENU as u32, VK_RMENU as u32, VK_LWIN as u32] {
             assert!(!keys.contains(&vk), "modifiers should not be final keys");
         }
     }

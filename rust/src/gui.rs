@@ -634,7 +634,14 @@ fn save_from_window(app: &SettingsWindow) -> Result<()> {
     config.parakeet_model_path = app.get_parakeet_model_path().to_string();
 
     startup::set_start_with_windows(config.start_with_windows)?;
-    config.save()
+    config.save()?;
+    tracing::info!(
+        hotkey = %config.record_hotkey,
+        enabled = config.hotkey_enabled,
+        path = %AppConfig::config_path().display(),
+        "settings saved"
+    );
+    Ok(())
 }
 
 fn download_test_and_select(file: &str) -> Result<String> {

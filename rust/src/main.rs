@@ -53,7 +53,11 @@ enum CommandKind {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load().ok();
-    uvox::logging::init(config.as_ref())?;
+    if matches!(cli.command, CommandKind::Settings) {
+        uvox::logging::init_append(config.as_ref())?;
+    } else {
+        uvox::logging::init(config.as_ref())?;
+    }
     match cli.command {
         CommandKind::Run => run_app(),
         CommandKind::Settings => show_settings(),
@@ -169,7 +173,7 @@ fn run_app() -> Result<()> {
     let mut active: Option<Recording> = None;
     let mut next_session_id = 1_u64;
     let mut last_activity = Instant::now();
-    let mut last_config_mtime = config_mtime();
+    let mut last_config_fingerprint = config_fingerprint();
 
     println!("Uvox is running.");
     println!(
@@ -331,10 +335,26 @@ fn run_app() -> Result<()> {
                 Err(_) => break,
             },
             default(Duration::from_millis(100)) => {
-                let current_mtime = config_mtime();
-                if current_mtime != last_config_mtime {
-                    last_config_mtime = current_mtime;
+                let current_fingerprint = config_fingerprint();
+                let mut loaded_config = None;
+                let config_changed = if current_fingerprint != last_config_fingerprint {
+                    true
+                } else {
                     match AppConfig::load() {
+                        Ok(disk_config) => {
+                            let changed = live_config_changed(&config, &disk_config);
+                            loaded_config = Some(disk_config);
+                            changed
+                        }
+                        Err(error) => {
+                            tracing::debug!(%error, "live config comparison failed");
+                            false
+                        }
+                    }
+                };
+                if config_changed {
+                    last_config_fingerprint = current_fingerprint;
+                    match loaded_config.map(Ok).unwrap_or_else(AppConfig::load) {
                         Ok(new_config) => {
                             config = new_config;
                             record_hotkey = hotkey::HotkeySpec::parse(&config.record_hotkey)?;
@@ -432,8 +452,21 @@ fn tooltip_bench(_iterations: usize) -> Result<()> {
     bail!("Tooltip benchmark targets Windows")
 }
 
-fn config_mtime() -> Option<std::time::SystemTime> {
-    std::fs::metadata(AppConfig::config_path())
-        .ok()
-        .and_then(|meta| meta.modified().ok())
+fn config_fingerprint() -> Option<(std::time::SystemTime, u64, u64)> {
+    use std::hash::{Hash, Hasher};
+
+    let meta = std::fs::metadata(AppConfig::config_path()).ok()?;
+    let bytes = std::fs::read(AppConfig::config_path()).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Some((meta.modified().ok()?, meta.len(), hasher.finish()))
+}
+
+fn live_config_changed(current: &AppConfig, disk: &AppConfig) -> bool {
+    current.record_hotkey != disk.record_hotkey
+        || current.hotkey_enabled != disk.hotkey_enabled
+        || current.capslock_always_off != disk.capslock_always_off
+        || current.idle_timeout_secs != disk.idle_timeout_secs
+        || current.parakeet_runtime_dir != disk.parakeet_runtime_dir
+        || current.parakeet_model_path != disk.parakeet_model_path
 }
