@@ -1,20 +1,18 @@
-# Skill: run the model smoke tests
+# Skill: run Uvox smoke tests
 
-Use this when validating the CUDA environment or the Nemotron integration.
-
-## Commands
+Source-only checks:
 
 ```powershell
-.\scripts\setup-worker.ps1
-cd worker
-uv run --no-sync uvox-worker doctor --check-nemo
-uv run --no-sync uvox-worker fetch-sample
-uv run --no-sync uvox-worker smoke-test
-uv run --no-sync uvox-worker stream-file-test --lookahead-ms 80
+.\scripts\test-static.ps1
 ```
 
-## Interpret failures
+Windows release checks:
 
-- `torch.cuda.is_available() returned False`: environment failure; do not add CPU fallback.
-- Whole-file test fails before output: CUDA, NeMo install, model download, or model compatibility issue.
-- Whole-file test passes but stream-file test fails: inspect `nemotron.py` state initialization and chunk processing.
+```powershell
+.\scripts\check-prereqs.ps1 -RequireRuntime
+.\scripts\build-release.ps1
+.\scripts\memory-cleanup-validation.ps1 -IdleSeconds 5
+.\scripts\run-dev.ps1 -SkipBuild
+```
+
+Use the AHK manual scripts under `ahk\tests\` for hotkeys, Unicode typing, and IPC. Do not add a CPU fallback when CUDA or the Parakeet runtime is missing.

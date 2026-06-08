@@ -1,30 +1,27 @@
-# Skill: debug the live pipeline
+# Skill: debug the Uvox pipeline
 
-Use the layers in order. Do not debug everything at once.
+Use the component boundaries in order:
 
 ```powershell
-cargo test --workspace
-cargo run -p uvox -- list-inputs
-cargo run -p uvox -- record-test --seconds 5 --output recording-test.wav
-cargo run -p uvox -- type-test "Uvox typing test."
-$env:RUST_LOG="uvox=debug"
-cargo run -p uvox -- run
+.\scripts\test-static.ps1
+cargo test --all-targets
+.\scripts\check-prereqs.ps1 -RequireRuntime
+.\scripts\run-dev.ps1 -SkipBuild
 ```
 
-Expected live state sequence:
+Expected live sequence:
 
 ```text
-CapsLockDown
-→ start retaining 20 ms frames
-→ spawn worker if absent
-→ hello token accepted
-→ loading_model
-→ ready
-→ send start(session_id)
-→ drain ring buffer
-→ partial events
-→ commit deltas
-→ fixed-rate Unicode text
+AHK hotkey down
+→ uvoxctl start-recording
+→ capture retains 20 ms PCM frames
+→ AHK hotkey up
+→ uvoxctl stop-recording
+→ capture launches or reuses uvox-infer
+→ worker loads model lazily when cold
+→ worker returns Unicode transcript
+→ AHK event poll queues focus-checked SendText chunks
+→ idle timeout terminates uvox-infer process
 ```
 
-On CapsLockUp, confirm that Rust cancels the typist synchronously before sending Python cancel.
+Inspect separate logs under `%LOCALAPPDATA%\uvox\logs`. Never “fix” capture failures by loading Parakeet inside `uvox-capture.exe`.

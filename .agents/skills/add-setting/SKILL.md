@@ -1,11 +1,12 @@
-# Skill: add a desktop setting
+# Skill: add a Uvox setting
 
-Update all relevant locations:
+Update the canonical schema-v2 path consistently:
 
-1. `rust/src/config.rs`: add the serialized field, default, and validation.
-2. `rust/src/gui.rs`: expose a native Win32 input control if user-facing.
-3. `rust/src/app.rs`, `rust/src/audio.rs`, or `rust/src/worker.rs`: apply it.
-4. Rust config round-trip tests.
-5. `README.md` and `docs/ARCHITECTURE.md` when behavior changes.
+1. `src/config.rs`: serialized field, default, validation, and schema-1 migration when relevant.
+2. `src/bin/uvoxctl.rs`: `config-show` and `config-save` translation.
+3. `ahk/lib/Config.ahk`: persisted key list.
+4. `ahk/lib/SettingsGui.ahk`: user-facing control when appropriate.
+5. Capture/infer/shell owner: apply live, recycle worker, restart capture, or document shell restart.
+6. Rust tests and `docs/configuration.md`.
 
-Keep settings deterministic. Do not add anti-detection randomness.
+Keep one JSON config file. Do not add undocumented sidecar state. Do not introduce clipboard-default typing or anti-detection randomness.

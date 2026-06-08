@@ -1,8 +1,9 @@
+param(
+    [switch]$SkipBuild
+)
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-if (-not $env:RUST_LOG) {
-    $env:RUST_LOG = "uvox=debug"
-}
-$Audio = Join-Path $Root "tests\fixtures\parakeet-smoke.wav"
-cargo run -p uvox -- transcribe-file --audio $Audio
+if (-not $SkipBuild) { & (Join-Path $PSScriptRoot "build-release.ps1") -SkipTests }
+Write-Host "Starting isolated process-exit validation with a smoke-test WAV."
+& (Join-Path $PSScriptRoot "memory-cleanup-validation.ps1") -IdleSeconds 5

@@ -1,0 +1,39 @@
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+
+#Include ..\lib\Utils.ahk
+#Include ..\lib\Logging.ahk
+#Include ..\lib\Typist.ahk
+
+logger := ShellLog(A_Temp . "\uvox-typing-smoke.log")
+typistInstance := Typist(logger, Notice)
+
+Notice(text, level := "info") {
+    UvoxConsoleLine("NOTICE[" . level . "]: " . text)
+}
+
+Fail(message, exitCode := 1) {
+    UvoxConsoleError("FAIL: " . message)
+    ExitApp(exitCode)
+}
+
+if typistInstance.active
+    Fail("typist should start inactive")
+
+; Use a target window that cannot match the foreground window so the timer-driven
+; path cancels before SendText and remains safe for headless runs.
+typistInstance.Begin(1, -1, "Unicode: مرحبا 世界 🙂 — safe chunks", 3, 25, true)
+typistInstance.Begin(2, -1, "Queued text", 3, 25, true)
+Sleep(150)
+
+if typistInstance.active
+    Fail("typist should have cancelled the active item in headless mode")
+if typistInstance.queue.Length != 0
+    Fail("expected the queued transcript to drain after cancellation, got queue length " . typistInstance.queue.Length)
+
+typistInstance.Cancel("test cleanup", false, true)
+if typistInstance.queue.Length != 0
+    Fail("typist queue was not cleared by Cancel()")
+
+UvoxConsoleLine("PASS: typist queue/cancel headless smoke")
+ExitApp(0)

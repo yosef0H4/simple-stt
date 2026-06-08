@@ -1,24 +1,23 @@
-UVOX STT - START HERE
-=====================
+UVOX SOURCE OVERHAUL
+====================
 
-Target: Windows 10+ with an NVIDIA CUDA-capable GPU.
+Architecture:
+  AutoHotkey v2 shell -> persistent uvox-capture.exe -> disposable uvox-infer.exe
+  AutoHotkey uses disposable uvoxctl.exe helpers for non-blocking local control.
 
-1. Install Rust stable/Cargo and a current NVIDIA driver.
-2. Extract the native Parakeet runtime to:
+Read first:
+  docs\architecture.md
+  docs\configuration.md
+  docs\packaging.md
+  docs\testing.md
+  docs\memory-cleanup-validation.md
 
-   external\parakeet-runtime\parakeet-windows-cuda
+Windows development:
+  .\scripts\check-prereqs.ps1 -RequireRuntime
+  .\scripts\build-release.ps1
+  .\scripts\run-dev.ps1 -SkipBuild
 
-3. Open PowerShell in this folder.
-4. Run:
+Static source checks and IPC POC:
+  .\scripts\test-static.ps1
 
-   .\scripts\check-prereqs.ps1
-   .\scripts\test-audio.ps1
-
-After the audio test passes:
-
-   .\scripts\run.ps1
-
-Hold CapsLock while speaking. Release CapsLock to transcribe and type.
-
-More details: README.md
-Agent entrypoint: AGENTS.md
+The Linux editing environment did not build binaries. Run the documented Windows checks before release.

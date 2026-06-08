@@ -1,13 +1,10 @@
+use crate::config::{replace_file_atomic, validate_model_filename, AppConfig};
 use anyhow::{Context, Result};
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use crate::config::AppConfig;
-use crate::parakeet_native::ParakeetNative;
-
-pub const REPO_ID: &str = "mudler/parakeet-cpp-gguf";
-const BASE_URL: &str = "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main";
+pub const BASE_URL: &str = "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main";
 
 #[derive(Debug, Clone)]
 pub struct ModelSpec {
@@ -17,7 +14,6 @@ pub struct ModelSpec {
     pub size_mb: u32,
     pub recommended: bool,
 }
-
 const FAMILIES: &[(&str, &[(&str, u32)])] = &[
     (
         "tdt_ctc-110m",
@@ -115,94 +111,120 @@ const FAMILIES: &[(&str, &[(&str, u32)])] = &[
             ("f16", 2430),
             ("q8_0", 1559),
             ("q6_k", 1336),
-            ("q5_k", 1213),
-            ("q4_k", 1097),
+            ("q5_k", 1212),
+            ("q4_k", 1096),
         ],
     ),
 ];
 
 pub fn catalog() -> Vec<ModelSpec> {
-    let mut values = Vec::new();
-    for (family, quants) in FAMILIES {
-        for (quant, size_mb) in *quants {
-            values.push(ModelSpec {
+    FAMILIES
+        .iter()
+        .flat_map(|(family, quantizations)| {
+            quantizations.iter().map(move |(quant, size_mb)| ModelSpec {
                 family,
                 quant,
-                file: file_name(family, quant),
+                file: format!("{family}-{quant}.gguf"),
                 size_mb: *size_mb,
                 recommended: *quant == "f16",
-            });
-        }
-    }
-    values
+            })
+        })
+        .collect()
 }
-
-fn file_name(family: &str, quant: &str) -> String {
-    format!("{family}-{quant}.gguf")
-}
-
 pub fn find_by_file(file: &str) -> Option<ModelSpec> {
     catalog().into_iter().find(|model| model.file == file)
 }
 
-pub fn local_model_path(file: &str) -> PathBuf {
-    AppConfig::model_store_dir().join(file)
-}
-
-pub fn download_model(file: &str) -> Result<PathBuf> {
-    let spec = find_by_file(file).with_context(|| format!("unknown approved model: {file}"))?;
-    fs::create_dir_all(AppConfig::model_store_dir())?;
-    let target = local_model_path(&spec.file);
+pub fn download_model<F>(config: &AppConfig, filename: &str, mut on_progress: F) -> Result<PathBuf>
+where
+    F: FnMut(u64, Option<u64>),
+{
+    validate_model_filename(filename)?;
+    let spec =
+        find_by_file(filename).with_context(|| format!("unknown approved model: {filename}"))?;
+    let dir = config.model_dir_path();
+    fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    let target = dir.join(&spec.file);
     if target.exists() {
-        tracing::info!(target = %target.display(), "model file already exists locally; skipping download");
         return Ok(target);
     }
-    let partial = target.with_extension("gguf.partial");
+    let partial = target.with_extension(format!("gguf.partial.{:016x}", rand::random::<u64>()));
     let url = format!("{BASE_URL}/{}", spec.file);
-    tracing::info!(%url, target = %target.display(), "downloading model");
-    let mut response = reqwest::blocking::get(&url)?.error_for_status()?;
-    let mut out = fs::File::create(&partial)?;
-    let mut buf = [0_u8; 1024 * 128];
-    let mut downloaded = 0_u64;
-    loop {
-        let read = response.read(&mut buf)?;
-        if read == 0 {
-            break;
+    tracing::info!(%url, target = %target.display(), partial = %partial.display(), "model download begin");
+    let result = (|| -> Result<u64> {
+        let mut response = reqwest::blocking::get(&url)?.error_for_status()?;
+        let total = response.content_length();
+        let mut output = fs::File::create(&partial)
+            .with_context(|| format!("creating {}", partial.display()))?;
+        let mut buffer = [0_u8; 128 * 1024];
+        let mut downloaded = 0_u64;
+        loop {
+            let count = response.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            output.write_all(&buffer[..count])?;
+            downloaded += count as u64;
+            on_progress(downloaded, total);
         }
-        out.write_all(&buf[..read])?;
-        let prev_mb = downloaded / (10 * 1024 * 1024);
-        downloaded += read as u64;
-        let curr_mb = downloaded / (10 * 1024 * 1024);
-        if curr_mb > prev_mb {
-            tracing::info!(downloaded, "downloaded model bytes");
+        output.flush()?;
+        output.sync_all()?;
+        replace_file_atomic(&partial, &target)
+            .with_context(|| format!("renaming partial model to {}", target.display()))?;
+        Ok(downloaded)
+    })();
+    match result {
+        Ok(downloaded) => {
+            tracing::info!(target = %target.display(), bytes = downloaded, "model download complete");
+            Ok(target)
+        }
+        Err(error) => {
+            let _ = fs::remove_file(&partial);
+            Err(error)
         }
     }
-    out.flush()?;
-    fs::rename(&partial, &target)?;
-    tracing::info!(target = %target.display(), "model download complete");
-    Ok(target)
 }
 
-pub fn smoke_test_model(runtime_dir: &Path, model_path: &Path, audio: &Path) -> Result<String> {
-    let engine = ParakeetNative::load(runtime_dir, model_path)?;
-    engine.transcribe_wav(audio)
+pub fn smoke_audio_path() -> PathBuf {
+    crate::config::runtime_root()
+        .join("fixtures")
+        .join("parakeet-smoke.wav")
+}
+pub fn ensure_smoke_audio(path: &Path) -> Result<()> {
+    anyhow::ensure!(
+        path.exists(),
+        "smoke-test WAV is missing: {}",
+        path.display()
+    );
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
     #[test]
-    fn catalog_contains_current_default_model() {
+    fn catalog_contains_default() {
         assert!(find_by_file("tdt_ctc-110m-f16.gguf").is_some());
     }
-
     #[test]
-    fn f16_models_are_marked_recommended() {
-        let values = catalog();
-        assert!(values.iter().any(|model| model.family == "tdt-0.6b-v3"
-            && model.quant == "f16"
-            && model.recommended));
-        assert!(values.iter().any(|model| !model.recommended));
+    fn catalog_preserves_legacy_families() {
+        for file in [
+            "tdt-0.6b-v2-f16.gguf",
+            "tdt-1.1b-f16.gguf",
+            "tdt_ctc-1.1b-f16.gguf",
+        ] {
+            assert!(find_by_file(file).is_some(), "missing {file}");
+        }
+    }
+    #[test]
+    fn every_f16_variant_remains_recommended() {
+        assert!(catalog()
+            .into_iter()
+            .filter(|model| model.quant == "f16")
+            .all(|model| model.recommended));
+    }
+    #[test]
+    fn only_approved_names_are_downloadable() {
+        assert!(find_by_file("..\\evil.gguf").is_none());
     }
 }

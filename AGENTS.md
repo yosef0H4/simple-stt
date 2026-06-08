@@ -1,82 +1,27 @@
-# AGENTS.md
+# Agent notes
 
-This file is the coding-agent entrypoint for Uvox.
+Read `docs/architecture.md`, `docs/ahk-v2-research.md`, and `docs/current-behavior-inventory.md` before editing.
 
-## Mission
-
-Keep Uvox a lightweight Windows-first local dictation utility:
+Hard boundaries:
 
 ```text
-CapsLock press
-→ Rust starts retaining microphone audio immediately
-→ native CUDA Parakeet runtime loads or is reused
-→ CapsLock release stops recording
-→ Rust transcribes the complete clip in-process through parakeet.dll
-→ Rust inserts transcript text into the original focused app
-→ idle timeout unloads Parakeet
+AHK owns tray, GUI, hotkeys, startup registration, target-window safety, and final typing.
+uvox-capture owns CPAL audio, fast overlay, shell IPC, downloads, and worker supervision.
+uvox-infer is the only active process allowed to load parakeet.dll or GGUF models.
 ```
 
-Do not add Python, C#, browser-based desktop frameworks, live translation, or live partial transcription paths.
+Do not copy AHK v1 syntax into `ahk/`. Every executable AHK entry point starts with:
 
-## Safety and Product Rule
+```ahk
+#Requires AutoHotkey v2.0
+#SingleInstance Force
+```
 
-Do not add random delays, fake mistakes, or anti-detection behavior. Fixed configurable text pacing exists for normal UX and compatibility. Respect applications that reject injected input.
-
-Never create a git commit unless the user's latest message explicitly asks for a commit.
-
-After every code change, run a build/verification step immediately and fix any issue introduced before continuing. The minimum default loop is `cargo check -p uvox`; use broader verification such as `cargo test -p uvox`, scripts, or manual smoke tests when the change touches those surfaces.
-
-## First Debugging Commands
-
-Run in this order:
+Do not reintroduce in-process Parakeet loading under `src/capture/`. Run:
 
 ```powershell
-.\scripts\check-prereqs.ps1
-.\scripts\test-audio.ps1
-cargo test -p uvox
-cargo run -p uvox -- list-inputs
-cargo run -p uvox -- ui-screenshot --surface settings --output artifacts\ui-settings.png
-cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
-cargo run -p uvox -- run
+.\scripts\test-static.ps1
+cargo test --all-targets
 ```
 
-## Key Modules
-
-| Module | Responsibility |
-|---|---|
-| `rust/src/audio.rs` | CPAL input stream and 16 kHz mono PCM16 frame delivery |
-| `rust/src/resample.rs` | downmix, gain, linear resampling, PCM framing |
-| `rust/src/hotkey.rs` | global low-level CapsLock down/up hook and suppression |
-| `rust/src/input.rs` | Win32 Unicode `SendInput` |
-| `rust/src/transcript.rs` | focus-checked fixed-rate text queue |
-| `rust/src/parakeet_native.rs` | dynamic loading and C API calls for `parakeet.dll` |
-| `rust/src/config.rs` | native-only settings and runtime path validation |
-| `rust/src/gui.rs` | Slint settings window and non-blocking UI callbacks |
-| `rust/src/tray.rs` | notification-area icon and tray menu |
-| `rust/src/overlay.rs` | native layered Win32 click-through recording visualizer |
-| `rust/src/screenshots.rs` | real Slint PNG UI screenshots |
-
-## Runtime Invariants
-
-- No CPU fallback is allowed.
-- Runtime files live under `external/parakeet-runtime/parakeet-windows-cuda` unless config overrides them.
-- The model path must point to a GGUF Parakeet model.
-- Only a transcript for the current released recording may be typed.
-- Typing aborts if the foreground window changes.
-
-## Testing Strategy
-
-Rust tests should focus on platform-neutral logic: config, resampling, and transcript queue cancellation. Native CUDA behavior is verified through `transcribe-file` with `tests/fixtures/parakeet-smoke.wav`. Windows desktop behavior must be manually exercised with `run`.
-
-## UI Iteration Loop
-
-When changing UI layout, use deterministic screenshots so agents can inspect the result:
-
-```powershell
-cargo run -p uvox -- ui-screenshot --surface settings --section audio --output artifacts\ui-settings-audio.png
-cargo run -p uvox -- ui-screenshot --surface settings --section model --output artifacts\ui-settings-model.png
-cargo run -p uvox -- ui-screenshot --surface settings --section logging --output artifacts\ui-settings-logging.png
-cargo run -p uvox -- ui-screenshot --surface overlay --output artifacts\ui-overlay.png
-```
-
-Inspect the PNGs, adjust layout/colors/sizing, and repeat until the settings window and overlay are readable and not cramped. After each edit, run `cargo check -p uvox` right away and fix any breakage before moving on. Finish with `cargo test -p uvox`.
+Use git history as the reference for old monolith behavior; the archived monolith tree is no longer present in the working tree.

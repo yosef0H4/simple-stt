@@ -1,4 +1,7 @@
+param(
+    [switch]$SkipBuild,
+    [string]$AutoHotkey
+)
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $PSScriptRoot
-Set-Location $Root
-cargo run -p uvox -- settings
+Write-Host "Launching the Uvox shell. Use the tray icon and choose 'Open Settings'."
+& (Join-Path $PSScriptRoot "run-dev.ps1") -SkipBuild:$SkipBuild -AutoHotkey $AutoHotkey

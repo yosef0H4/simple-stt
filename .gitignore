@@ -1,36 +1,26 @@
 # Rust
-rust/target/
 target/
 **/target/
+
 # Python
-worker/.venv/
-worker/.pytest_cache/
-worker/.ruff_cache/
-worker/**/__pycache__/
-external/**/__pycache__/
+**/__pycache__/
 *.pyc
-# Runtime
+
+# Local runtime and models
 .cache/
 **/.cache/
 logs/
 config.local.json
-*.wav
-!docs/*.wav
-!tests/fixtures/*.wav
-parakeet-windows-cuda-sm86.zip
 external/parakeet-runtime/
 external/parakeet.cpp/
 external/AutoHotkey/
 models/
-artifacts/*.tmp
-artifacts/*.err
-artifacts/*.png
-artifacts-*.tmp
+parakeet-windows-cuda-sm86.zip
+
+# Generated diagnostics and packages
+artifacts/*
+!artifacts/.gitkeep
+
 # Editors
 .vscode/
 .idea/
-
-# Vendored helper generated outputs
-external/windows-live-captions-stt/.git/
-external/windows-live-captions-stt/.build/
-external/windows-live-captions-stt/.venv/
