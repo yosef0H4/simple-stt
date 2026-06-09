@@ -26,7 +26,9 @@ class ConfigStore {
         text := ""
         for key in keys
             text .= TabProtocol.Escape(key) . "`t" . TabProtocol.Escape(this.Get(key, "")) . "`n"
-        FileAppend(text, input, "UTF-8")
+        ; uvoxctl expects tab-delimited UTF-8 without a BOM. AHK's "UTF-8"
+        ; encoding writes a BOM which becomes part of the first config key.
+        FileAppend(text, input, "UTF-8-RAW")
         command := UvoxQuote(this.ctlExe) . " --output " . UvoxQuote(output) . " config-save --input " . UvoxQuote(input)
         try RunWait(command, A_ScriptDir, "Hide")
         catch Error as err

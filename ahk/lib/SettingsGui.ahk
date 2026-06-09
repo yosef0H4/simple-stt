@@ -126,6 +126,8 @@ class SettingsGui {
             this.SetStatus("Settings saved")
         } catch Error as err {
             this.SetStatus("Save failed: " . err.Message)
+            if this.app.HasProp("testMode") && this.app.testMode
+                throw err
             MsgBox(err.Message, "Uvox settings error", "Iconx")
         }
     }

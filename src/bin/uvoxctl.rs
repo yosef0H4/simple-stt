@@ -284,6 +284,7 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
             .split_once('\t')
             .context("config-save input must contain tab-separated key/value lines")?;
         let key = unescape_field(encoded_key);
+        let key = key.trim_start_matches(char::from_u32(65279).unwrap()).to_owned();
         let value = unescape_field(encoded_value);
         match key.as_str() {
             "hotkey_enabled" => config.hotkey_enabled = parse_bool(&value)?,
