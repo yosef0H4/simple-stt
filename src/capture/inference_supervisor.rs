@@ -108,6 +108,9 @@ impl WorkerSupervisor {
         self.config = next;
         Ok(())
     }
+    pub fn warm_up(&mut self) -> Result<()> {
+        self.ensure_worker()
+    }
     pub fn transcribe_pcm(&mut self, session_id: u64, samples: &[i16]) -> Result<String> {
         self.ensure_worker()?;
         let result = {

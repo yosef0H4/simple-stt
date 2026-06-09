@@ -116,6 +116,18 @@ WaitForEvent(kind, timeoutMs := 120000) {
     Fail("timed out waiting for event: " . kind)
 }
 
+WaitForWorkerLoaded(timeoutMs := 10000) {
+    deadline := A_TickCount + timeoutMs
+    while A_TickCount < deadline {
+        response := CallCtl("ping")
+        Assert(response["ok"], "ping during warm-up failed: " . response["message"])
+        if response["values"].Has("worker_pid")
+            return true
+        Sleep(150)
+    }
+    return false
+}
+
 WaitForWorkerUnloaded(timeoutMs := 10000) {
     deadline := A_TickCount + timeoutMs
     while A_TickCount < deadline {
@@ -147,6 +159,58 @@ TypingSmoke() {
     Assert(edit.Value = "hello world", "typing smoke mismatch: " . edit.Value)
     window.Destroy()
     SmokeTypingGui := ""
+}
+
+SetClipboardMarker() {
+    format := DllCall("user32\RegisterClipboardFormatW", "Str", "UvoxSmokeObject", "UInt")
+    if !DllCall("user32\OpenClipboard", "Ptr", 0, "Int")
+        throw Error("unable to open clipboard for marker")
+    try {
+        DllCall("user32\EmptyClipboard")
+        bytes := Buffer(12, 0)
+        StrPut("uvox-marker", bytes, "UTF-8")
+        handle := DllCall("kernel32\GlobalAlloc", "UInt", 0x42, "UPtr", bytes.Size, "Ptr")
+        if !handle
+            throw Error("unable to allocate clipboard marker")
+        ptr := DllCall("kernel32\GlobalLock", "Ptr", handle, "Ptr")
+        DllCall("ntdll\RtlMoveMemory", "Ptr", ptr, "Ptr", bytes.Ptr, "UPtr", bytes.Size)
+        DllCall("kernel32\GlobalUnlock", "Ptr", handle)
+        if !DllCall("user32\SetClipboardData", "UInt", format, "Ptr", handle, "Ptr")
+            throw Error("unable to publish clipboard marker")
+    } finally DllCall("user32\CloseClipboard")
+    return format
+}
+
+PastePlain(*) {
+    Send("^v")
+}
+
+PasteSmoke() {
+    global SmokeTypingGui
+    logger := ShellLog(A_Temp . "\\uvox-full-smoke-paste.log")
+    Hotkey("^+v", PastePlain, "On")
+    for item in [["paste_ctrl_v", 9101], ["paste_ctrl_shift_v", 9102]] {
+        format := SetClipboardMarker()
+        window := Gui("+AlwaysOnTop", "Uvox Full Smoke Paste")
+        edit := window.AddEdit("w360 h80")
+        window.Show("w390 h120")
+        SmokeTypingGui := window
+        WinWaitActive("ahk_id " . window.Hwnd, , 3)
+        Assert(WinActive("A") = window.Hwnd, item[1] . " window did not become active")
+        edit.Focus()
+        Sleep(100)
+        typistInstance := Typist(logger, NoopNotice)
+        typistInstance.Begin(item[2], window.Hwnd, "hello world", 3, 10, false, item[1])
+        deadline := A_TickCount + 5000
+        while typistInstance.active && A_TickCount < deadline
+            Sleep(25)
+        Assert(!typistInstance.active, item[1] . " smoke timed out")
+        Assert(edit.Value = "hello world", item[1] . " smoke mismatch: " . edit.Value)
+        Assert(DllCall("user32\IsClipboardFormatAvailable", "UInt", format, "Int"), item[1] . " did not restore non-text clipboard format")
+        window.Destroy()
+        SmokeTypingGui := ""
+    }
+    Hotkey("^+v", PastePlain, "Off")
 }
 
 Cleanup(*) {
@@ -191,12 +255,19 @@ try {
     Assert(response["ok"], "unload-model failed: " . response["message"])
     Assert(WaitForWorkerUnloaded(), "worker did not exit after unload")
 
+    Info("warming speech model at recording start")
+    response := CallCtl("start-recording --session-id 7001")
+    Assert(response["ok"], "start-recording warm-up failed: " . response["message"])
+    Assert(WaitForWorkerLoaded(), "worker PID not visible while recording was still active")
+
     Info("restarting isolated capture service")
     StopCapture()
     StartCapture()
 
     Info("typing hello world once")
     TypingSmoke()
+    Info("pasting hello world once and restoring clipboard")
+    PasteSmoke()
     StopCapture()
     UvoxConsoleLine("PASS: full AHK runtime smoke")
     ExitApp(0)

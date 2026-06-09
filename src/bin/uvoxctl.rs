@@ -10,7 +10,9 @@ use uvox::common::line_codec::{escape_field, unescape_field};
 use uvox::common::shell_protocol::{
     ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
-use uvox::config::{replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel};
+use uvox::config::{
+    replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel, TextDeliveryMode,
+};
 
 #[derive(Debug, Parser)]
 #[command(name = "uvoxctl", about = "One-shot Uvox shell-to-capture helper")]
@@ -215,6 +217,21 @@ fn config_show() -> Result<ShellResponse> {
         .values
         .insert("trailing_space".into(), config.trailing_space.to_string());
     response.values.insert(
+        "text_delivery_mode".into(),
+        match config.text_delivery_mode {
+            TextDeliveryMode::Type => "type",
+            TextDeliveryMode::PasteCtrlV => "paste_ctrl_v",
+            TextDeliveryMode::PasteCtrlShiftV => "paste_ctrl_shift_v",
+        }
+        .into(),
+    );
+    response
+        .values
+        .insert("remove_punctuation".into(), config.remove_punctuation.to_string());
+    response
+        .values
+        .insert("lowercase_output".into(), config.lowercase_output.to_string());
+    response.values.insert(
         "idle_worker_timeout_secs".into(),
         config.idle_worker_timeout_secs.to_string(),
     );
@@ -301,6 +318,16 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
             "typing_chunk_chars" => config.typing_chunk_chars = value.parse()?,
             "typing_interval_ms" => config.typing_interval_ms = value.parse()?,
             "trailing_space" => config.trailing_space = parse_bool(&value)?,
+            "text_delivery_mode" => {
+                config.text_delivery_mode = match value.as_str() {
+                    "type" => TextDeliveryMode::Type,
+                    "paste_ctrl_v" => TextDeliveryMode::PasteCtrlV,
+                    "paste_ctrl_shift_v" => TextDeliveryMode::PasteCtrlShiftV,
+                    _ => anyhow::bail!("invalid text_delivery_mode: {value}"),
+                }
+            }
+            "remove_punctuation" => config.remove_punctuation = parse_bool(&value)?,
+            "lowercase_output" => config.lowercase_output = parse_bool(&value)?,
             "idle_worker_timeout_secs" => config.idle_worker_timeout_secs = value.parse()?,
             "worker_shutdown_grace_ms" => config.worker_shutdown_grace_ms = value.parse()?,
             "start_with_windows" => config.start_with_windows = parse_bool(&value)?,

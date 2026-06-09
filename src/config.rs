@@ -44,6 +44,15 @@ pub enum CapsLockBehavior {
     AlwaysOff,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TextDeliveryMode {
+    Type,
+    #[default]
+    PasteCtrlV,
+    PasteCtrlShiftV,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -56,6 +65,9 @@ pub struct AppConfig {
     pub typing_chunk_chars: usize,
     pub typing_interval_ms: u64,
     pub trailing_space: bool,
+    pub text_delivery_mode: TextDeliveryMode,
+    pub remove_punctuation: bool,
+    pub lowercase_output: bool,
     pub idle_worker_timeout_secs: u64,
     pub worker_shutdown_grace_ms: u64,
     pub start_with_windows: bool,
@@ -79,6 +91,9 @@ impl Default for AppConfig {
             typing_chunk_chars: 3,
             typing_interval_ms: 20,
             trailing_space: true,
+            text_delivery_mode: TextDeliveryMode::PasteCtrlV,
+            remove_punctuation: false,
+            lowercase_output: false,
             idle_worker_timeout_secs: 180,
             worker_shutdown_grace_ms: 2_000,
             start_with_windows: false,
@@ -422,7 +437,11 @@ mod tests {
 
     #[test]
     fn default_config_is_valid() {
-        AppConfig::default().validate().unwrap();
+        let config = AppConfig::default();
+        config.validate().unwrap();
+        assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlV);
+        assert!(!config.remove_punctuation);
+        assert!(!config.lowercase_output);
     }
 
     #[test]

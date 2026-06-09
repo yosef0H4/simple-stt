@@ -45,11 +45,15 @@ class SettingsGui {
         testButton := window.AddButton("x+8 yp w150", "Test model")
         testButton.OnEvent("Click", ObjBindMethod(this, "TestModel"))
 
-        window.AddText("xm y+18 w150", "Typing chunk chars")
+        window.AddText("xm y+18 w150", "Text delivery")
+        this.controls["text_delivery_mode"] := window.AddDropDownList("x+8 yp-3 w220", ["type", "paste_ctrl_v", "paste_ctrl_shift_v"])
+        window.AddText("xm y+12 w150", "Typing chunk chars")
         this.controls["typing_chunk_chars"] := window.AddEdit("x+8 yp-3 w100")
         window.AddText("x+20 yp+3 w130", "Typing interval ms")
         this.controls["typing_interval_ms"] := window.AddEdit("x+8 yp-3 w100")
         this.controls["trailing_space"] := window.AddCheckbox("xm y+10", "Append trailing space")
+        this.controls["remove_punctuation"] := window.AddCheckbox("xm y+8", "Remove punctuation marks")
+        this.controls["lowercase_output"] := window.AddCheckbox("x+20 yp", "Convert output to lowercase")
 
         window.AddText("xm y+18 w190", "Idle speech-worker timeout sec")
         this.controls["idle_worker_timeout_secs"] := window.AddEdit("x+8 yp-3 w100")
@@ -74,7 +78,7 @@ class SettingsGui {
         openLog.OnEvent("Click", ObjBindMethod(this.app, "OpenLatestLog"))
         this.controls["status"] := window.AddText("xm y+14 w720", "Ready")
         this.LoadControls()
-        window.Show("w760 h770")
+        window.Show("w760 h810")
     }
 
     Hide(*) {
@@ -90,9 +94,12 @@ class SettingsGui {
         this.controls["audio_device_contains"].Value := config.Get("audio_device_contains")
         this.controls["audio_gain"].Value := config.Get("audio_gain", "1")
         this.controls["selected_model_filename"].Value := config.Get("selected_model_filename")
+        this.ChooseText(this.controls["text_delivery_mode"], config.Get("text_delivery_mode", "paste_ctrl_v"))
         this.controls["typing_chunk_chars"].Value := config.Get("typing_chunk_chars", "3")
         this.controls["typing_interval_ms"].Value := config.Get("typing_interval_ms", "20")
         this.controls["trailing_space"].Value := config.Bool("trailing_space", true)
+        this.controls["remove_punctuation"].Value := config.Bool("remove_punctuation")
+        this.controls["lowercase_output"].Value := config.Bool("lowercase_output")
         this.controls["idle_worker_timeout_secs"].Value := config.Get("idle_worker_timeout_secs", "180")
         this.controls["worker_shutdown_grace_ms"].Value := config.Get("worker_shutdown_grace_ms", "2000")
         this.controls["start_with_windows"].Value := config.Bool("start_with_windows")
@@ -115,9 +122,10 @@ class SettingsGui {
         config := this.app.config
         for key in ["record_hotkey", "audio_device_contains", "audio_gain", "selected_model_filename", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
             config.Set(key, this.controls[key].Value)
-        for key in ["hotkey_enabled", "trailing_space", "start_with_windows", "diagnostic_overlay", "log_transcripts"]
+        for key in ["hotkey_enabled", "trailing_space", "remove_punctuation", "lowercase_output", "start_with_windows", "diagnostic_overlay", "log_transcripts"]
             config.Set(key, UvoxBoolText(this.controls[key].Value))
         config.Set("capslock_behavior", this.controls["capslock_behavior"].Text)
+        config.Set("text_delivery_mode", this.controls["text_delivery_mode"].Text)
         config.Set("log_level", this.controls["log_level"].Text)
         try {
             HotkeySpec.Parse(config.Get("record_hotkey"))

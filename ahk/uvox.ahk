@@ -8,6 +8,7 @@
 #Include lib\IpcClient.ahk
 #Include lib\ProcessSupervisor.ahk
 #Include lib\Hotkeys.ahk
+#Include lib\TextTransform.ahk
 #Include lib\Typist.ahk
 #Include lib\Tray.ahk
 #Include lib\SettingsGui.ahk
@@ -128,8 +129,9 @@ class UvoxShell {
                 }
                 target := this.sessions[session]
                 this.sessions.Delete(session)
-                this.logger.Write("info", "transcript received chars=" . StrLen(event["text"]), session)
-                this.typist.Begin(session, target, event["text"], this.config.Int("typing_chunk_chars", 3), this.config.Int("typing_interval_ms", 20), this.config.Bool("trailing_space", true))
+                text := this.TransformTranscript(event["text"])
+                this.logger.Write("info", "transcript received chars=" . StrLen(text), session)
+                this.typist.Begin(session, target, text, this.config.Int("typing_chunk_chars", 3), this.config.Int("typing_interval_ms", 20), this.config.Bool("trailing_space", true), this.config.Get("text_delivery_mode", "paste_ctrl_v"))
             case "notice":
                 this.Notice(event["text"], event["level"])
                 if session && this.sessions.Has(session)
@@ -150,6 +152,10 @@ class UvoxShell {
         this.pendingStarts := Map()
         this.pendingStops := Map()
         this.Notice(hadActive ? "Recording cancelled: audio service restarted" : "Audio service restarting…", hadActive ? "warning" : "info")
+    }
+
+    TransformTranscript(text) {
+        return UvoxTransformTranscript(text, this.config.Bool("remove_punctuation"), this.config.Bool("lowercase_output"))
     }
 
     Notice(text, level := "info") {
@@ -213,6 +219,11 @@ class UvoxShell {
     RestartAudioService(*) {
         this.OnServiceRestart()
         this.supervisor.Restart()
+    }
+
+    ReloadApp(*) {
+        this.logger.Write("info", "shell reload requested")
+        Reload()
     }
 
     UnloadSpeechModel(*) {

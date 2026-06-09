@@ -22,8 +22,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     PeekMessageW, SendMessageW, TranslateMessage, MSG, PM_REMOVE, WS_EX_TOPMOST, WS_POPUP,
 };
 
-const BAR_COUNT: usize = 14;
-const MAX_LEVEL: usize = 8;
+const BAR_COUNT: usize = 10;
 const CURSOR_OFFSET: i32 = 16;
 const NOTICE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RECORDING_POLL_INTERVAL: Duration = Duration::from_millis(2);
@@ -206,6 +205,7 @@ struct TooltipState {
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
+    animation_phase: usize,
     last_text: String,
     text_buf: Vec<u16>,
 }
@@ -223,6 +223,7 @@ impl TooltipState {
             notice: None,
             target_level: 0.0,
             display_level: 0.0,
+            animation_phase: 0,
             last_text: String::new(),
             text_buf: Vec::new(),
         }
@@ -233,6 +234,7 @@ impl TooltipState {
         self.primary = OverlayPrimary::Recording;
         self.target_level = 0.0;
         self.display_level = 0.0;
+        self.animation_phase = 0;
     }
 
     fn set_primary(&mut self, primary: OverlayPrimary) {
@@ -325,6 +327,7 @@ impl TooltipState {
 
         if self.primary == OverlayPrimary::Recording {
             self.display_level = self.display_level * 0.10 + self.target_level * 0.90;
+            self.animation_phase = self.animation_phase.wrapping_add(1);
         }
         let text = self.render_text();
         if text != self.last_text {
@@ -374,7 +377,7 @@ impl TooltipState {
     fn render_text(&self) -> String {
         let primary = match self.primary {
             OverlayPrimary::Hidden => None,
-            OverlayPrimary::Recording => Some(ascii_visualizer(self.display_level)),
+            OverlayPrimary::Recording => Some(ascii_visualizer(self.display_level, self.animation_phase)),
             OverlayPrimary::Transcribing => Some("Transcribing...".to_owned()),
             OverlayPrimary::Typing => Some("Typing...".to_owned()),
         };
@@ -533,16 +536,17 @@ impl Drop for TooltipState {
     }
 }
 
-fn ascii_visualizer(level: f32) -> String {
+fn ascii_visualizer(level: f32, _phase: usize) -> String {
+    const GLYPHS: &[char] = &['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
     let level = level.clamp(0.0, 1.0);
-    let active = (level * MAX_LEVEL as f32).round() as usize;
     let center = (BAR_COUNT as f32 - 1.0) * 0.5;
-    let mut line = String::with_capacity(BAR_COUNT + 10);
-    line.push_str("rec ");
+    let mut line = String::with_capacity(BAR_COUNT * 3);
     for idx in 0..BAR_COUNT {
-        let distance = (idx as f32 - center).abs();
-        let height = ((MAX_LEVEL as f32 - distance * 0.85).round() as isize).max(1) as usize;
-        line.push(if height <= active { '|' } else { '.' });
+        let distance = (idx as f32 - center).abs() / center.max(1.0);
+        let envelope = (1.0 - distance * 0.88).max(0.12);
+        let strength = (level * envelope + 0.04).clamp(0.0, 1.0);
+        let glyph = GLYPHS[(strength * (GLYPHS.len() - 1) as f32).round() as usize];
+        line.push(glyph);
     }
     line
 }
@@ -577,4 +581,21 @@ fn make_lparam(x: i32, y: i32) -> LPARAM {
 
 fn tooltip_info_size() -> u32 {
     (std::mem::size_of::<TTTOOLINFOW>() - std::mem::size_of::<*mut std::ffi::c_void>()) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recording_waveform_is_prefix_free_unicode_and_stationary() {
+        let first = ascii_visualizer(0.4, 0);
+        let next_phase = ascii_visualizer(0.4, 1);
+        let louder = ascii_visualizer(0.8, 0);
+        assert!(!first.to_ascii_lowercase().contains("rec"));
+        assert_eq!(first.chars().count(), BAR_COUNT);
+        assert_eq!(first, next_phase);
+        assert_ne!(first, louder);
+        assert!(first.chars().all(|glyph| "▁▂▃▄▅▆▇".contains(glyph)));
+    }
 }

@@ -55,6 +55,9 @@ enum BackgroundResult {
     WorkerConfigReplaced {
         result: Result<(), String>,
     },
+    ModelWarmed {
+        result: Result<(), String>,
+    },
     ModelTested {
         result: Result<String, String>,
     },
@@ -154,7 +157,7 @@ fn main() -> Result<()> {
                 overlay.notify_error("Audio service error — see log", Duration::from_secs(3));
                 events.push(notice_event(NoticeLevel::Error, "Audio service error — see log"));
             },
-            recv(background_rx) -> message => if let Ok(result) = message { handle_background(result, &overlay, &mut events, config.log_transcripts, config.diagnostic_overlay, active.is_some(), &mut transcribing); },
+            recv(background_rx) -> message => if let Ok(result) = message { handle_background(result, &overlay, &mut events, config.log_transcripts, active.is_some(), &mut transcribing); },
             recv(control_rx) -> message => if let Ok(request) = message {
                 let response = handle_control(request.command, ControlContext {
                     config: &mut config,
@@ -244,6 +247,21 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let mut event = ServiceEvent::simple("recording_started");
             event.session_id = Some(session_id);
             events.push(event);
+            if nonzero_pid(worker_pid).is_none() {
+                overlay.notify_info("Loading speech model…", None);
+                let mut loading = ServiceEvent::simple("model_loading");
+                loading.session_id = Some(session_id);
+                events.push(loading);
+                let worker = Arc::clone(worker);
+                let tx = background_tx.clone();
+                std::thread::spawn(move || {
+                    let result = worker
+                        .lock()
+                        .map_err(|_| "inference-worker mutex poisoned".to_owned())
+                        .and_then(|mut worker| worker.warm_up().map_err(|error| error.to_string()));
+                    let _ = tx.send(BackgroundResult::ModelWarmed { result });
+                });
+            }
             tracing::info!(session_id, "recording start");
             ShellResponse::ok("recording started")
         }
@@ -438,7 +456,6 @@ fn handle_background(
     overlay: &OverlayHandle,
     events: &mut EventBuffer,
     log_transcripts: bool,
-    diagnostic_overlay: bool,
     active_recording: bool,
     transcribing: &mut HashSet<u64>,
 ) {
@@ -489,9 +506,7 @@ fn handle_background(
         }
         BackgroundResult::ModelUnloaded { result } => match result {
             Ok(()) => {
-                if diagnostic_overlay {
-                    overlay.notify_info("Speech model unloaded", Some(Duration::from_secs(2)));
-                }
+                overlay.notify_info("Speech model unloaded", Some(Duration::from_secs(2)));
             }
             Err(error) => tracing::warn!(%error, "worker shutdown failed"),
         },
@@ -503,6 +518,16 @@ fn handle_background(
                     NoticeLevel::Error,
                     "Speech-worker settings failed — see log",
                 ));
+            }
+        },
+        BackgroundResult::ModelWarmed { result } => match result {
+            Ok(()) => {
+                tracing::info!("speech model warmed while recording");
+                overlay.notify_info("Speech model loaded", Some(Duration::from_secs(2)));
+            }
+            Err(error) => {
+                tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
+                overlay.notify_warning("Speech model load failed — transcription will retry", Duration::from_secs(3));
             }
         },
         BackgroundResult::ModelTested { result } => match result {

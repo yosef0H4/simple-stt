@@ -36,7 +36,17 @@ class TabProtocol {
     static ReadResponse(path) {
         if !FileExist(path)
             return this.ErrorResponse("helper did not create a response file")
-        raw := FileRead(path, "UTF-8")
+        raw := ""
+        Loop 20 {
+            try {
+                raw := FileRead(path, "UTF-8")
+                break
+            } catch Error as err {
+                if A_Index = 20
+                    return this.ErrorResponse("unable to read helper response after retry: " . err.Message)
+                Sleep(10)
+            }
+        }
         response := Map("ok", false, "message", "", "values", Map(), "events", Array())
         eventBySeq := Map()
         for line in StrSplit(raw, "`n", "`r") {

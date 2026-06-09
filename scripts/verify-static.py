@@ -103,7 +103,7 @@ loader_paths = [path for path, body in all_active_rs.items() if "use libloading:
 if loader_paths != ["src/infer/parakeet_native.rs"]:
     errors.append(f"libloading import must exist only in src/infer/parakeet_native.rs, got {loader_paths}")
 need("src/bin/uvox_infer.rs", "ParakeetNative", "worker idle timeout reached; exiting process")
-need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker")
+need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self) -> Result<()>")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
 need("src/bin/uvox_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion")
 need("src/bin/uvox_infer.rs", "log_level: LogLevel", "&args.log_level")
@@ -112,18 +112,16 @@ need("src/capture/inference_supervisor.rs", '.arg("--log-level")')
 forbid("src/bin/uvox_capture.rs", "worker.lock().unwrap().worker_pid()", "worker.lock().unwrap().replace_config")
 checks.append("Parakeet DLL/model loading is isolated to disposable uvox-infer with exact-PID forced-exit fallback")
 
-# AHK shell owns desktop behavior and does not use the clipboard as typing transport.
+# AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
 need("ahk/lib/Tray.ahk", "A_TrayMenu", "TraySetIcon", "Open Settings", "Restart Audio Service", "Unload Speech Model")
-need("ahk/lib/SettingsGui.ahk", "Gui(", "Record chord", "List microphones", "Download model", "Advanced runtime directory")
+need("ahk/lib/SettingsGui.ahk", "Gui(", "Record chord", "List microphones", "Download model", "Advanced runtime directory", "text_delivery_mode")
 hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "Hotkey(", "InputHook(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
 if '"*CapsLock & "' in hotkeys_ahk:
     errors.append("CapsLock custom combination must not prepend wildcard; combinations already wildcard-match")
-need("ahk/lib/TabProtocol.ahk", 'StrReplace(value . "", "\\", "\\\\")', 'case "\\": out .= "\\"')
+need("ahk/lib/TabProtocol.ahk", 'StrReplace(value . "", "\\", "\\\\")', 'case "\\": out .= "\\"', "Loop 20", "unable to read helper response after retry")
 need("ahk/lib/Utils.ahk", 'DllCall("advapi32\\SystemFunction036"')
-typist = need("ahk/lib/Typist.ahk", "SendText(", "WinActive(\"A\") != this.targetWindow", "AnyPhysicalModifierDown")
-if "Clipboard" in typist or "A_Clipboard" in typist:
-    errors.append("Typist.ahk must not use the clipboard by default")
-checks.append("AHK owns tray, GUI, hotkeys, Caps Lock behavior, and foreground-safe Unicode typing")
+typist = need("ahk/lib/Typist.ahk", "SendText(", "ClipboardAll()", 'A_Clipboard := this.text', 'Send("^+v")', 'Send("^v")', "RestoreClipboardIfOwned", "GetClipboardSequenceNumber", "WinActive(\"A\") != this.targetWindow", "AnyPhysicalModifierDown")
+checks.append("AHK owns tray, GUI, hotkeys, full-format clipboard-preserving paste modes, and foreground-safe Unicode typing")
 
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
 ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "uvoxctl helper timed out", 'responseReady := FileExist(job["path"])')
