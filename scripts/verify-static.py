@@ -50,6 +50,7 @@ required_files = [
     "tools/ipc-poc/mock_service.py", "tools/ipc-poc/test_poc.py", "tools/ipc-poc/README.md",
     "scripts/build-release.ps1", "scripts/run-dev.ps1", "scripts/package-release.ps1",
     "scripts/memory-cleanup-validation.ps1",
+    "build.rs", "resources/uvox.exe.manifest", "resources/windows.rc",
     "tests/worker_lifecycle.rs",
 ]
 for path in required_files:
@@ -83,6 +84,13 @@ for binary in ["uvox_capture", "uvox_infer", "uvoxctl"]:
     if f"src/bin/{binary}.rs" not in required_files:
         errors.append(f"required split binary not registered in verifier: {binary}")
 checks.append("active Cargo graph has split binaries and no Slint frontend dependency")
+
+# Windows visual styles require an embedded Common Controls v6 manifest.
+need("Cargo.toml", 'build = "build.rs"', 'embed-resource = "3"')
+need("build.rs", 'resources/windows.rc', 'resources/uvox.exe.manifest', 'manifest_required()')
+need("resources/windows.rc", '1 24 "uvox.exe.manifest"')
+need("resources/uvox.exe.manifest", 'Microsoft.Windows.Common-Controls', 'version="6.0.0.0"', 'PerMonitorV2', 'asInvoker')
+checks.append("Windows binaries embed a Common Controls v6 manifest for modern tooltip styling")
 
 # Capture is lightweight and must never load Parakeet.
 active_capture = "\n".join(p.read_text(encoding="utf-8") for p in (root / "src/capture").glob("*.rs"))

@@ -4,6 +4,7 @@ version = "0.2.0"
 edition = "2021"
 license = "GPL-2.0-only"
 description = "Thin AutoHotkey shell with persistent capture and disposable Parakeet inference worker"
+build = "build.rs"
 autobins = false
 
 [dependencies]
@@ -17,6 +18,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+
+[build-dependencies]
+embed-resource = "3"
 
 [dev-dependencies]
 tempfile = "3"
