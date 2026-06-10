@@ -13,14 +13,14 @@
 #Include lib\Tray.ahk
 #Include lib\SettingsGui.ahk
 
-class UvoxShell {
+class SimpleSttShell {
     __New() {
-        this.ctlExe := UvoxResolveExe("uvoxctl")
-        this.captureExe := UvoxResolveExe("uvox-capture")
+        this.ctlExe := SimpleSttResolveExe("simple-stt-ctl")
+        this.captureExe := SimpleSttResolveExe("simple-stt-capture")
         if !FileExist(this.ctlExe)
-            throw Error("Missing uvoxctl.exe. Build or package the Rust binaries beside the shell.")
+            throw Error("Missing simple-stt-ctl.exe. Build or package the Rust binaries beside the shell.")
         if !FileExist(this.captureExe)
-            throw Error("Missing uvox-capture.exe. Build or package the Rust binaries beside the shell.")
+            throw Error("Missing simple-stt-capture.exe. Build or package the Rust binaries beside the shell.")
         this.config := ConfigStore(this.ctlExe)
         this.logger := ShellLog(this.config.Get("shell_log_path"), this.config.Get("log_level", "normal"))
         this.logger.Write("info", "shell start")
@@ -45,7 +45,7 @@ class UvoxShell {
         try this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), this.config.Get("capslock_behavior", "preserve_tap"))
         catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
-            MsgBox(err.Message, "Uvox hotkey error", "Iconx")
+            MsgBox(err.Message, "SimpleStt hotkey error", "Iconx")
         }
     }
 
@@ -155,13 +155,13 @@ class UvoxShell {
     }
 
     TransformTranscript(text) {
-        return UvoxTransformTranscript(text, this.config.Bool("remove_punctuation"), this.config.Bool("lowercase_output"))
+        return SimpleSttTransformTranscript(text, this.config.Bool("remove_punctuation"), this.config.Bool("lowercase_output"))
     }
 
     Notice(text, level := "info") {
         option := level = "error" ? 3 : level = "warning" ? 2 : 1
         this.logger.Write(level, text)
-        TrayTip(text, "Uvox", option)
+        TrayTip(text, "SimpleStt", option)
     }
 
     OpenSettings(*) {
@@ -170,15 +170,15 @@ class UvoxShell {
 
     ToggleHotkey(*) {
         enabled := !this.config.Bool("hotkey_enabled", true)
-        this.config.Set("hotkey_enabled", UvoxBoolText(enabled))
+        this.config.Set("hotkey_enabled", SimpleSttBoolText(enabled))
         try {
             this.config.SaveSync()
             this.hotkeys.SetEnabled(enabled)
             this.tray.Rebuild()
-            this.logger.Write("info", "hotkey enabled=" . UvoxBoolText(enabled))
+            this.logger.Write("info", "hotkey enabled=" . SimpleSttBoolText(enabled))
             this.Notice(enabled ? "Hotkey enabled" : "Hotkey disabled")
         } catch Error as err {
-            MsgBox(err.Message, "Uvox settings error", "Iconx")
+            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
         }
     }
 
@@ -193,7 +193,7 @@ class UvoxShell {
             this.logger.Write("info", "settings reload requested")
         } catch Error as err {
             this.logger.Write("error", "settings reload failed: " . err.Message)
-            MsgBox(err.Message, "Uvox settings error", "Iconx")
+            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
         }
     }
 
@@ -212,7 +212,7 @@ class UvoxShell {
             this.logger.Write("error", "service config reload failed: " . response["message"])
             return
         }
-        if response["values"].Has("restart_audio_service") && UvoxBool(response["values"]["restart_audio_service"])
+        if response["values"].Has("restart_audio_service") && SimpleSttBool(response["values"]["restart_audio_service"])
             this.RestartAudioService()
     }
 
@@ -247,7 +247,7 @@ class UvoxShell {
     }
 
     ApplyStartupRegistration() {
-        shortcut := A_Startup . "\Uvox.lnk"
+        shortcut := A_Startup . "\SimpleStt.lnk"
         enabled := this.config.Bool("start_with_windows")
         if enabled {
             try FileCreateShortcut(A_ScriptFullPath, shortcut, A_ScriptDir)
@@ -256,7 +256,7 @@ class UvoxShell {
         } else if FileExist(shortcut) {
             try FileDelete(shortcut)
         }
-        this.logger.Write("info", "startup registration enabled=" . UvoxBoolText(enabled))
+        this.logger.Write("info", "startup registration enabled=" . SimpleSttBoolText(enabled))
     }
 
     OnExit(reason, code) {
@@ -274,11 +274,11 @@ class UvoxShell {
 }
 
 try {
-    global Uvox := UvoxShell()
-    OnExit(ObjBindMethod(Uvox, "OnExit"))
-    OnError(ObjBindMethod(Uvox, "OnError"))
+    global SimpleStt := SimpleSttShell()
+    OnExit(ObjBindMethod(SimpleStt, "OnExit"))
+    OnError(ObjBindMethod(SimpleStt, "OnError"))
     Persistent
 } catch Error as err {
-    MsgBox(err.Message, "Uvox startup error", "Iconx")
+    MsgBox(err.Message, "SimpleStt startup error", "Iconx")
     ExitApp(1)
 }

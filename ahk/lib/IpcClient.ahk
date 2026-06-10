@@ -52,8 +52,8 @@ class IpcClient {
     }
 
     CallService(arguments, callback := "", kind := "command") {
-        output := UvoxTempFile("ctl")
-        command := UvoxQuote(this.ctlExe) . " --state-file " . UvoxQuote(this.stateFile) . " --token " . UvoxQuote(this.token) . " --output " . UvoxQuote(output) . " " . arguments
+        output := SimpleSttTempFile("ctl")
+        command := SimpleSttQuote(this.ctlExe) . " --state-file " . SimpleSttQuote(this.stateFile) . " --token " . SimpleSttQuote(this.token) . " --output " . SimpleSttQuote(output) . " " . arguments
         try {
             Run(command, A_ScriptDir, "Hide", &pid)
             this.jobs[pid] := Map("path", output, "callback", callback, "kind", kind, "started", A_TickCount)
@@ -62,7 +62,7 @@ class IpcClient {
         } catch Error as err {
             if kind = "events"
                 this.pollInFlight := false
-            this.logger.Write("error", "uvoxctl launch failed: " . err.Message)
+            this.logger.Write("error", "simple-stt-ctl launch failed: " . err.Message)
             response := TabProtocol.ErrorResponse(err.Message)
             if IsObject(callback)
                 callback.Call(response)
@@ -80,8 +80,8 @@ class IpcClient {
             if !responseReady && elapsed >= 35000 {
                 if ProcessExist(pid)
                     try ProcessClose(pid)
-                response := TabProtocol.ErrorResponse("uvoxctl helper timed out")
-                this.logger.Write("error", "uvoxctl helper timeout pid=" . pid . " kind=" . job["kind"])
+                response := TabProtocol.ErrorResponse("simple-stt-ctl helper timed out")
+                this.logger.Write("error", "simple-stt-ctl helper timeout pid=" . pid . " kind=" . job["kind"])
             } else {
                 response := TabProtocol.ReadResponse(job["path"])
             }

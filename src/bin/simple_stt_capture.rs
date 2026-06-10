@@ -1,6 +1,15 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use crossbeam_channel::{bounded, select, tick, unbounded, Sender};
+use simple_stt::capture::audio::{self, AudioEvent};
+use simple_stt::capture::inference_supervisor::{
+    nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
+};
+use simple_stt::capture::ipc_server::{self, ControlRequest};
+use simple_stt::capture::overlay::{OverlayHandle, OverlayPrimary};
+use simple_stt::capture::state::ServiceState;
+use simple_stt::common::shell_protocol::{NoticeLevel, ServiceEvent, ShellCommand, ShellResponse};
+use simple_stt::config::AppConfig;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -9,23 +18,14 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::time::{Duration, Instant};
-use uvox::capture::audio::{self, AudioEvent};
-use uvox::capture::inference_supervisor::{
-    nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
-};
-use uvox::capture::ipc_server::{self, ControlRequest};
-use uvox::capture::overlay::{OverlayHandle, OverlayPrimary};
-use uvox::capture::state::ServiceState;
-use uvox::common::shell_protocol::{NoticeLevel, ServiceEvent, ShellCommand, ShellResponse};
-use uvox::config::AppConfig;
 
 const MIN_RECORDING_SAMPLES: usize = 1_600; // 100 ms at 16 kHz.
 const EVENT_HISTORY_LIMIT: usize = 512;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "uvox-capture",
-    about = "Persistent lightweight Uvox audio capture service"
+    name = "simple-stt-capture",
+    about = "Persistent lightweight SimpleStt audio capture service"
 )]
 struct Args {
     #[arg(long)]
@@ -112,14 +112,18 @@ impl EventBuffer {
 fn main() -> Result<()> {
     let args = Args::parse();
     if let Some(config) = &args.config {
-        std::env::set_var("UVOX_CONFIG", config);
+        std::env::set_var("SIMPLE_STT_CONFIG", config);
     }
     let state_file = args
         .state_file
         .unwrap_or_else(AppConfig::service_state_path);
     let mut config = AppConfig::load()?;
     config.validate()?;
-    uvox::logging::init_component("capture", &AppConfig::capture_log_path(), &config.log_level)?;
+    simple_stt::logging::init_component(
+        "capture",
+        &AppConfig::capture_log_path(),
+        &config.log_level,
+    )?;
     tracing::info!(pid = std::process::id(), config = %AppConfig::config_path().display(), "capture service starting");
 
     let overlay = OverlayHandle::spawn()?;
@@ -388,8 +392,8 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             ShellResponse::ok("speech-model worker shutdown requested")
         }
         ShellCommand::TestModel => {
-            let audio = uvox::models::smoke_audio_path();
-            if let Err(error) = uvox::models::ensure_smoke_audio(&audio) {
+            let audio = simple_stt::models::smoke_audio_path();
+            if let Err(error) = simple_stt::models::ensure_smoke_audio(&audio) {
                 return ShellResponse::error(error.to_string());
             }
             if nonzero_pid(worker_pid).is_none() {
@@ -414,7 +418,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let progress_tx = tx.clone();
             let filename_for_thread = filename.clone();
             std::thread::spawn(move || {
-                let result = uvox::models::download_model(
+                let result = simple_stt::models::download_model(
                     &config,
                     &filename_for_thread,
                     |downloaded, total| {
@@ -445,7 +449,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         },
         ShellCommand::ListModels => {
             let mut response = ShellResponse::ok("cached models");
-            for (index, model) in uvox::models::catalog_for_config(config)
+            for (index, model) in simple_stt::models::catalog_for_config(config)
                 .into_iter()
                 .enumerate()
             {
@@ -456,7 +460,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             response
         }
-        ShellCommand::RefreshModels => match uvox::models::refresh_catalog_cache() {
+        ShellCommand::RefreshModels => match simple_stt::models::refresh_catalog_cache() {
             Ok(files) => {
                 let mut response = ShellResponse::ok("model catalog refreshed");
                 response
@@ -672,7 +676,7 @@ fn notice_event_for_session(level: NoticeLevel, text: &str, session_id: u64) -> 
 
 fn worker_config(config: &AppConfig) -> Result<WorkerConfig> {
     Ok(WorkerConfig {
-        executable: sibling_executable("uvox-infer")?,
+        executable: sibling_executable("simple-stt-infer")?,
         runtime_dir: config.parakeet_runtime_dir_path(),
         model_path: config.selected_model_path(),
         log_path: AppConfig::infer_log_path(),

@@ -5,15 +5,15 @@
 #Include ..\lib\Logging.ahk
 #Include ..\lib\Typist.ahk
 
-logger := ShellLog(A_Temp . "\uvox-typing-smoke.log")
+logger := ShellLog(A_Temp . "\simple-stt-typing-smoke.log")
 typistInstance := Typist(logger, Notice)
 
 Notice(text, level := "info") {
-    UvoxConsoleLine("NOTICE[" . level . "]: " . text)
+    SimpleSttConsoleLine("NOTICE[" . level . "]: " . text)
 }
 
 Fail(message, exitCode := 1) {
-    UvoxConsoleError("FAIL: " . message)
+    SimpleSttConsoleError("FAIL: " . message)
     ExitApp(exitCode)
 }
 
@@ -35,5 +35,5 @@ typistInstance.Cancel("test cleanup", false, true)
 if typistInstance.queue.Length != 0
     Fail("typist queue was not cleared by Cancel()")
 
-UvoxConsoleLine("PASS: typist queue/cancel headless smoke")
+SimpleSttConsoleLine("PASS: typist queue/cancel headless smoke")
 ExitApp(0)

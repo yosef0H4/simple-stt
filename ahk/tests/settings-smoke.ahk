@@ -17,9 +17,9 @@ class FakeIpc {
 class FakeApp {
     __New() {
         this.testMode := true
-        ctlExe := UvoxResolveExe("uvoxctl")
+        ctlExe := SimpleSttResolveExe("simple-stt-ctl")
         this.config := ConfigStore(ctlExe)
-        this.logger := ShellLog(A_Temp . "\uvox-settings-smoke.log")
+        this.logger := ShellLog(A_Temp . "\simple-stt-settings-smoke.log")
         this.ipc := FakeIpc()
     }
 
@@ -34,13 +34,13 @@ class FakeApp {
 }
 
 Fail(message, exitCode := 1) {
-    UvoxConsoleError("FAIL: " . message)
+    SimpleSttConsoleError("FAIL: " . message)
     ExitApp(exitCode)
 }
 
-tempDir := A_Temp . "\uvox-settings-smoke-" . A_TickCount
+tempDir := A_Temp . "\simple-stt-settings-smoke-" . A_TickCount
 DirCreate(tempDir)
-EnvSet("UVOX_CONFIG", tempDir . "\config.json")
+EnvSet("SIMPLE_STT_CONFIG", tempDir . "\config.json")
 
 app := FakeApp()
 settings := SettingsGui(app)
@@ -77,5 +77,5 @@ if !app.config.Bool("lowercase_output")
 settings.Hide()
 try settings.gui.Destroy()
 
-UvoxConsoleLine("PASS: settings GUI open/save smoke")
+SimpleSttConsoleLine("PASS: settings GUI open/save smoke")
 ExitApp(0)

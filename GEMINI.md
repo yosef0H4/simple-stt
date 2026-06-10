@@ -1,10 +1,10 @@
-# Uvox agent entry point
+# Simple STT agent entry point
 
 Read `AGENTS.md` first. The active architecture is:
 
 ```text
-AutoHotkey v2 shell -> persistent uvox-capture.exe -> disposable uvox-infer.exe
-                     disposable uvoxctl.exe control helper
+AutoHotkey v2 shell -> persistent simple-stt-capture.exe -> disposable simple-stt-infer.exe
+                     disposable simple-stt-ctl.exe control helper
 ```
 
 Do not reintroduce Rust tray code, Rust settings UI, global Rust hooks, Rust transcript injection, or Parakeet loading inside the resident capture service. Use `legacy/` only as migration reference.

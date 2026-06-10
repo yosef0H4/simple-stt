@@ -2,7 +2,7 @@ class TrayController {
     __New(app) {
         this.app := app
         try TraySetIcon("shell32.dll", 44)
-        A_IconTip := "Uvox local dictation"
+        A_IconTip := "SimpleStt local dictation"
         this.Rebuild()
     }
 

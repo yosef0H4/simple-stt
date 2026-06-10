@@ -131,7 +131,7 @@ class HotkeyManager {
         this.enabled := enabled
         if enabled
             this.EnableBindings()
-        this.logger.Write("info", "hotkey configured label=" . this.spec["label"] . " enabled=" . UvoxBoolText(enabled))
+        this.logger.Write("info", "hotkey configured label=" . this.spec["label"] . " enabled=" . SimpleSttBoolText(enabled))
     }
 
     EnableBindings() {

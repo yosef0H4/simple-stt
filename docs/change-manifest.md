@@ -3,7 +3,7 @@
 ## Added active shell files
 
 ```text
-ahk/uvox.ahk
+ahk/simple-stt.ahk
 ahk/lib/Config.ahk
 ahk/lib/Hotkeys.ahk
 ahk/lib/IpcClient.ahk
@@ -22,10 +22,10 @@ ahk/tests/typing-smoke.ahk
 ## Added active Rust files
 
 ```text
-src/bin/uvox_capture.rs
-src/bin/uvox_infer.rs
-src/bin/uvoxctl.rs
-src/bin/uvox_mock_infer.rs              test-only, excluded from release staging
+src/bin/simple_stt_capture.rs
+src/bin/simple_stt_infer.rs
+src/bin/simple-stt-ctl.rs
+src/bin/simple_stt_mock_infer.rs              test-only, excluded from release staging
 src/capture/audio.rs
 src/capture/inference_supervisor.rs
 src/capture/ipc_server.rs

@@ -37,7 +37,7 @@ The new shell preserves these behaviors and adds `Restart Audio Service`; labels
 
 ## Old persisted config and defaults
 
-The old JSON was stored at the platform config directory as `uvox/config.json`, overrideable through `UVOX_CONFIG`. It had no explicit schema version.
+The old JSON was stored at the platform config directory as `simple-stt/config.json`, overrideable through `SIMPLE_STT_CONFIG`. It had no explicit schema version.
 
 | Old field | Old default | Notes |
 | --- | --- | --- |
@@ -93,7 +93,7 @@ The shell now owns this behavior and sends literal Unicode with AHK `SendText()`
 
 The monolith loaded `parakeet.dll` and the selected GGUF model directly in its own resident process. The idle watcher requested `UnloadParakeetContext` every five seconds once the configured timeout had elapsed. This could free native context and VRAM while leaving allocator/process RAM resident.
 
-The new guarantee is stronger: only `uvox-infer.exe` loads Parakeet. Cleanup is verified by worker process exit rather than trusting DLL unload.
+The new guarantee is stronger: only `simple-stt-infer.exe` loads Parakeet. Cleanup is verified by worker process exit rather than trusting DLL unload.
 
 The old app had:
 
@@ -107,14 +107,14 @@ The new service preserves those capabilities. Checksums remain a known limitatio
 
 ## Old startup and logs
 
-`src/startup.rs` modified a per-user Windows Run registry value. The new shell uses an `A_Startup` shortcut that launches `uvox.ahk` in development or `uvox-shell.exe` when compiled.
+`src/startup.rs` modified a per-user Windows Run registry value. The new shell uses an `A_Startup` shortcut that launches `simple-stt.ahk` in development or `simple-stt-shell.exe` when compiled.
 
 The old logger wrote one `latest.log`. The new architecture writes append-style component logs:
 
 ```text
-uvox-shell.log
-uvox-capture.log
-uvox-infer.log
+simple-stt-shell.log
+simple-stt-capture.log
+simple-stt-infer.log
 ```
 
 Transcripts are not logged by default.

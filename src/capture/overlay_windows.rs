@@ -401,7 +401,7 @@ impl TooltipState {
             CreateWindowExW(
                 0,
                 windows_sys::w!("STATIC"),
-                windows_sys::w!("UvoxTooltipOwner"),
+                windows_sys::w!("SimpleSttTooltipOwner"),
                 WS_POPUP,
                 0,
                 0,

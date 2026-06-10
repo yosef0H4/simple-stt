@@ -28,10 +28,10 @@ impl LogLevel {
     }
     pub fn tracing_filter(&self) -> &'static str {
         match self {
-            Self::Minimal => "uvox=warn",
-            Self::Normal => "uvox=info",
-            Self::Debug => "uvox=debug",
-            Self::Extreme => "uvox=trace",
+            Self::Minimal => "simple-stt=warn",
+            Self::Normal => "simple-stt=info",
+            Self::Debug => "simple-stt=debug",
+            Self::Extreme => "simple-stt=trace",
         }
     }
 }
@@ -169,19 +169,19 @@ impl AppConfig {
     }
 
     pub fn config_path() -> PathBuf {
-        if let Some(path) = std::env::var_os("UVOX_CONFIG") {
+        if let Some(path) = std::env::var_os("SIMPLE_STT_CONFIG") {
             return PathBuf::from(path);
         }
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("uvox")
+            .join("simple-stt")
             .join("config.json")
     }
 
     pub fn local_data_dir() -> PathBuf {
         dirs::data_local_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("uvox")
+            .join("simple-stt")
     }
 
     pub fn logs_dir() -> PathBuf {
@@ -191,13 +191,13 @@ impl AppConfig {
         Self::local_data_dir().join("state")
     }
     pub fn shell_log_path() -> PathBuf {
-        Self::logs_dir().join("uvox-shell.log")
+        Self::logs_dir().join("simple-stt-shell.log")
     }
     pub fn capture_log_path() -> PathBuf {
-        Self::logs_dir().join("uvox-capture.log")
+        Self::logs_dir().join("simple-stt-capture.log")
     }
     pub fn infer_log_path() -> PathBuf {
-        Self::logs_dir().join("uvox-infer.log")
+        Self::logs_dir().join("simple-stt-infer.log")
     }
     pub fn service_state_path() -> PathBuf {
         Self::state_dir().join("capture-state.json")
@@ -478,9 +478,9 @@ mod tests {
     fn absolute_runtime_path_is_not_rebased() {
         let config = AppConfig::default();
         let absolute = if cfg!(windows) {
-            PathBuf::from(r"C:\uvox\runtime")
+            PathBuf::from(r"C:\simple-stt\runtime")
         } else {
-            PathBuf::from("/opt/uvox/runtime")
+            PathBuf::from("/opt/simple-stt/runtime")
         };
         assert_eq!(
             config.resolve_from_runtime_root(absolute.to_str().unwrap()),

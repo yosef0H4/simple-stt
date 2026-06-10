@@ -134,7 +134,7 @@ component MeterBar inherits Rectangle {
 }
 
 export component SettingsWindow inherits Window {
-    title: "Uvox Settings";
+    title: "simple-stt Settings";
     preferred-width: 1040px;
     preferred-height: 720px;
     min-width: 980px;
@@ -198,7 +198,7 @@ export component SettingsWindow inherits Window {
     }
 
     Text {
-        text: "Uvox";
+        text: "simple-stt";
         x: 34px;
         y: 32px;
         color: #f7fbff;
@@ -249,7 +249,7 @@ export component SettingsWindow inherits Window {
                 QuietButton { x: 544px; y: 124px; width: 72px; label: "Clear"; clicked => { root.clear-hotkey-requested(); } }
                 QuietButton { x: 630px; y: 124px; width: 118px; label: "Reset Default"; clicked => { root.reset-hotkey-requested(); } }
                 Text { text: "Startup"; x: 24px; y: 194px; color: #596674; font-size: 15px; }
-                ToggleRow { x: 180px; y: 186px; width: 420px; label: "Start Uvox with Windows"; checked <=> root.start-with-windows; }
+                ToggleRow { x: 180px; y: 186px; width: 420px; label: "Start simple-stt with Windows"; checked <=> root.start-with-windows; }
                 Text { text: "Caps Lock State"; x: 24px; y: 244px; color: #596674; font-size: 15px; }
                 ToggleRow { x: 180px; y: 236px; width: 420px; label: "Always force CapsLock off"; checked <=> root.capslock-always-off; }
                 Text { text: "Status"; x: 24px; y: 302px; color: #596674; font-size: 15px; }

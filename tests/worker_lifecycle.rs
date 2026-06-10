@@ -1,23 +1,23 @@
+use simple_stt::capture::inference_supervisor::{
+    nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
+};
+use simple_stt::config::LogLevel;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-use uvox::capture::inference_supervisor::{
-    nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
-};
-use uvox::config::LogLevel;
 
 fn mock_binary() -> PathBuf {
-    PathBuf::from(env!("CARGO_BIN_EXE_uvox_mock_infer"))
+    PathBuf::from(env!("CARGO_BIN_EXE_simple_stt_mock_infer"))
 }
 
 fn worker_config(model_name: &str, idle: Duration, grace: Duration) -> WorkerConfig {
-    let root = std::env::temp_dir().join(format!("uvox-worker-tests-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("simple-stt-worker-tests-{}", std::process::id()));
     WorkerConfig {
         executable: mock_binary(),
         runtime_dir: root.join("runtime"),
         model_path: root.join(model_name),
-        log_path: root.join("uvox-mock-infer.log"),
+        log_path: root.join("simple-stt-mock-infer.log"),
         log_level: LogLevel::Debug,
         idle_timeout: idle,
         shutdown_grace: grace,

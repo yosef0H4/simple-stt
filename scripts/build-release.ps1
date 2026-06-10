@@ -10,8 +10,8 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 if (-not $SkipTests) {
     cargo test --all-targets
 }
-cargo build --release --bin uvox-capture --bin uvox-infer --bin uvoxctl
-$Expected = @("uvox-capture.exe", "uvox-infer.exe", "uvoxctl.exe")
+cargo build --release --bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl
+$Expected = @("simple-stt-capture.exe", "simple-stt-infer.exe", "simple-stt-ctl.exe")
 foreach ($Name in $Expected) {
     $Path = Join-Path $Root "target\release\$Name"
     if (-not (Test-Path -LiteralPath $Path)) { throw "Expected binary was not built: $Path" }

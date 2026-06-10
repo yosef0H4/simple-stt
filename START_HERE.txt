@@ -1,9 +1,9 @@
-UVOX SOURCE OVERHAUL
+SIMPLE_STT SOURCE OVERHAUL
 ====================
 
 Architecture:
-  AutoHotkey v2 shell -> persistent uvox-capture.exe -> disposable uvox-infer.exe
-  AutoHotkey uses disposable uvoxctl.exe helpers for non-blocking local control.
+  AutoHotkey v2 shell -> persistent simple-stt-capture.exe -> disposable simple-stt-infer.exe
+  AutoHotkey uses disposable simple-stt-ctl.exe helpers for non-blocking local control.
 
 Read first:
   docs\architecture.md
@@ -16,6 +16,13 @@ Windows development:
   .\scripts\check-prereqs.ps1 -RequireRuntime
   .\scripts\build-release.ps1
   .\scripts\run-dev.ps1 -SkipBuild
+
+One-command distribution build:
+  build-distribution.cmd
+
+Outputs:
+  artifacts\dist\simple-stt-setup.exe
+  artifacts\dist\simple-stt-portable.zip
 
 Static source checks and IPC POC:
   .\scripts\test-static.ps1

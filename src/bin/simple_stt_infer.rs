@@ -1,17 +1,17 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use simple_stt::config::LogLevel;
+use simple_stt::infer::parakeet_native::ParakeetNative;
+use simple_stt::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use std::io::{stdin, stdout, BufReader};
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::Duration;
-use uvox::config::LogLevel;
-use uvox::infer::parakeet_native::ParakeetNative;
-use uvox::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "uvox-infer",
-    about = "Disposable Uvox Parakeet inference worker"
+    name = "simple-stt-infer",
+    about = "Disposable SimpleStt Parakeet inference worker"
 )]
 struct Args {
     #[arg(long)]
@@ -28,7 +28,7 @@ struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    uvox::logging::init_component("infer", &args.log_path, &args.log_level)?;
+    simple_stt::logging::init_component("infer", &args.log_path, &args.log_level)?;
     tracing::info!(pid = std::process::id(), model = %args.model_path.display(), "disposable inference worker started");
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {

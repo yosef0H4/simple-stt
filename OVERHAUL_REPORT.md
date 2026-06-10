@@ -1,4 +1,4 @@
-# Uvox architecture overhaul — source-only completion report
+# Simple STT architecture overhaul — source-only completion report
 
 ## Status
 
@@ -9,29 +9,29 @@ This execution environment does not provide Cargo, Rust, AutoHotkey v2, PowerShe
 ## 1. Architecture summary
 
 ```text
-ahk/uvox.ahk or packaged uvox-shell.exe
+ahk/simple-stt.ahk or packaged simple-stt-shell.exe
     AutoHotkey v2 desktop shell
     ├── tray, settings GUI, dynamic hold-to-record hotkeys
     ├── Caps Lock tap preservation and AltGr-aware modifier handling
     ├── target-window tracking and Unicode SendText() typing
     ├── exact-PID capture-service supervision and startup shortcut
-    └── asynchronous one-shot uvoxctl.exe helper launches
+    └── asynchronous one-shot simple-stt-ctl.exe helper launches
 
-uvoxctl.exe
+simple-stt-ctl.exe
     disposable local control helper
     ├── reads token-authenticated loopback discovery state
-    ├── exchanges versioned JSON-line messages with uvox-capture.exe
+    ├── exchanges versioned JSON-line messages with simple-stt-capture.exe
     └── publishes escaped UTF-8 tab response files atomically for AHK polling
 
-uvox-capture.exe
+simple-stt-capture.exe
     persistent lightweight Rust service
     ├── CPAL microphone capture, PCM buffering, gain, downmix and 16 kHz resampling
     ├── RMS visualizer level and fast Rust overlay
     ├── structured component logs and loopback-only IPC server
     ├── HTTPS model downloads to unique partial files with atomic rename
-    └── lazy uvox-infer.exe lifecycle supervision with exact-PID termination fallback
+    └── lazy simple-stt-infer.exe lifecycle supervision with exact-PID termination fallback
 
-uvox-infer.exe
+simple-stt-infer.exe
     disposable Rust child worker
     ├── the only active process that dynamically loads parakeet.dll
     ├── lazy GGUF model loading and framed PCM inference over child stdin/stdout
@@ -45,11 +45,11 @@ No raw PCM travels through AutoHotkey. Process exit, rather than DLL unload, is 
 
 ### Added or replaced active implementation
 
-- `ahk/uvox.ahk`
+- `ahk/simple-stt.ahk`
 - `ahk/lib/{Config,Hotkeys,IpcClient,Logging,ProcessSupervisor,SettingsGui,TabProtocol,Tray,Typist,Utils}.ahk`
 - `ahk/tests/{hotkeys-manual,ipc-smoke,typing-smoke}.ahk`
-- `src/bin/{uvox_capture,uvox_infer,uvoxctl}.rs`
-- `src/bin/uvox_mock_infer.rs` for deterministic integration tests only
+- `src/bin/{simple_stt_capture,simple_stt_infer,simple-stt-ctl}.rs`
+- `src/bin/simple_stt_mock_infer.rs` for deterministic integration tests only
 - `src/capture/{audio,inference_supervisor,ipc_server,overlay,overlay_windows,process,state}.rs`
 - `src/infer/{parakeet_native,protocol}.rs`
 - `src/common/{line_codec,shell_protocol}.rs`
@@ -91,7 +91,7 @@ Chosen shell rules:
 
 ## 4. IPC decision and proof of concept
 
-`docs/ipc-decision.md` compares Windows named pipes, `WM_COPYDATA`, and a one-shot helper. The selected AHK-to-capture transport is `uvoxctl.exe` plus token-authenticated loopback TCP:
+`docs/ipc-decision.md` compares Windows named pipes, `WM_COPYDATA`, and a one-shot helper. The selected AHK-to-capture transport is `simple-stt-ctl.exe` plus token-authenticated loopback TCP:
 
 - lower AHK Win32 API surface than direct named-pipe handling;
 - no synchronous `WM_COPYDATA` callback path;
@@ -127,9 +127,9 @@ cargo test --all-targets
 The release script deliberately builds only:
 
 ```text
-uvox-capture.exe
-uvox-infer.exe
-uvoxctl.exe
+simple-stt-capture.exe
+simple-stt-infer.exe
+simple-stt-ctl.exe
 ```
 
 The test-only mock worker is excluded from the release build.
@@ -161,16 +161,16 @@ Compile the development shell with Ahk2Exe and stage the three Rust binaries:
 The package script stages:
 
 ```text
-uvox-shell.exe
-uvox-capture.exe
-uvox-infer.exe
-uvoxctl.exe
+simple-stt-shell.exe
+simple-stt-capture.exe
+simple-stt-infer.exe
+simple-stt-ctl.exe
 config.example.json
 fixtures\parakeet-smoke.wav
 icons\
 ```
 
-Runtime DLLs and GGUF models are intentionally supplied separately under documented install-relative directories. Start-with-Windows creates a shortcut targeting the AHK shell or compiled `uvox-shell.exe`, never the retired monolithic Rust executable.
+Runtime DLLs and GGUF models are intentionally supplied separately under documented install-relative directories. Start-with-Windows creates a shortcut targeting the AHK shell or compiled `simple-stt-shell.exe`, never the retired monolithic Rust executable.
 
 ## 8. Tests and results
 
@@ -182,7 +182,7 @@ STATIC VERIFY PASSED
  - release lockfile hygiene is explicit: Cargo.lock is not ignored
  - shell entry and AHK smoke scripts are v2-only
  - active Cargo graph has split binaries and no Slint frontend dependency
- - Parakeet DLL/model loading is isolated to disposable uvox-infer with exact-PID forced-exit fallback
+ - Parakeet DLL/model loading is isolated to disposable simple-stt-infer with exact-PID forced-exit fallback
  - AHK owns tray, GUI, hotkeys, Caps Lock behavior, and foreground-safe Unicode typing
  - AHK helper IPC is asynchronous, token-rotated, sequenced, and reconnectable
  - control IPC is loopback-only and versioned; raw PCM stays on framed child pipes

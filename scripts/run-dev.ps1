@@ -15,6 +15,6 @@ if (-not $AutoHotkey) {
 if (-not $AutoHotkey -or -not (Test-Path -LiteralPath $AutoHotkey)) {
     throw "AutoHotkey v2 was not found. Pass -AutoHotkey with the v2 executable path."
 }
-$Script = Join-Path $Root "ahk\uvox.ahk"
+$Script = Join-Path $Root "ahk\simple-stt.ahk"
 Write-Host "Launching development shell: $Script"
 & $AutoHotkey $Script

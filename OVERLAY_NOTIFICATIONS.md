@@ -34,6 +34,6 @@ Implementation:
 ```text
 src/capture/overlay.rs
 src/capture/overlay_windows.rs
-src/bin/uvox_capture.rs
-ahk/uvox.ahk
+src/bin/simple_stt_capture.rs
+ahk/simple-stt.ahk
 ```

@@ -1,4 +1,4 @@
-# AutoHotkey v2 research for the Uvox shell
+# AutoHotkey v2 research for the Simple STT shell
 
 Research date: 2026-06-07. This document is documentation-first. All API claims below were checked against the official AutoHotkey v2 documentation or the official Ahk2Exe repository. Community snippets were not used as implementation authorities.
 
@@ -21,10 +21,10 @@ Official sources:
 
 ## APIs used by the shell
 
-| API | Relevant v2 behavior | Uvox approach |
+| API | Relevant v2 behavior | Simple STT approach |
 | --- | --- | --- |
 | `Hotkey()` | Creates, updates, enables, or disables runtime hotkeys. The v2 function form is used instead of v1 command syntax. | `HotkeyManager.Configure()` disables old bindings and installs new key-down and key-up bindings at runtime. |
-| `HotIf()` and `#HotIf` | Context-sensitive variants are available. Function-created hotkeys inherit the current HotIf criterion. | Researched but not needed for the first shell: Uvox performs explicit state checks in short callbacks. |
+| `HotIf()` and `#HotIf` | Context-sensitive variants are available. Function-created hotkeys inherit the current HotIf criterion. | Researched but not needed for the first shell: Simple STT performs explicit state checks in short callbacks. |
 | Custom combinations | `a & b` syntax creates a custom combination where the prefix key has special handling. Custom combinations act as wildcard matches already, so do not prepend `*` to the combination. Prefix keys need deliberate tap-preservation behavior. | `CapsLock+S` becomes `CapsLock & s` and `CapsLock & s up`; separate wildcard CapsLock down/up callbacks preserve an ordinary tap. |
 | Key-down and key-up hotkeys | The `up` suffix defines release behavior. Wildcards and the hook prefix affect matching and recursion. | Hold-to-record installs a down callback and an `up` callback; non-CapsLock hotkeys use `$*` to accept extra modifiers and avoid retriggering from generated input. |
 | `KeyWait()` | Waits for key state transitions; in v2 it returns false on timeout and true otherwise. | Researched for manual tests; not used inside shell hotkey callbacks because callbacks remain non-blocking. |
@@ -32,8 +32,8 @@ Official sources:
 | `SendText()` | Sends literal text rather than treating characters as key syntax. | Chosen for Unicode transcript chunks. |
 | `SendInput()` | Fast input method with limitations when blocked by another process or integrity boundary. | Researched but not selected for literal transcript content; `SendText()` is clearer for Unicode text. |
 | `SendMode()` | Changes the default method used by `Send`. | Not needed for `SendText()`-based transcript typing. |
-| `SetKeyDelay()` | Applies to SendEvent/ControlSend, not SendInput. | Not used. Uvox controls pacing with a one-shot `SetTimer()` between `SendText()` chunks. |
-| `A_TrayMenu` | Built-in tray menu object. | The shell deletes default entries and creates the complete Uvox tray menu. |
+| `SetKeyDelay()` | Applies to SendEvent/ControlSend, not SendInput. | Not used. Simple STT controls pacing with a one-shot `SetTimer()` between `SendText()` chunks. |
+| `A_TrayMenu` | Built-in tray menu object. | The shell deletes default entries and creates the complete Simple STT tray menu. |
 | `Menu` objects | v2 object API for menu manipulation. | Used through `A_TrayMenu.Add()`, `.Delete()`, and `.Default`. |
 | `TraySetIcon()` | Sets the tray icon. | Shell owns the icon. A stock shell icon is used until a product icon is packaged. |
 | `TrayTip()` | Displays tray notification balloons/toasts. v2 parameter order is text, title, options. | Used for concise service and cancellation notices. |
@@ -51,7 +51,7 @@ Official sources:
 | `FileOpen()` and file objects | v2 uses file objects for reads, writes, and flushes. Pipe names can be opened as paths, but a direct pipe client would still add Win32 edge cases on the UI side. | Shell uses small UTF-8 response files written by disposable helpers. Rust owns socket and stream handling. |
 | `DllCall()` | Calls native functions with explicit types. The DLL/function separator is a single backslash. | Used only for `SystemFunction036` random token generation in the shell. Avoided for direct IPC. |
 | `Persistent()` | Keeps the script alive after its startup thread completes; v2 also automatically persists scripts with hotkeys, timers, or a GUI. | The shell calls `Persistent` explicitly after initialization for clarity. |
-| `FileCreateShortcut()` and `A_Startup` | A shortcut in the Startup folder is the documented simple login-start option. | `ApplyStartupRegistration()` creates or deletes `A_Startup\Uvox.lnk`, targeting the script in development and the compiled shell in distribution. |
+| `FileCreateShortcut()` and `A_Startup` | A shortcut in the Startup folder is the documented simple login-start option. | `ApplyStartupRegistration()` creates or deletes `A_Startup\Simple STT.lnk`, targeting the script in development and the compiled shell in distribution. |
 | String escaping | AutoHotkey uses the backtick as its escape character; a backslash is an ordinary literal character. | Path strings use one backslash. The helper tab codec explicitly maps one backslash to two for transport. |
 | `InputHook()` | v2 replacement for older input command patterns. | Hotkey recorder captures a final non-modifier key while sampling physical modifiers. |
 
@@ -91,19 +91,19 @@ Source: <https://www.autohotkey.com/docs/v2/Hotkeys.htm#AltGr>
 
 ## Typing choice and integrity boundaries
 
-Uvox sends literal transcript chunks with `SendText()` and checks the active foreground HWND before every chunk. It never defaults to clipboard injection. AHK-generated text is protected from dictation retriggering by hook-prefixed hotkeys for ordinary modifier chords and by separating the CapsLock custom-combination path.
+Simple STT sends literal transcript chunks with `SendText()` and checks the active foreground HWND before every chunk. It never defaults to clipboard injection. AHK-generated text is protected from dictation retriggering by hook-prefixed hotkeys for ordinary modifier chords and by separating the CapsLock custom-combination path.
 
-AutoHotkey documents that sending may be ineffective when a target process runs at a higher integrity level. Uvox does not try to bypass UAC or protected application boundaries. Distribution may optionally document UI Access as an advanced packaging decision, but it is not silently enabled.
+AutoHotkey documents that sending may be ineffective when a target process runs at a higher integrity level. Simple STT does not try to bypass UAC or protected application boundaries. Distribution may optionally document UI Access as an advanced packaging decision, but it is not silently enabled.
 
 Source: <https://www.autohotkey.com/docs/v2/lib/Send.htm>
 
 ## Pipes, file objects, and UI responsiveness
 
-A direct AHK named-pipe implementation was prototyped on paper but rejected: opening and reading a pipe from the shell would either block a callback or require more native API plumbing. AHK callbacks stay short. The chosen shell IPC launches `uvoxctl.exe` with `Run()`, records its PID, and polls process completion with `SetTimer()`. The helper handles JSON, the loopback socket, and UTF-8 response-file writes.
+A direct AHK named-pipe implementation was prototyped on paper but rejected: opening and reading a pipe from the shell would either block a callback or require more native API plumbing. AHK callbacks stay short. The chosen shell IPC launches `simple-stt-ctl.exe` with `Run()`, records its PID, and polls process completion with `SetTimer()`. The helper handles JSON, the loopback socket, and UTF-8 response-file writes.
 
 ## Ahk2Exe and directives
 
-Ahk2Exe is the official script-to-EXE converter and supports v2+ scripts. Development can run `ahk/uvox.ahk` with AutoHotkey v2 installed. Distribution compiles it to `uvox-shell.exe`; end users do not need a separate AHK installation when the compiled shell is packaged.
+Ahk2Exe is the official script-to-EXE converter and supports v2+ scripts. Development can run `ahk/simple-stt.ahk` with AutoHotkey v2 installed. Distribution compiles it to `simple-stt-shell.exe`; end users do not need a separate AHK installation when the compiled shell is packaged.
 
 Compiler directives are comments beginning with `;@Ahk2Exe-...`. The first packaging pass uses command-line `/in`, `/out`, and optional `/icon` arguments rather than embedding many directives. A future branded package may add metadata directives once the icon and versioning assets are final.
 
@@ -119,4 +119,4 @@ Two common per-user Windows options were considered:
 1. HKCU `Software\\Microsoft\\Windows\\CurrentVersion\\Run`
 2. a shortcut in `A_Startup`
 
-The shell chooses a per-user `A_Startup\\Uvox.lnk` shortcut through `FileCreateShortcut()`. This visibly targets the AHK shell or compiled shell and avoids carrying forward the old monolith registry registration code. Packaging must launch the compiled `uvox-shell.exe`, not a Rust executable.
+The shell chooses a per-user `A_Startup\\Simple STT.lnk` shortcut through `FileCreateShortcut()`. This visibly targets the AHK shell or compiled shell and avoids carrying forward the old monolith registry registration code. Packaging must launch the compiled `simple-stt-shell.exe`, not a Rust executable.

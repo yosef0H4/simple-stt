@@ -1,4 +1,4 @@
-#Requires AutoHotkey v2.0
+﻿#Requires AutoHotkey v2.0
 #SingleInstance Force
 
 #Include ..\lib\Utils.ahk
@@ -17,11 +17,11 @@ global SmokeLatestSeq := 0
 global SmokeTypingGui := ""
 
 Info(message) {
-    UvoxConsoleLine("INFO: " . message)
+    SimpleSttConsoleLine("INFO: " . message)
 }
 
 Fail(message, exitCode := 1) {
-    UvoxConsoleError("FAIL: " . message)
+    SimpleSttConsoleError("FAIL: " . message)
     ExitApp(exitCode)
 }
 
@@ -31,9 +31,9 @@ Assert(condition, message) {
 }
 
 GlobalErrorHandler(err, mode) {
-    UvoxConsoleError("FAIL: unhandled AHK error: " . err.Message . " mode=" . mode)
-    UvoxConsoleError("FILE: " . err.File . " LINE: " . err.Line)
-    UvoxConsoleError("STACK: " . err.Stack)
+    SimpleSttConsoleError("FAIL: unhandled AHK error: " . err.Message . " mode=" . mode)
+    SimpleSttConsoleError("FILE: " . err.File . " LINE: " . err.Line)
+    SimpleSttConsoleError("STACK: " . err.Stack)
     ExitApp(2)
     return true
 }
@@ -43,15 +43,15 @@ NoopNotice(*) {
 
 CallCtl(arguments) {
     global SmokeCtl, SmokeState, SmokeToken
-    output := UvoxTempFile("full-smoke")
-    command := UvoxQuote(SmokeCtl) . " --state-file " . UvoxQuote(SmokeState) . " --token " . UvoxQuote(SmokeToken) . " --output " . UvoxQuote(output) . " " . arguments
+    output := SimpleSttTempFile("full-smoke")
+    command := SimpleSttQuote(SmokeCtl) . " --state-file " . SimpleSttQuote(SmokeState) . " --token " . SimpleSttQuote(SmokeToken) . " --output " . SimpleSttQuote(output) . " " . arguments
     try exitCode := RunWait(command, A_ScriptDir, "Hide")
     catch Error as err
-        return TabProtocol.ErrorResponse("unable to run uvoxctl: " . err.Message)
+        return TabProtocol.ErrorResponse("unable to run simple-stt-ctl: " . err.Message)
     response := TabProtocol.ReadResponse(output)
     try FileDelete(output)
     if exitCode != 0 && response["ok"]
-        return TabProtocol.ErrorResponse("uvoxctl exit code " . exitCode)
+        return TabProtocol.ErrorResponse("simple-stt-ctl exit code " . exitCode)
     return response
 }
 
@@ -69,8 +69,8 @@ WaitForState(timeoutMs := 5000) {
 StartCapture() {
     global SmokeCapture, SmokeConfig, SmokeState, SmokeToken, SmokePid, SmokeLatestSeq
     try FileDelete(SmokeState)
-    SmokeToken := UvoxRandomToken()
-    command := UvoxQuote(SmokeCapture) . " --token " . UvoxQuote(SmokeToken) . " --state-file " . UvoxQuote(SmokeState) . " --config " . UvoxQuote(SmokeConfig)
+    SmokeToken := SimpleSttRandomToken()
+    command := SimpleSttQuote(SmokeCapture) . " --token " . SimpleSttQuote(SmokeToken) . " --state-file " . SimpleSttQuote(SmokeState) . " --config " . SimpleSttQuote(SmokeConfig)
     Run(command, A_ScriptDir, "Hide", &pid)
     SmokePid := pid
     SmokeLatestSeq := 0
@@ -86,7 +86,7 @@ StopCapture() {
         return
     response := CallCtl("shutdown")
     if !response["ok"]
-        UvoxConsoleError("WARN: graceful capture shutdown failed: " . response["message"])
+        SimpleSttConsoleError("WARN: graceful capture shutdown failed: " . response["message"])
     try ProcessWaitClose(SmokePid, 3)
     if ProcessExist(SmokePid)
         try ProcessClose(SmokePid)
@@ -142,8 +142,8 @@ WaitForWorkerUnloaded(timeoutMs := 10000) {
 
 TypingSmoke() {
     global SmokeTypingGui
-    logger := ShellLog(A_Temp . "\uvox-full-smoke-typing.log")
-    window := Gui("+AlwaysOnTop", "Uvox Full Smoke Typing")
+    logger := ShellLog(A_Temp . "\simple-stt-full-smoke-typing.log")
+    window := Gui("+AlwaysOnTop", "SimpleStt Full Smoke Typing")
     edit := window.AddEdit("w360 h80")
     window.Show("w390 h120")
     SmokeTypingGui := window
@@ -162,13 +162,14 @@ TypingSmoke() {
 }
 
 SetClipboardMarker() {
-    format := DllCall("user32\RegisterClipboardFormatW", "Str", "UvoxSmokeObject", "UInt")
+    format := DllCall("user32\RegisterClipboardFormatW", "Str", "SimpleSttSmokeObject", "UInt")
     if !DllCall("user32\OpenClipboard", "Ptr", 0, "Int")
         throw Error("unable to open clipboard for marker")
     try {
         DllCall("user32\EmptyClipboard")
-        bytes := Buffer(12, 0)
-        StrPut("uvox-marker", bytes, "UTF-8")
+        marker := "simple-stt-marker"
+        bytes := Buffer(StrPut(marker, "UTF-8"), 0)
+        StrPut(marker, bytes, "UTF-8")
         handle := DllCall("kernel32\GlobalAlloc", "UInt", 0x42, "UPtr", bytes.Size, "Ptr")
         if !handle
             throw Error("unable to allocate clipboard marker")
@@ -187,11 +188,11 @@ PastePlain(*) {
 
 PasteSmoke() {
     global SmokeTypingGui
-    logger := ShellLog(A_Temp . "\\uvox-full-smoke-paste.log")
+    logger := ShellLog(A_Temp . "\\simple-stt-full-smoke-paste.log")
     Hotkey("^+v", PastePlain, "On")
     for item in [["paste_ctrl_v", 9101], ["paste_ctrl_shift_v", 9102]] {
         format := SetClipboardMarker()
-        window := Gui("+AlwaysOnTop", "Uvox Full Smoke Paste")
+        window := Gui("+AlwaysOnTop", "SimpleStt Full Smoke Paste")
         edit := window.AddEdit("w360 h80")
         window.Show("w390 h120")
         SmokeTypingGui := window
@@ -225,15 +226,15 @@ OnError(GlobalErrorHandler)
 OnExit(Cleanup)
 
 try {
-    SmokeCtl := UvoxResolveExe("uvoxctl")
-    SmokeCapture := UvoxResolveExe("uvox-capture")
-    Assert(FileExist(SmokeCtl), "missing uvoxctl.exe")
-    Assert(FileExist(SmokeCapture), "missing uvox-capture.exe")
-    tempDir := A_Temp . "\uvox-full-smoke-" . A_TickCount
+    SmokeCtl := SimpleSttResolveExe("simple-stt-ctl")
+    SmokeCapture := SimpleSttResolveExe("simple-stt-capture")
+    Assert(FileExist(SmokeCtl), "missing simple-stt-ctl.exe")
+    Assert(FileExist(SmokeCapture), "missing simple-stt-capture.exe")
+    tempDir := A_Temp . "\simple-stt-full-smoke-" . A_TickCount
     DirCreate(tempDir)
     SmokeConfig := tempDir . "\config.json"
     SmokeState := tempDir . "\capture-state.json"
-    EnvSet("UVOX_CONFIG", SmokeConfig)
+    EnvSet("SIMPLE_STT_CONFIG", SmokeConfig)
     ConfigStore(SmokeCtl)
 
     Info("starting isolated capture service")
@@ -269,11 +270,13 @@ try {
     Info("pasting hello world once and restoring clipboard")
     PasteSmoke()
     StopCapture()
-    UvoxConsoleLine("PASS: full AHK runtime smoke")
+    SimpleSttConsoleLine("PASS: full AHK runtime smoke")
     ExitApp(0)
 } catch Error as err {
-    UvoxConsoleError("FAIL: " . err.Message)
-    UvoxConsoleError("FILE: " . err.File . " LINE: " . err.Line)
-    UvoxConsoleError("STACK: " . err.Stack)
+    SimpleSttConsoleError("FAIL: " . err.Message)
+    SimpleSttConsoleError("FILE: " . err.File . " LINE: " . err.Line)
+    SimpleSttConsoleError("STACK: " . err.Stack)
     ExitApp(1)
 }
+
+

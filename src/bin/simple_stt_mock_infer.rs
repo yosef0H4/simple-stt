@@ -4,11 +4,11 @@
 //! deterministic mock never ships in the staged application.
 use anyhow::Result;
 use clap::Parser;
+use simple_stt::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use std::io::{stdin, stdout, BufReader};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
-use uvox::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 
 #[derive(Debug, Parser)]
 struct Args {

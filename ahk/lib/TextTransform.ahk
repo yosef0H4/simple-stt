@@ -1,4 +1,4 @@
-UvoxTransformTranscript(text, removePunctuation := false, lowercaseOutput := false) {
+SimpleSttTransformTranscript(text, removePunctuation := false, lowercaseOutput := false) {
     if removePunctuation
         text := RegExReplace(text, "\p{P}", "")
     if lowercaseOutput

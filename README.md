@@ -1,16 +1,16 @@
-# Uvox
+# Simple STT
 
-Uvox is a Windows-only local dictation application redesigned around a thin AutoHotkey v2 desktop shell, a persistent lightweight Rust audio service, and a disposable Rust Parakeet inference worker.
+Simple STT is a Windows-only local dictation application redesigned around a thin AutoHotkey v2 desktop shell, a persistent lightweight Rust audio service, and a disposable Rust Parakeet inference worker.
 
 ```text
-uvox.ahk or uvox-shell.exe
-  └── uvox-capture.exe      persistent CPAL capture + fast overlay
-        └── uvox-infer.exe  disposable Parakeet DLL/model process
+simple-stt.ahk or simple-stt-shell.exe
+  └── simple-stt-capture.exe      persistent CPAL capture + fast overlay
+        └── simple-stt-infer.exe  disposable Parakeet DLL/model process
 
-uvoxctl.exe                 disposable AHK control helper
+simple-stt-ctl.exe                 disposable AHK control helper
 ```
 
-The key memory-cleanup guarantee is process exit: `uvox-infer.exe` is the only active component allowed to load `parakeet.dll` or a GGUF model. Repeated dictations reuse a warm worker until the configured idle timeout. Cleanup terminates that worker so Windows can reclaim its process RAM and VRAM allocations.
+The key memory-cleanup guarantee is process exit: `simple-stt-infer.exe` is the only active component allowed to load `parakeet.dll` or a GGUF model. Repeated dictations reuse a warm worker until the configured idle timeout. Cleanup terminates that worker so Windows can reclaim its process RAM and VRAM allocations.
 
 ## Start here
 
@@ -46,15 +46,15 @@ paste_ctrl_shift_v
 
 `paste_ctrl_v` is the default. Paste delivery temporarily replaces the clipboard, sends the configured paste shortcut, and restores the full original clipboard with `ClipboardAll()`, including non-text formats such as images and copied objects.
 
-The shell does not parse JSON, move PCM, read a long pipe, load the model, or perform a blocking socket operation from a callback. It starts disposable `uvoxctl.exe` commands and polls completion with `SetTimer()`.
+The shell does not parse JSON, move PCM, read a long pipe, load the model, or perform a blocking socket operation from a callback. It starts disposable `simple-stt-ctl.exe` commands and polls completion with `SetTimer()`.
 
 ## Rust-owned behavior
 
-`uvox-capture.exe` keeps CPAL audio warm, applies gain, downmixes, linearly resamples to 16 kHz mono PCM16, computes overlay levels, buffers only active recordings, owns the rapid Win32 overlay, publishes local control events, and supervises the worker.
+`simple-stt-capture.exe` keeps CPAL audio warm, applies gain, downmixes, linearly resamples to 16 kHz mono PCM16, computes overlay levels, buffers only active recordings, owns the rapid Win32 overlay, publishes local control events, and supervises the worker.
 
-When recording begins, `uvox-capture.exe` starts warming the speech model in the background. The tooltip reports model loading, loaded, and unloaded lifecycle events. The recording tooltip is a compact stationary Unicode waveform whose bar heights change only with microphone level.
+When recording begins, `simple-stt-capture.exe` starts warming the speech model in the background. The tooltip reports model loading, loaded, and unloaded lifecycle events. The recording tooltip is a compact stationary Unicode waveform whose bar heights change only with microphone level.
 
-`uvox-infer.exe` dynamically loads Parakeet, loads the selected GGUF lazily, handles framed PCM/WAV requests, returns transcripts, and exits after graceful shutdown or its idle backstop.
+`simple-stt-infer.exe` dynamically loads Parakeet, loads the selected GGUF lazily, handles framed PCM/WAV requests, returns transcripts, and exits after graceful shutdown or its idle backstop.
 
 ## Testing
 
@@ -102,7 +102,7 @@ single `hello world` typed-delivery check
 full non-text clipboard-format restoration after paste
 ```
 
-The end-to-end smoke uses an isolated temporary config and state directory. It does not overwrite the normal `%APPDATA%\uvox\config.json` file or reuse the live shell discovery file.
+The end-to-end smoke uses an isolated temporary config and state directory. It does not overwrite the normal `%APPDATA%\simple-stt\config.json` file or reuse the live shell discovery file.
 
 The paste smoke intentionally sends only `hello world` into controlled temporary edit boxes. It also places a custom non-text object format on the clipboard before pasting and asserts that the object format is restored afterward.
 
@@ -115,7 +115,7 @@ scripts\test-ahk-full.cmd
 This command:
 
 ```text
-builds uvox-capture, uvox-infer, and uvoxctl in release mode
+builds simple-stt-capture, simple-stt-infer, and simple-stt-ctl in release mode
 runs AutoHotkey /Validate with /ErrorStdOut=UTF-8 for every entry point
 runs the AHK smoke scripts
 runs the real model load/unload/prewarm and paste-delivery E2E smoke
@@ -151,7 +151,7 @@ These checks do not require the speech model. They verify source invariants and 
 cargo test --all-targets
 ```
 
-This includes deterministic worker lifecycle integration tests using the test-only `uvox_mock_infer` child process. The mock worker is never included in release packaging.
+This includes deterministic worker lifecycle integration tests using the test-only `simple_stt_mock_infer` child process. The mock worker is never included in release packaging.
 
 ### Manual release checks still required
 

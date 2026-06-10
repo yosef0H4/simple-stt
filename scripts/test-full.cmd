@@ -12,5 +12,5 @@ python tools\ipc-poc\test_poc.py || exit /b 1
 echo INFO: running AutoHotkey validation and runtime smoke
 call scripts\test-ahk-full.cmd || exit /b 1
 
-echo PASS: full Uvox validation suite
+echo PASS: full SimpleStt validation suite
 exit /b 0

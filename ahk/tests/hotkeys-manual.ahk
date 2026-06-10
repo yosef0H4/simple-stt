@@ -19,11 +19,11 @@ Up() {
 }
 
 Fail(message, exitCode := 1) {
-    UvoxConsoleError("FAIL: " . message)
+    SimpleSttConsoleError("FAIL: " . message)
     ExitApp(exitCode)
 }
 
-logger := ShellLog(A_Temp . "\uvox-hotkeys-manual.log")
+logger := ShellLog(A_Temp . "\simple-stt-hotkeys-manual.log")
 manager := HotkeyManager(Down, Up, logger)
 manager.Configure("CapsLock+S", true, "preserve_tap")
 if !manager.enabled
@@ -45,5 +45,5 @@ if !manager.enabled
 manager.Configure("AltGr+S", true, "preserve_tap")
 manager.DisableBindings()
 
-UvoxConsoleLine("PASS: hotkey parser and binding smoke")
+SimpleSttConsoleLine("PASS: hotkey parser and binding smoke")
 ExitApp(0)

@@ -4,7 +4,7 @@
 
 The retired monolith called a native unload path inside the resident Rust process. That may release model state and VRAM but cannot guarantee that every allocator page is returned to Windows. The new cleanup guarantee is worker process exit.
 
-Only `uvox-infer.exe` imports `libloading` and loads `parakeet.dll`. `uvox-capture.exe` remains resident but does not load the model DLL. After idle timeout or manual unload, capture asks the worker to shut down, waits for its PID to exit, and force-terminates only that child PID if it hangs past `worker_shutdown_grace_ms`. An independent atomic PID tracker keeps that fallback available even when a transcript read is blocked behind the supervisor mutex.
+Only `simple-stt-infer.exe` imports `libloading` and loads `parakeet.dll`. `simple-stt-capture.exe` remains resident but does not load the model DLL. After idle timeout or manual unload, capture asks the worker to shut down, waits for its PID to exit, and force-terminates only that child PID if it hangs past `worker_shutdown_grace_ms`. An independent atomic PID tracker keeps that fallback available even when a transcript read is blocked behind the supervisor mutex.
 
 ## Repeatable Windows diagnostic
 
@@ -24,9 +24,9 @@ The script:
 
 1. chooses an isolated temporary schema-v2 config;
 2. records optional shell RAM;
-3. launches `uvox-capture.exe` with an exact PID and random token;
+3. launches `simple-stt-capture.exe` with an exact PID and random token;
 4. records baseline capture RAM;
-5. requests a model smoke test through `uvoxctl.exe`;
+5. requests a model smoke test through `simple-stt-ctl.exe`;
 6. polls service state until the infer-worker PID is visible;
 7. records infer RAM;
 8. invokes `nvidia-smi` when available;

@@ -52,7 +52,7 @@ Microsoft sources:
 
 Decision: rejected.
 
-### 3. Disposable `uvoxctl.exe` helper with loopback service control socket
+### 3. Disposable `simple-stt-ctl.exe` helper with loopback service control socket
 
 The AHK shell launches a one-shot helper asynchronously with `Run()`, records its PID, and checks completion from `SetTimer()`. The helper opens the capture service state file, connects to an address bound explicitly to `127.0.0.1`, performs the version/token handshake, issues one JSON command, writes a tiny escaped UTF-8 response file, and exits.
 
@@ -92,7 +92,7 @@ Rust source:
 ```text
 src/common/shell_protocol.rs
 src/capture/ipc_server.rs
-src/bin/uvoxctl.rs
+src/bin/simple-stt-ctl.rs
 ahk/lib/IpcClient.ahk
 ```
 
@@ -100,7 +100,7 @@ The AHK-readable helper response is an escaped UTF-8 tab protocol. It is intenti
 
 ## Production Rust capture-to-infer protocol
 
-The service spawns `uvox-infer.exe` lazily with piped stdin/stdout. Logs go to files and stderr; stdout is protocol-only. Frames have a fixed 20-byte header plus body:
+The service spawns `simple-stt-infer.exe` lazily with piped stdin/stdout. Logs go to files and stderr; stdout is protocol-only. Frames have a fixed 20-byte header plus body:
 
 ```text
 magic       4 bytes  "UVX1"

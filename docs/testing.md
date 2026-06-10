@@ -46,7 +46,7 @@ Ctrl+Shift+V paste delivery
 restoration of a custom non-text clipboard format
 ```
 
-The end-to-end smoke uses isolated temporary config and state files. It does not overwrite `%APPDATA%\uvox\config.json` or reuse the live shell discovery file.
+The end-to-end smoke uses isolated temporary config and state files. It does not overwrite `%APPDATA%\simple-stt\config.json` or reuse the live shell discovery file.
 
 ## Run Rust tests only
 
@@ -70,7 +70,7 @@ worker logging-level propagation
 stationary compact Unicode waveform behavior
 ```
 
-`src/bin/uvox_mock_infer.rs` is a deterministic test-only worker. `tests/worker_lifecycle.rs` launches it as a real child process and covers:
+`src/bin/simple_stt_mock_infer.rs` is a deterministic test-only worker. `tests/worker_lifecycle.rs` launches it as a real child process and covers:
 
 ```text
 lazy worker launch
@@ -82,7 +82,7 @@ blocked inference exact-PID termination fallback
 Unicode transcript transport across child pipes
 ```
 
-The release build script names only `uvox-capture`, `uvox-infer`, and `uvoxctl`, so the mock binary is not staged.
+The release build script names only `simple-stt-capture`, `simple-stt-infer`, and `simple-stt-ctl`, so the mock binary is not staged.
 
 ## Run source and IPC checks only
 
@@ -102,7 +102,7 @@ The static verifier checks architectural invariants that are easy to regress dur
 ```text
 AHK v2 directives on every executable entry point
 split Rust binary structure
-Parakeet DLL isolation in uvox-infer
+Parakeet DLL isolation in simple-stt-infer
 Common Controls v6 manifest embedding for modern tooltips
 loopback-only versioned control IPC
 framed Rust-to-Rust PCM protocol
@@ -146,7 +146,7 @@ That sends AHK load errors to stderr instead of opening modal GUI error dialogs.
 Validated entry points:
 
 ```text
-ahk\uvox.ahk
+ahk\simple-stt.ahk
 ahk\tests\hotkeys-manual.ahk
 ahk\tests\ipc-smoke.ahk
 ahk\tests\settings-smoke.ahk
@@ -163,7 +163,7 @@ hotkeys-manual.ahk
   parser and runtime binding smoke
 
 settings-smoke.ahk
-  real GUI construction and Save persistence through uvoxctl
+  real GUI construction and Save persistence through simple-stt-ctl
   text-delivery mode and casual-text option persistence
 
 typing-smoke.ahk

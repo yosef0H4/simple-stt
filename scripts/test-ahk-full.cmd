@@ -9,11 +9,11 @@ if not exist "%AHK%" (
 )
 
 echo INFO: building current release binaries
-cargo build --release --bin uvox-capture --bin uvox-infer --bin uvoxctl || exit /b 1
+cargo build --release --bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl || exit /b 1
 
 echo INFO: validating AHK entry points
 for %%F in (
-  ahk\uvox.ahk
+  ahk\simple-stt.ahk
   ahk\tests\hotkeys-manual.ahk
   ahk\tests\ipc-smoke.ahk
   ahk\tests\settings-smoke.ahk

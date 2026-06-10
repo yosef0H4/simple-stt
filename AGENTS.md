@@ -16,10 +16,10 @@ docs/memory-cleanup-validation.md
 AHK owns tray, GUI, hotkeys, startup registration, target-window safety,
 text transforms, final typing, clipboard-preserving paste delivery, and app reload.
 
-uvox-capture owns CPAL audio, the fast Win32 overlay, shell IPC, downloads,
+simple-stt-capture owns CPAL audio, the fast Win32 overlay, shell IPC, downloads,
 recording-start model prewarm, lifecycle tooltip notices, and worker supervision.
 
-uvox-infer is the only active process allowed to load parakeet.dll or GGUF models.
+simple-stt-infer is the only active process allowed to load parakeet.dll or GGUF models.
 ```
 
 Do not reintroduce in-process Parakeet loading under `src/capture/`.
@@ -29,7 +29,7 @@ Do not remove the Windows resource build pipeline:
 ```text
 build.rs
 resources\windows.rc
-resources\uvox.exe.manifest
+resources\simple-stt.exe.manifest
 ```
 
 The manifest activates Common Controls v6 so Win32 tooltips use modern Windows visual styles.
@@ -162,7 +162,7 @@ blocked inference exact-PID forced termination
 Unicode transcript transport
 ```
 
-The mock worker is test-only. Do not ship `uvox_mock_infer` in release packaging.
+The mock worker is test-only. Do not ship `simple_stt_mock_infer` in release packaging.
 
 ## Static verifier responsibilities
 
@@ -171,7 +171,7 @@ The mock worker is test-only. Do not ship `uvox_mock_infer` in release packaging
 ```text
 AHK v2 entry directives
 split Rust binary architecture
-Parakeet isolation in uvox-infer
+Parakeet isolation in simple-stt-infer
 Common Controls v6 manifest embedding
 loopback authenticated IPC boundaries
 clipboard-preserving paste implementation

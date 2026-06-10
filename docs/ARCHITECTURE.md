@@ -1,9 +1,9 @@
-# Uvox architecture after overhaul
+# Simple STT architecture after overhaul
 
 ## Process boundaries
 
 ```text
-uvox.ahk or compiled uvox-shell.exe
+simple-stt.ahk or compiled simple-stt-shell.exe
     thin AutoHotkey v2 desktop shell
     ├── tray icon and stateful menu
     ├── settings GUI and hotkey recorder
@@ -11,9 +11,9 @@ uvox.ahk or compiled uvox-shell.exe
     ├── foreground target capture and Unicode transcript typing
     ├── start-with-Windows shortcut
     ├── user-facing notices and shell log
-    └── exact-PID supervision of uvox-capture.exe
+    └── exact-PID supervision of simple-stt-capture.exe
 
-uvoxctl.exe
+simple-stt-ctl.exe
     disposable one-shot control helper
     ├── reads discovery state file
     ├── performs protocol/token handshake
@@ -21,7 +21,7 @@ uvoxctl.exe
     ├── translates JSON response to escaped UTF-8 tab records
     └── exits
 
-uvox-capture.exe
+simple-stt-capture.exe
     persistent lightweight Rust service
     ├── CPAL microphone capture
     ├── gain, mono downmix, linear 16 kHz resampling
@@ -29,9 +29,9 @@ uvox-capture.exe
     ├── fast overlay and RMS level updates
     ├── local control server and structured events
     ├── model downloads and tests off the control thread
-    └── lazy supervision of uvox-infer.exe
+    └── lazy supervision of simple-stt-infer.exe
 
-uvox-infer.exe
+simple-stt-infer.exe
     disposable Rust inference worker
     ├── only active component allowed to load parakeet.dll
     ├── only active component allowed to load GGUF models
@@ -54,7 +54,7 @@ uvox-infer.exe
 | Rapid recording visualizer | capture service | Rust Win32 overlay. |
 | Parakeet DLL and model | infer worker | Isolated; capture service cannot import loader. |
 | Model idle cleanup | capture service + infer worker | request graceful worker shutdown, then process exit; exact-PID force kill only after grace period. |
-| Canonical config | schema-v2 JSON | Read/write through Rust config module; shell edits via `uvoxctl`. |
+| Canonical config | schema-v2 JSON | Read/write through Rust config module; shell edits via `simple-stt-ctl`. |
 | Component logs | each component | Shell, capture, and infer logs are separate. |
 
 ## Dictation sequence
@@ -63,23 +63,23 @@ uvox-infer.exe
 AHK hotkey down
   capture foreground HWND
   assign session id
-  asynchronously launch: uvoxctl start-recording
+  asynchronously launch: simple-stt-ctl start-recording
 
 capture service
   enter Recording overlay state
   append future 16 kHz PCM frames to active session buffer
 
 AHK hotkey up
-  asynchronously launch: uvoxctl stop-recording
+  asynchronously launch: simple-stt-ctl stop-recording
 
 capture service
   stop buffer
   reject clips shorter than 100 ms
   set Transcribing overlay state
-  lazily launch or reuse uvox-infer
+  lazily launch or reuse simple-stt-infer
   send framed PCM request on child stdin
 
-uvox-infer
+simple-stt-infer
   lazy-load parakeet.dll and selected GGUF if needed
   transcribe PCM
   return framed Unicode transcript on stdout
@@ -88,7 +88,7 @@ capture service
   queue transcript event
 
 AHK poll timer
-  launch uvoxctl poll-events
+  launch simple-stt-ctl poll-events
   receive transcript event
   queue transcript for paced SendText typing
   verify same HWND before every chunk
@@ -109,7 +109,7 @@ idle timeout reached OR Unload Speech Model OR model/runtime/timeout change OR c
   operating system reclaims worker RAM and VRAM allocations with process exit
 ```
 
-`uvox-capture.exe` never links or imports the active native loader module. Static verification checks that `libloading` appears only in `src/infer/parakeet_native.rs`. Capture control handlers read the child PID from an atomic tracker rather than waiting on the worker mutex, preserving responsiveness even when inference is blocked.
+`simple-stt-capture.exe` never links or imports the active native loader module. Static verification checks that `libloading` appears only in `src/infer/parakeet_native.rs`. Capture control handlers read the child PID from an atomic tracker rather than waiting on the worker mutex, preserving responsiveness even when inference is blocked.
 
 ## Overlay state model
 
@@ -135,11 +135,11 @@ Routine unload stays in logs unless diagnostic overlay is enabled.
 
 ## Install-relative runtime paths
 
-Relative runtime and model directories resolve against the runtime root. Checkout builds under `target\debug` or `target\release` walk back to the repository root. Packaged binaries staged beside `uvox-shell.exe` resolve relative paths against that installed directory. The bundled smoke fixture is `fixtures\parakeet-smoke.wav`.
+Relative runtime and model directories resolve against the runtime root. Checkout builds under `target\debug` or `target\release` walk back to the repository root. Packaged binaries staged beside `simple-stt-shell.exe` resolve relative paths against that installed directory. The bundled smoke fixture is `fixtures\parakeet-smoke.wav`.
 
 ## Helper subprocess completion
 
-The AHK shell does not trust helper PID disappearance alone. `uvoxctl` publishes its response file atomically; the shell timer accepts that file as completion, applies a bounded helper timeout, and terminates only the tracked helper PID on timeout. Readiness probes are de-duplicated.
+The AHK shell does not trust helper PID disappearance alone. `simple-stt-ctl` publishes its response file atomically; the shell timer accepts that file as completion, applies a bounded helper timeout, and terminates only the tracked helper PID on timeout. Readiness probes are de-duplicated.
 
 ## Structured log prefix
 

@@ -66,7 +66,7 @@ def stop(process: subprocess.Popen) -> None:
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="uvox-ipc-poc-") as raw:
+    with tempfile.TemporaryDirectory(prefix="simple-stt-ipc-poc-") as raw:
         temp = pathlib.Path(raw)
         state_path = temp / "capture-state.json"
         token = uuid.uuid4().hex

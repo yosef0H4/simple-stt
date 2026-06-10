@@ -9,13 +9,13 @@ Fail(message, exitCode := 1) {
 }
 
 sample := "Hello, WORLD! #1"
-if UvoxTransformTranscript(sample, false, false) != sample
+if SimpleSttTransformTranscript(sample, false, false) != sample
     Fail("identity transform changed text")
-if UvoxTransformTranscript(sample, true, false) != "Hello WORLD 1"
+if SimpleSttTransformTranscript(sample, true, false) != "Hello WORLD 1"
     Fail("punctuation transform mismatch")
-if UvoxTransformTranscript(sample, false, true) != "hello, world! #1"
+if SimpleSttTransformTranscript(sample, false, true) != "hello, world! #1"
     Fail("lowercase transform mismatch")
-if UvoxTransformTranscript(sample, true, true) != "hello world 1"
+if SimpleSttTransformTranscript(sample, true, true) != "hello world 1"
     Fail("combined transform mismatch")
 
 FileAppend("PASS: text-transform smoke`n", "*")

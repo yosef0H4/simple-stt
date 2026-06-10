@@ -7,7 +7,7 @@ class ProcessSupervisor {
         this.onRestart := onRestart
         this.stateFile := config.Get("service_state_path")
         this.configFile := config.Get("config_path")
-        this.token := UvoxRandomToken()
+        this.token := SimpleSttRandomToken()
         this.pid := 0
         this.expectedStop := false
         this.restartAfterStop := false
@@ -30,17 +30,17 @@ class ProcessSupervisor {
         this.expectedStop := false
         this.restartAfterStop := false
         this.readyProbeInFlight := false
-        this.token := UvoxRandomToken()
+        this.token := SimpleSttRandomToken()
         if IsObject(this.ipc)
             this.ipc.ResetServiceSession(this.token)
         if FileExist(this.stateFile)
             try FileDelete(this.stateFile)
-        command := UvoxQuote(this.captureExe) . " --token " . UvoxQuote(this.token) . " --state-file " . UvoxQuote(this.stateFile) . " --config " . UvoxQuote(this.configFile)
+        command := SimpleSttQuote(this.captureExe) . " --token " . SimpleSttQuote(this.token) . " --state-file " . SimpleSttQuote(this.stateFile) . " --config " . SimpleSttQuote(this.configFile)
         try Run(command, A_ScriptDir, "Hide", &pid)
         catch Error as err {
             this.pid := 0
             this.logger.Write("error", "capture-service launch failed: " . err.Message)
-            TrayTip("Audio service failed to start — retrying…", "Uvox", 3)
+            TrayTip("Audio service failed to start — retrying…", "SimpleStt", 3)
             SetTimer(this.startTimer, -2000)
             return
         }
@@ -48,7 +48,7 @@ class ProcessSupervisor {
         this.logger.Write("info", "capture-service start pid=" . pid)
         SetTimer(this.monitorTimer, 1000)
         SetTimer(this.readyTimer, 250)
-        TrayTip("Audio service starting…", "Uvox", 1)
+        TrayTip("Audio service starting…", "SimpleStt", 1)
     }
 
     ProbeReady(*) {
@@ -68,7 +68,7 @@ class ProcessSupervisor {
         SetTimer(this.ipc.pollEventsTimer, -1)
         SetTimer(this.readyTimer, 0)
         this.logger.Write("info", "capture-service ready pid=" . this.pid)
-        TrayTip("Audio service ready", "Uvox", 1)
+        TrayTip("Audio service ready", "SimpleStt", 1)
     }
 
     Monitor(*) {
@@ -85,7 +85,7 @@ class ProcessSupervisor {
             return
         }
         this.logger.Write("error", "capture-service stopped unexpectedly pid=" . oldPid)
-        TrayTip("Audio service stopped — restarting…", "Uvox", 2)
+        TrayTip("Audio service stopped — restarting…", "SimpleStt", 2)
         if IsObject(this.onRestart)
             this.onRestart.Call()
         SetTimer(this.startTimer, -300)
@@ -166,8 +166,8 @@ class ProcessSupervisor {
         if !this.pid
             return
         this.expectedStop := true
-        output := UvoxTempFile("shutdown")
-        command := UvoxQuote(this.ctlExe) . " --state-file " . UvoxQuote(this.stateFile) . " --token " . UvoxQuote(this.token) . " --output " . UvoxQuote(output) . " shutdown"
+        output := SimpleSttTempFile("shutdown")
+        command := SimpleSttQuote(this.ctlExe) . " --state-file " . SimpleSttQuote(this.stateFile) . " --token " . SimpleSttQuote(this.token) . " --output " . SimpleSttQuote(output) . " shutdown"
         try RunWait(command, A_ScriptDir, "Hide")
         catch Error as err
             this.logger.Write("warning", "graceful capture-service shutdown request failed: " . err.Message)

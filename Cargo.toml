@@ -1,5 +1,5 @@
 [package]
-name = "uvox"
+name = "simple-stt"
 version = "0.2.0"
 edition = "2021"
 license = "GPL-2.0-only"
@@ -41,17 +41,17 @@ windows-sys = { version = "0.60", features = [
 ] }
 
 [[bin]]
-name = "uvox-capture"
-path = "src/bin/uvox_capture.rs"
+name = "simple-stt-capture"
+path = "src/bin/simple_stt_capture.rs"
 
 [[bin]]
-name = "uvox-infer"
-path = "src/bin/uvox_infer.rs"
+name = "simple-stt-infer"
+path = "src/bin/simple_stt_infer.rs"
 
 [[bin]]
-name = "uvoxctl"
-path = "src/bin/uvoxctl.rs"
+name = "simple-stt-ctl"
+path = "src/bin/simple_stt_ctl.rs"
 
 [[bin]]
-name = "uvox_mock_infer"
-path = "src/bin/uvox_mock_infer.rs"
+name = "simple_stt_mock_infer"
+path = "src/bin/simple_stt_mock_infer.rs"

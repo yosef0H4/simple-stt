@@ -6,9 +6,9 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
-$CaptureExe = Join-Path $Root 'target\release\uvox-capture.exe'
-$CtlExe = Join-Path $Root 'target\release\uvoxctl.exe'
-$InferExe = Join-Path $Root 'target\release\uvox-infer.exe'
+$CaptureExe = Join-Path $Root 'target\release\simple-stt-capture.exe'
+$CtlExe = Join-Path $Root 'target\release\simple-stt-ctl.exe'
+$InferExe = Join-Path $Root 'target\release\simple-stt-infer.exe'
 foreach ($Path in @($CaptureExe,$CtlExe,$InferExe)) { if (-not (Test-Path -LiteralPath $Path)) { throw "Missing release binary: $Path. Run .\scripts\build-release.ps1 first." } }
 $Artifacts = Join-Path $Root 'artifacts'
 New-Item -ItemType Directory -Force -Path $Artifacts | Out-Null
@@ -18,7 +18,7 @@ New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 $Config = Join-Path $RunDir 'config.json'
 $State = Join-Path $RunDir 'capture-state.json'
 $Token = [Guid]::NewGuid().ToString('N')
-$env:UVOX_CONFIG = $Config
+$env:SIMPLE_STT_CONFIG = $Config
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 
 function Read-TabResponse([string]$Path) {
@@ -40,10 +40,10 @@ function Read-TabResponse([string]$Path) {
 function Invoke-Ctl([string[]]$Arguments) {
     $Output = Join-Path $RunDir ("ctl-" + [Guid]::NewGuid().ToString('N') + '.txt')
     & $CtlExe --state-file $State --token $Token --output $Output @Arguments
-    if (-not (Test-Path -LiteralPath $Output)) { throw "uvoxctl did not create response file" }
+    if (-not (Test-Path -LiteralPath $Output)) { throw "simple-stt-ctl did not create response file" }
     $Response = Read-TabResponse $Output
     Remove-Item -LiteralPath $Output -Force
-    if (-not $Response.ok) { throw "uvoxctl failed: $($Response.message)" }
+    if (-not $Response.ok) { throw "simple-stt-ctl failed: $($Response.message)" }
     return $Response
 }
 function Snapshot-Process([int]$Id) {
@@ -91,7 +91,7 @@ $SaveOut = Join-Path $RunDir 'config-save-result.txt'
 $SaveResponse = Read-TabResponse $SaveOut
 if (-not $SaveResponse.ok) { throw "unable to prepare isolated config: $($SaveResponse.message)" }
 
-$Evidence = [ordered]@{ schema='uvox-memory-validation-v1'; started=(Get-Date).ToString('o'); idle_seconds=$IdleSeconds; shell_before=(Snapshot-Process $ShellPid); gpu_before=(Snapshot-Gpu) }
+$Evidence = [ordered]@{ schema='simple-stt-memory-validation-v1'; started=(Get-Date).ToString('o'); idle_seconds=$IdleSeconds; shell_before=(Snapshot-Process $ShellPid); gpu_before=(Snapshot-Gpu) }
 $Capture = Start-Process -FilePath $CaptureExe -ArgumentList @('--token',$Token,'--state-file',$State,'--config',$Config) -PassThru -WindowStyle Hidden
 try {
     Wait-State

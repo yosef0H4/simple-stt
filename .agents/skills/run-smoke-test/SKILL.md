@@ -1,4 +1,4 @@
-# Skill: run Uvox smoke tests
+# Skill: run Simple STT smoke tests
 
 Source-only checks:
 

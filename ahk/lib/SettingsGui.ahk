@@ -13,7 +13,7 @@ class SettingsGui {
             this.ListModels()
             return
         }
-        window := Gui("+Resize", "Uvox Settings")
+        window := Gui("+Resize", "SimpleStt Settings")
         this.gui := window
         window.SetFont("s9", "Segoe UI")
         window.OnEvent("Close", ObjBindMethod(this, "Hide"))
@@ -61,7 +61,7 @@ class SettingsGui {
         this.controls["idle_worker_timeout_secs"] := window.AddEdit("x+8 yp-3 w100")
         window.AddText("x+20 yp+3 w160", "Shutdown grace ms")
         this.controls["worker_shutdown_grace_ms"] := window.AddEdit("x+8 yp-3 w100")
-        this.controls["start_with_windows"] := window.AddCheckbox("xm y+10", "Start Uvox shell with Windows")
+        this.controls["start_with_windows"] := window.AddCheckbox("xm y+10", "Start SimpleStt shell with Windows")
         window.AddText("xm y+12 w150", "Logging level")
         this.controls["log_level"] := window.AddDropDownList("x+8 yp-3 w160", ["minimal", "normal", "debug", "extreme"])
         this.controls["diagnostic_overlay"] := window.AddCheckbox("xm y+10", "Diagnostic overlay notices")
@@ -131,7 +131,7 @@ class SettingsGui {
         for key in ["record_hotkey", "audio_device_contains", "audio_gain", "selected_model_filename", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
             config.Set(key, this.controls[key].Value)
         for key in ["hotkey_enabled", "trailing_space", "remove_punctuation", "lowercase_output", "start_with_windows", "diagnostic_overlay", "log_transcripts"]
-            config.Set(key, UvoxBoolText(this.controls[key].Value))
+            config.Set(key, SimpleSttBoolText(this.controls[key].Value))
         config.Set("capslock_behavior", this.controls["capslock_behavior"].Text)
         config.Set("text_delivery_mode", this.controls["text_delivery_mode"].Text)
         config.Set("log_level", this.controls["log_level"].Text)
@@ -144,7 +144,7 @@ class SettingsGui {
             this.SetStatus("Save failed: " . err.Message)
             if this.app.HasProp("testMode") && this.app.testMode
                 throw err
-            MsgBox(err.Message, "Uvox settings error", "Iconx")
+            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
         }
     }
 
@@ -230,7 +230,7 @@ class SettingsGui {
     DownloadModel(*) {
         filename := this.controls["selected_model_filename"].Value
         this.SetStatus("Model download queued: " . filename)
-        this.app.ipc.CallService("download-model --filename " . UvoxQuote(filename))
+        this.app.ipc.CallService("download-model --filename " . SimpleSttQuote(filename))
     }
     TestModel(*) {
         this.SetStatus("Model test queued")
@@ -238,7 +238,7 @@ class SettingsGui {
     }
     BrowseModelDir(*) {
         current := this.controls["model_dir"].Value
-        selected := DirSelect(current, 1, "Choose the Uvox model folder")
+        selected := DirSelect(current, 1, "Choose the SimpleStt model folder")
         if selected != ""
             this.controls["model_dir"].Value := selected
     }

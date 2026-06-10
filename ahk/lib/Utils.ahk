@@ -1,8 +1,8 @@
-UvoxQuote(value) {
+SimpleSttQuote(value) {
     return Chr(34) . value . Chr(34)
 }
 
-UvoxResolveExe(stem) {
+SimpleSttResolveExe(stem) {
     sameDir := A_ScriptDir . "\" . stem . ".exe"
     if FileExist(sameDir)
         return sameDir
@@ -24,13 +24,13 @@ UvoxResolveExe(stem) {
     return sameDir
 }
 
-UvoxTempFile(prefix := "uvox") {
-    dir := A_Temp . "\uvox-shell"
+SimpleSttTempFile(prefix := "simple-stt") {
+    dir := A_Temp . "\simple-stt-shell"
     DirCreate(dir)
     return dir . "\" . prefix . "-" . A_TickCount . "-" . Random(100000, 999999) . ".txt"
 }
 
-UvoxRandomToken() {
+SimpleSttRandomToken() {
     bytes := Buffer(32, 0)
     ok := DllCall("advapi32\SystemFunction036", "Ptr", bytes.Ptr, "UInt", bytes.Size, "Int")
     token := ""
@@ -44,26 +44,26 @@ UvoxRandomToken() {
     return token
 }
 
-UvoxBool(value) {
+SimpleSttBool(value) {
     return value = true || value = 1 || StrLower(value . "") = "true"
 }
 
-UvoxBoolText(value) {
-    return UvoxBool(value) ? "true" : "false"
+SimpleSttBoolText(value) {
+    return SimpleSttBool(value) ? "true" : "false"
 }
 
-UvoxWriteStdOut(text := "") {
+SimpleSttWriteStdOut(text := "") {
     FileAppend(text, "*", "UTF-8")
 }
 
-UvoxWriteStdErr(text := "") {
+SimpleSttWriteStdErr(text := "") {
     FileAppend(text, "**", "UTF-8")
 }
 
-UvoxConsoleLine(text := "") {
-    UvoxWriteStdOut(text . "`n")
+SimpleSttConsoleLine(text := "") {
+    SimpleSttWriteStdOut(text . "`n")
 }
 
-UvoxConsoleError(text) {
-    UvoxWriteStdErr(text . "`n")
+SimpleSttConsoleError(text) {
+    SimpleSttWriteStdErr(text . "`n")
 }

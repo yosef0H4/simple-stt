@@ -1,19 +1,24 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use simple_stt::capture::state::ServiceState;
+use simple_stt::common::line_codec::{escape_field, unescape_field};
+use simple_stt::common::shell_protocol::{
+    ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
+};
+use simple_stt::config::{
+    replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel, TextDeliveryMode,
+};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use uvox::capture::state::ServiceState;
-use uvox::common::line_codec::{escape_field, unescape_field};
-use uvox::common::shell_protocol::{
-    ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
-};
-use uvox::config::{replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel, TextDeliveryMode};
 
 #[derive(Debug, Parser)]
-#[command(name = "uvoxctl", about = "One-shot Uvox shell-to-capture helper")]
+#[command(
+    name = "simple-stt-ctl",
+    about = "One-shot SimpleStt shell-to-capture helper"
+)]
 struct Args {
     #[arg(long)]
     state_file: Option<PathBuf>,
@@ -85,7 +90,10 @@ fn main() {
     };
     if let Some(path) = output_path {
         if let Err(error) = write_atomic(&path, &body) {
-            eprintln!("uvoxctl failed to write {}: {error:#}", path.display());
+            eprintln!(
+                "simple-stt-ctl failed to write {}: {error:#}",
+                path.display()
+            );
             std::process::exit(2);
         }
     } else {

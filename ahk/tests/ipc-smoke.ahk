@@ -6,25 +6,25 @@
 #Include ..\lib\Config.ahk
 
 Fail(message, exitCode := 1) {
-    UvoxConsoleError("FAIL: " . message)
+    SimpleSttConsoleError("FAIL: " . message)
     ExitApp(exitCode)
 }
 
 Info(message) {
-    UvoxConsoleLine("INFO: " . message)
+    SimpleSttConsoleLine("INFO: " . message)
 }
 
-ctl := UvoxResolveExe("uvoxctl")
-capture := UvoxResolveExe("uvox-capture")
+ctl := SimpleSttResolveExe("simple-stt-ctl")
+capture := SimpleSttResolveExe("simple-stt-capture")
 if !FileExist(ctl) || !FileExist(capture) {
-    Fail("Build uvoxctl.exe and uvox-capture.exe first.")
+    Fail("Build simple-stt-ctl.exe and simple-stt-capture.exe first.")
 }
 config := ConfigStore(ctl)
 state := config.Get("service_state_path")
-token := UvoxRandomToken()
+token := SimpleSttRandomToken()
 try FileDelete(state)
 Info("starting capture service")
-Run(UvoxQuote(capture) . " --token " . UvoxQuote(token) . " --state-file " . UvoxQuote(state) . " --config " . UvoxQuote(config.Get("config_path")), A_ScriptDir, "Hide", &pid)
+Run(SimpleSttQuote(capture) . " --token " . SimpleSttQuote(token) . " --state-file " . SimpleSttQuote(state) . " --config " . SimpleSttQuote(config.Get("config_path")), A_ScriptDir, "Hide", &pid)
 Loop 40 {
     Sleep(100)
     if FileExist(state)
@@ -32,8 +32,8 @@ Loop 40 {
 }
 if !FileExist(state)
     Fail("capture state file was not published")
-output := UvoxTempFile("ipc-smoke")
-RunWait(UvoxQuote(ctl) . " --state-file " . UvoxQuote(state) . " --token " . UvoxQuote(token) . " --output " . UvoxQuote(output) . " ping", A_ScriptDir, "Hide")
+output := SimpleSttTempFile("ipc-smoke")
+RunWait(SimpleSttQuote(ctl) . " --state-file " . SimpleSttQuote(state) . " --token " . SimpleSttQuote(token) . " --output " . SimpleSttQuote(output) . " ping", A_ScriptDir, "Hide")
 response := TabProtocol.ReadResponse(output)
 try FileDelete(output)
 if !response["ok"] {
@@ -44,9 +44,9 @@ if response["message"] != "pong" {
     ProcessClose(pid)
     Fail("unexpected ping response: " . response["message"])
 }
-output := UvoxTempFile("ipc-shutdown")
-RunWait(UvoxQuote(ctl) . " --state-file " . UvoxQuote(state) . " --token " . UvoxQuote(token) . " --output " . UvoxQuote(output) . " shutdown", A_ScriptDir, "Hide")
+output := SimpleSttTempFile("ipc-shutdown")
+RunWait(SimpleSttQuote(ctl) . " --state-file " . SimpleSttQuote(state) . " --token " . SimpleSttQuote(token) . " --output " . SimpleSttQuote(output) . " shutdown", A_ScriptDir, "Hide")
 try FileDelete(output)
 try ProcessWaitClose(pid, 3)
-UvoxConsoleLine("PASS: authenticated ping and graceful shutdown")
+SimpleSttConsoleLine("PASS: authenticated ping and graceful shutdown")
 ExitApp(0)

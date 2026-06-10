@@ -2,21 +2,21 @@
 
 ## Canonical source
 
-Uvox has one canonical persisted config file: human-readable JSON schema version 2.
+Simple STT has one canonical persisted config file: human-readable JSON schema version 2.
 
 Default Windows path:
 
 ```text
-%APPDATA%\uvox\config.json
+%APPDATA%\simple-stt\config.json
 ```
 
 Override for development and diagnostics:
 
 ```powershell
-$env:UVOX_CONFIG = 'C:\path\to\config.json'
+$env:SIMPLE_STT_CONFIG = 'C:\path\to\config.json'
 ```
 
-The Rust config module owns JSON serialization, migration, validation, and atomic replacement. The AHK GUI reads and writes through local `uvoxctl config-show` / `config-save` commands so the shell does not need a JSON library.
+The Rust config module owns JSON serialization, migration, validation, and atomic replacement. The AHK GUI reads and writes through local `simple-stt-ctl config-show` / `config-save` commands so the shell does not need a JSON library.
 
 ```json
 {
@@ -64,7 +64,7 @@ The Rust config module owns JSON serialization, migration, validation, and atomi
 | `model_dir` | Non-empty path. | Recycle infer worker. |
 | `selected_model_filename` | Plain approved `.gguf` filename; no slash, backslash, or `..`. | Recycle infer worker. |
 
-`ReloadConfig` compares old and new audio fields and the capture logging level. The response tells the shell when an audio-service restart is necessary. Model and worker lifecycle fields are applied by recycling only `uvox-infer.exe`.
+`ReloadConfig` compares old and new audio fields and the capture logging level. The response tells the shell when an audio-service restart is necessary. Model and worker lifecycle fields are applied by recycling only `simple-stt-infer.exe`.
 
 ## Migration from schema 1
 
@@ -87,7 +87,7 @@ On Windows, schema-v2 saves, helper response files, and completed model download
 The only additional runtime state is the ephemeral capture discovery file:
 
 ```text
-%LOCALAPPDATA%\uvox\state\capture-state.json
+%LOCALAPPDATA%\simple-stt\state\capture-state.json
 ```
 
 It contains protocol number, capture PID, loopback address, and startup timestamp. The per-launch random token is passed directly from shell to capture/helper command lines and is not persisted as long-lived configuration.
