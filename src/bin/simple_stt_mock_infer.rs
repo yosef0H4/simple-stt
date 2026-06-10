@@ -52,6 +52,10 @@ fn main() -> Result<()> {
             MessageType::Hello if mode.contains("hang-handshake") => sleep_forever(),
             MessageType::Hello => write_frame(&mut output, &Frame::empty(MessageType::HelloAck))?,
             MessageType::Ping => write_frame(&mut output, &Frame::empty(MessageType::Pong))?,
+            MessageType::WarmUp => {
+                write_frame(&mut output, &Frame::empty(MessageType::ModelLoaded))?;
+                write_frame(&mut output, &Frame::empty(MessageType::WarmUpAck))?;
+            }
             MessageType::Shutdown => {
                 write_frame(&mut output, &Frame::empty(MessageType::ShutdownAck))?;
                 break;

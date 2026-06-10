@@ -1,15 +1,17 @@
 use crate::config::{replace_file_atomic, validate_model_filename, AppConfig};
 use anyhow::{Context, Result};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const BASE_URL: &str = "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main";
+pub const CATALOG_URL: &str = "https://huggingface.co/api/models/mudler/parakeet-cpp-gguf/tree/main?recursive=false&expand=false";
 
 #[derive(Debug, Clone)]
 pub struct ModelSpec {
-    pub family: &'static str,
-    pub quant: &'static str,
+    pub family: String,
+    pub quant: String,
     pub file: String,
     pub size_mb: u32,
     pub recommended: bool,
@@ -122,8 +124,8 @@ pub fn catalog() -> Vec<ModelSpec> {
         .iter()
         .flat_map(|(family, quantizations)| {
             quantizations.iter().map(move |(quant, size_mb)| ModelSpec {
-                family,
-                quant,
+                family: (*family).to_owned(),
+                quant: (*quant).to_owned(),
                 file: format!("{family}-{quant}.gguf"),
                 size_mb: *size_mb,
                 recommended: *quant == "f16",
@@ -135,13 +137,81 @@ pub fn find_by_file(file: &str) -> Option<ModelSpec> {
     catalog().into_iter().find(|model| model.file == file)
 }
 
+fn catalog_cache_path() -> PathBuf {
+    AppConfig::local_data_dir().join("model-catalog.json")
+}
+fn cached_catalog_files() -> Vec<String> {
+    fs::read_to_string(catalog_cache_path())
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+pub fn refresh_catalog_cache() -> Result<Vec<String>> {
+    let raw = reqwest::blocking::get(CATALOG_URL)?
+        .error_for_status()?
+        .text()?;
+    let entries: serde_json::Value = serde_json::from_str(&raw)?;
+    let mut files = entries
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("path").and_then(|value| value.as_str()))
+        .filter(|path| path.ends_with(".gguf") && !path.contains('/'))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+    anyhow::ensure!(
+        !files.is_empty(),
+        "online model catalog did not contain GGUF files"
+    );
+    let path = catalog_cache_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&path, serde_json::to_string_pretty(&files)? + "\n")?;
+    Ok(files)
+}
+pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
+    let mut models = BTreeMap::<String, ModelSpec>::new();
+    for model in catalog() {
+        models.insert(model.file.clone(), model);
+    }
+    for file in cached_catalog_files() {
+        models.entry(file.clone()).or_insert_with(|| ModelSpec {
+            family: "online".into(),
+            quant: "unknown".into(),
+            file,
+            size_mb: 0,
+            recommended: false,
+        });
+    }
+    if let Ok(entries) = fs::read_dir(config.model_dir_path()) {
+        for entry in entries.flatten() {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            if file.ends_with(".gguf") {
+                models.entry(file.clone()).or_insert_with(|| ModelSpec {
+                    family: "local".into(),
+                    quant: "unknown".into(),
+                    file,
+                    size_mb: 0,
+                    recommended: false,
+                });
+            }
+        }
+    }
+    models.into_values().collect()
+}
+
 pub fn download_model<F>(config: &AppConfig, filename: &str, mut on_progress: F) -> Result<PathBuf>
 where
     F: FnMut(u64, Option<u64>),
 {
     validate_model_filename(filename)?;
-    let spec =
-        find_by_file(filename).with_context(|| format!("unknown approved model: {filename}"))?;
+    let spec = catalog_for_config(config)
+        .into_iter()
+        .find(|model| model.file == filename)
+        .with_context(|| format!("unknown cached or local model: {filename}"))?;
     let dir = config.model_dir_path();
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let target = dir.join(&spec.file);

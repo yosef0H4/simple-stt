@@ -65,6 +65,7 @@ class ProcessSupervisor {
         if !response["ok"]
             return
         this.ipc.ready := true
+        SetTimer(this.ipc.pollEventsTimer, -1)
         SetTimer(this.readyTimer, 0)
         this.logger.Write("info", "capture-service ready pid=" . this.pid)
         TrayTip("Audio service ready", "Uvox", 1)

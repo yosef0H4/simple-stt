@@ -9,11 +9,16 @@ class IpcClient {
         this.latestSeq := 0
         this.pollInFlight := false
         this.ready := false
+        this.useLongPoll := true
         this.pollJobsTimer := ObjBindMethod(this, "PollJobs")
         this.pollEventsTimer := ObjBindMethod(this, "PollEvents")
+        this.pollResponseCallback := ObjBindMethod(this, "HandlePollResponse")
         this.retryTimer := ObjBindMethod(this, "RetryPing")
-        SetTimer(this.pollJobsTimer, 50)
-        SetTimer(this.pollEventsTimer, 150)
+        ; Poll helper jobs only while work exists. A recurring idle timer used to
+        ; wake the interpreter 20 times per second even when there was nothing
+        ; to inspect. One-shot scheduling is both cheaper at idle and quicker
+        ; for hotkey-triggered start/stop acknowledgements.
+        SetTimer(this.pollEventsTimer, -1)
     }
 
 
@@ -28,6 +33,7 @@ class IpcClient {
         this.latestSeq := 0
         this.pollInFlight := false
         this.ready := false
+        this.useLongPoll := true
         SetTimer(this.retryTimer, 0)
     }
 
@@ -51,6 +57,7 @@ class IpcClient {
         try {
             Run(command, A_ScriptDir, "Hide", &pid)
             this.jobs[pid] := Map("path", output, "callback", callback, "kind", kind, "started", A_TickCount)
+            SetTimer(this.pollJobsTimer, -1)
             return pid
         } catch Error as err {
             if kind = "events"
@@ -90,17 +97,36 @@ class IpcClient {
         for pid in finished
             if this.jobs.Has(pid)
                 this.jobs.Delete(pid)
+        if this.jobs.Count {
+            onlyEvents := true
+            for _, job in this.jobs {
+                if job["kind"] != "events" {
+                    onlyEvents := false
+                    break
+                }
+            }
+            SetTimer(this.pollJobsTimer, onlyEvents ? -100 : -10)
+        }
     }
 
     PollEvents(*) {
         if !this.ready || this.pollInFlight
             return
         this.pollInFlight := true
-        this.CallService("poll-events --after-seq " . this.latestSeq, ObjBindMethod(this, "HandlePollResponse"), "events")
+        arguments := "poll-events --after-seq " . this.latestSeq
+        if this.useLongPoll
+            arguments .= " --wait-ms 900"
+        this.CallService(arguments, this.pollResponseCallback, "events")
     }
 
     HandlePollResponse(response) {
         if !response["ok"] {
+            if this.useLongPoll {
+                this.useLongPoll := false
+                this.logger.Write("warning", "long event poll unavailable; falling back to short polling: " . response["message"])
+                SetTimer(this.pollEventsTimer, -1)
+                return
+            }
             this.ready := false
             this.logger.Write("warning", "event poll failed: " . response["message"])
             SetTimer(this.retryTimer, -300)
@@ -115,6 +141,8 @@ class IpcClient {
             catch Error as err
                 this.logger.Write("error", "service event callback failed: " . err.Message)
         }
+        if this.ready
+            SetTimer(this.pollEventsTimer, -1)
     }
 
     Ping(callback := "") {
@@ -126,8 +154,11 @@ class IpcClient {
 
     HandlePing(response) {
         this.ready := response["ok"]
-        if !this.ready
+        if !this.ready {
             SetTimer(this.retryTimer, -500)
+            return
+        }
+        SetTimer(this.pollEventsTimer, -1)
     }
 
     RetryPing(*) {

@@ -102,8 +102,8 @@ all_active_rs = {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8") f
 loader_paths = [path for path, body in all_active_rs.items() if "use libloading::Library" in body]
 if loader_paths != ["src/infer/parakeet_native.rs"]:
     errors.append(f"libloading import must exist only in src/infer/parakeet_native.rs, got {loader_paths}")
-need("src/bin/uvox_infer.rs", "ParakeetNative", "worker idle timeout reached; exiting process")
-need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self) -> Result<()>")
+need("src/bin/uvox_infer.rs", "ParakeetNative", "worker idle timeout reached; exiting process", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck", "model warm-up begin", "model warm-up end")
+need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()>", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
 need("src/bin/uvox_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion")
 need("src/bin/uvox_infer.rs", "log_level: LogLevel", "&args.log_level")
@@ -124,7 +124,7 @@ typist = need("ahk/lib/Typist.ahk", "SendText(", "ClipboardAll()", 'A_Clipboard 
 checks.append("AHK owns tray, GUI, hotkeys, full-format clipboard-preserving paste modes, and foreground-safe Unicode typing")
 
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
-ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "uvoxctl helper timed out", 'responseReady := FileExist(job["path"])')
+ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "uvoxctl helper timed out", 'responseReady := FileExist(job["path"])')
 supervisor_ahk = need("ahk/lib/ProcessSupervisor.ahk", "Run(command", "ProcessWaitClose", "ProcessClose", "UvoxRandomToken", "ResetServiceSession", "readyProbeInFlight", "this.startTimer")
 need("ahk/uvox.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement")
 if "RunWait(command" in ipc_ahk:
@@ -146,8 +146,8 @@ need("scripts/memory-cleanup-validation.ps1", "Get-Process", "nvidia-smi", "unlo
 checks.append("schema-v2 migration, install-relative paths, atomic writes, HTTPS partial downloads, and diagnostics are present")
 
 # Deterministic worker integration coverage exists but is intentionally not shipped.
-need("src/bin/uvox_mock_infer.rs", "Test-only disposable inference worker", "hang-handshake", "mock مرحبا 世界 🙂")
-need("tests/worker_lifecycle.rs", "worker_launches_lazily_and_reuses_warm_process", "worker_exits_after_idle_timeout", "model_switch_recycles_worker_before_next_request", "crashed_worker_is_discarded_and_recoverable", "blocked_inference_is_force_terminated_by_exact_pid")
+need("src/bin/uvox_mock_infer.rs", "Test-only disposable inference worker", "hang-handshake", "mock مرحبا 世界 🙂", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
+need("tests/worker_lifecycle.rs", "worker_launches_lazily_and_reuses_warm_process", "warm_up_loads_and_primes_worker_before_first_transcript", "worker_exits_after_idle_timeout", "model_switch_recycles_worker_before_next_request", "crashed_worker_is_discarded_and_recoverable", "blocked_inference_is_force_terminated_by_exact_pid")
 if "--bins" in text("scripts/build-release.ps1"):
     errors.append("release build must not ship the mock inference binary via --bins")
 checks.append("mock-worker lifecycle integration sources cover reuse, idle exit, model switch, crash recovery, and forced shutdown")

@@ -46,6 +46,7 @@ pub enum ShellCommand {
     DownloadModel { filename: String },
     ListInputs,
     ListModels,
+    RefreshModels,
     ShowNotice { level: NoticeLevel, text: String },
     Shutdown,
 }

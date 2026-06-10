@@ -1,4 +1,6 @@
 class Typist {
+    static modifierKeys := ["LCtrl", "RCtrl", "LAlt", "RAlt", "LShift", "RShift", "LWin", "RWin"]
+
     __New(logger, onNotice) {
         this.logger := logger
         this.onNotice := onNotice
@@ -32,6 +34,7 @@ class Typist {
         this.sessionId := item["session_id"]
         this.targetWindow := item["target_window"]
         this.text := item["text"]
+        this.textLength := StrLen(this.text)
         this.chunkChars := item["chunk_chars"]
         this.intervalMs := item["interval_ms"]
         this.deliveryMode := item["delivery_mode"]
@@ -40,7 +43,7 @@ class Typist {
         this.pasteClipboardSequence := 0
         this.clipboardBackup := ""
         this.active := true
-        this.logger.Write("info", "text-delivery begin mode=" . this.deliveryMode . " chars=" . StrLen(this.text), this.sessionId)
+        this.logger.Write("info", "text-delivery begin mode=" . this.deliveryMode . " chars=" . this.textLength, this.sessionId)
         SetTimer(this.timer, -1)
     }
 
@@ -69,7 +72,7 @@ class Typist {
     }
 
     TickType() {
-        if this.offset > StrLen(this.text) {
+        if this.offset > this.textLength {
             this.CompleteCurrent()
             return
         }
@@ -160,7 +163,7 @@ class Typist {
     }
 
     AnyPhysicalModifierDown() {
-        for key in ["LCtrl", "RCtrl", "LAlt", "RAlt", "LShift", "RShift", "LWin", "RWin"] {
+        for key in Typist.modifierKeys {
             if GetKeyState(key, "P")
                 return true
         }

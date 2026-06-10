@@ -9,6 +9,8 @@ class SettingsGui {
     Open(*) {
         if IsObject(this.gui) {
             this.gui.Show()
+            this.ListInputs()
+            this.ListModels()
             return
         }
         window := Gui("+Resize", "Uvox Settings")
@@ -36,8 +38,8 @@ class SettingsGui {
 
         window.AddText("xm y+18 w150", "Selected model")
         this.controls["selected_model_filename"] := window.AddEdit("x+8 yp-3 w360")
-        listModels := window.AddButton("x+8 yp-1 w120", "List models")
-        listModels.OnEvent("Click", ObjBindMethod(this, "ListModels"))
+        listModels := window.AddButton("x+8 yp-1 w120", "Refresh models")
+        listModels.OnEvent("Click", ObjBindMethod(this, "RefreshModels"))
         this.controls["model_list"] := window.AddDropDownList("xm y+8 w640", ["Load approved model list"])
         this.controls["model_list"].OnEvent("Change", ObjBindMethod(this, "ChooseModel"))
         downloadButton := window.AddButton("xm y+8 w150", "Download model")
@@ -68,7 +70,11 @@ class SettingsGui {
         window.AddText("xm y+18 w190", "Advanced runtime directory")
         this.controls["parakeet_runtime_dir"] := window.AddEdit("x+8 yp-3 w500")
         window.AddText("xm y+12 w190", "Advanced model directory")
-        this.controls["model_dir"] := window.AddEdit("x+8 yp-3 w500")
+        this.controls["model_dir"] := window.AddEdit("x+8 yp-3 w360")
+        browseModels := window.AddButton("x+8 yp-1 w80", "Browse")
+        browseModels.OnEvent("Click", ObjBindMethod(this, "BrowseModelDir"))
+        openModels := window.AddButton("x+8 yp w90", "Open folder")
+        openModels.OnEvent("Click", ObjBindMethod(this, "OpenModelDir"))
 
         save := window.AddButton("xm y+20 w120 Default", "Save")
         save.OnEvent("Click", ObjBindMethod(this, "Save"))
@@ -78,7 +84,9 @@ class SettingsGui {
         openLog.OnEvent("Click", ObjBindMethod(this.app, "OpenLatestLog"))
         this.controls["status"] := window.AddText("xm y+14 w720", "Ready")
         this.LoadControls()
-        window.Show("w760 h810")
+        window.Show("w760 h860")
+        this.ListInputs()
+        this.ListModels()
     }
 
     Hide(*) {
@@ -183,8 +191,21 @@ class SettingsGui {
     }
 
     ListModels(*) {
-        this.SetStatus("Loading approved models…")
+        this.SetStatus("Loading cached models…")
         this.app.ipc.CallService("list-models", ObjBindMethod(this, "ModelsLoaded"))
+    }
+    RefreshModels(*) {
+        this.SetStatus("Refreshing online model catalog…")
+        this.app.ipc.CallService("refresh-models", ObjBindMethod(this, "ModelsRefreshed"))
+    }
+    ModelsRefreshed(response) {
+        if !response["ok"] {
+            this.SetStatus("Model refresh failed; showing cached list: " . response["message"])
+            this.ListModels()
+            return
+        }
+        this.SetStatus("Online model catalog refreshed")
+        this.ListModels()
     }
     ModelsLoaded(response) {
         if !response["ok"] {
@@ -214,6 +235,20 @@ class SettingsGui {
     TestModel(*) {
         this.SetStatus("Model test queued")
         this.app.TestModel()
+    }
+    BrowseModelDir(*) {
+        current := this.controls["model_dir"].Value
+        selected := DirSelect(current, 1, "Choose the Uvox model folder")
+        if selected != ""
+            this.controls["model_dir"].Value := selected
+    }
+    OpenModelDir(*) {
+        path := this.controls["model_dir"].Value
+        if path = ""
+            path := this.app.config.Get("model_dir")
+        if !DirExist(path)
+            DirCreate(path)
+        Run(path)
     }
 
     HandleEvent(event) {

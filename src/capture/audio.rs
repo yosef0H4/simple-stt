@@ -1,6 +1,9 @@
 use anyhow::Result;
 use crossbeam_channel::Sender;
-use std::sync::{atomic::AtomicU32, Arc};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32},
+    Arc,
+};
 
 pub const OUTPUT_SAMPLE_RATE: u32 = 16_000;
 pub const OUTPUT_FRAME_SAMPLES: usize = 320; // 20 ms
@@ -41,7 +44,7 @@ impl LinearResampler {
             return Vec::new();
         }
         let step = self.input_rate / self.output_rate;
-        let mut output = Vec::new();
+        let mut output = Vec::with_capacity(((source.len() as f64) / step).ceil() as usize);
         while self.phase + 1.0 < source.len() as f64 {
             let left = self.phase.floor() as usize;
             let fraction = (self.phase - left as f64) as f32;
@@ -75,6 +78,7 @@ pub struct FrameAssembler {
     gain: f32,
     frame_samples: usize,
     pending: Vec<i16>,
+    pending_offset: usize,
 }
 impl FrameAssembler {
     pub fn new(input_rate: u32, channels: usize, gain: f32, frame_samples: usize) -> Self {
@@ -84,7 +88,13 @@ impl FrameAssembler {
             gain,
             frame_samples,
             pending: Vec::new(),
+            pending_offset: 0,
         }
+    }
+    pub fn reset(&mut self) {
+        self.resampler = LinearResampler::new(self.resampler.input_rate as u32, OUTPUT_SAMPLE_RATE);
+        self.pending.clear();
+        self.pending_offset = 0;
     }
     pub fn push(&mut self, interleaved: &[f32]) -> Vec<Vec<i16>> {
         let mono = downmix_interleaved(interleaved, self.channels);
@@ -95,8 +105,17 @@ impl FrameAssembler {
                 .map(|value| f32_to_i16(value * self.gain)),
         );
         let mut frames = Vec::new();
-        while self.pending.len() >= self.frame_samples {
-            frames.push(self.pending.drain(..self.frame_samples).collect());
+        while self.pending.len() - self.pending_offset >= self.frame_samples {
+            let end = self.pending_offset + self.frame_samples;
+            frames.push(self.pending[self.pending_offset..end].to_vec());
+            self.pending_offset = end;
+        }
+        if self.pending_offset == self.pending.len() {
+            self.pending.clear();
+            self.pending_offset = 0;
+        } else if self.pending_offset >= self.frame_samples * 8 {
+            self.pending.drain(..self.pending_offset);
+            self.pending_offset = 0;
         }
         frames
     }
@@ -161,6 +180,7 @@ mod platform {
         gain: f32,
         tx: Sender<Vec<i16>>,
         latest_level: Option<Arc<AtomicU32>>,
+        recording_active: Option<Arc<AtomicBool>>,
         event_tx: Option<Sender<AudioEvent>>,
     ) -> Result<CaptureHandle> {
         let device = select_device(device_contains)?;
@@ -179,19 +199,21 @@ mod platform {
             SampleFormat::F32 => build_stream::<f32>(
                 &device,
                 &config,
-                assembler,
-                tx,
-                latest_level,
-                event_tx,
+                Arc::clone(&assembler),
+                tx.clone(),
+                latest_level.clone(),
+                recording_active.clone(),
+                event_tx.clone(),
                 |v| v,
             )?,
             SampleFormat::I16 => build_stream::<i16>(
                 &device,
                 &config,
-                assembler,
-                tx,
-                latest_level,
-                event_tx,
+                Arc::clone(&assembler),
+                tx.clone(),
+                latest_level.clone(),
+                recording_active.clone(),
+                event_tx.clone(),
                 |v| v as f32 / 32768.0,
             )?,
             SampleFormat::U16 => build_stream::<u16>(
@@ -200,6 +222,7 @@ mod platform {
                 assembler,
                 tx,
                 latest_level,
+                recording_active,
                 event_tx,
                 |v| (v as f32 - 32768.0) / 32768.0,
             )?,
@@ -214,17 +237,34 @@ mod platform {
         assembler: Arc<Mutex<FrameAssembler>>,
         tx: Sender<Vec<i16>>,
         latest_level: Option<Arc<AtomicU32>>,
+        recording_active: Option<Arc<AtomicBool>>,
         event_tx: Option<Sender<AudioEvent>>,
         convert: impl Fn(T) -> f32 + Send + Sync + Copy + 'static,
     ) -> Result<Stream>
     where
         T: cpal::SizedSample + Copy,
     {
+        let mut converted = Vec::new();
+        let mut was_recording = false;
         Ok(device.build_input_stream(
             config,
             move |data: &[T], _| {
-                let converted: Vec<f32> = data.iter().copied().map(convert).collect();
-                for frame in assembler.lock().unwrap().push(&converted) {
+                let is_recording = recording_active
+                    .as_ref()
+                    .map(|active| active.load(Ordering::Relaxed))
+                    .unwrap_or(true);
+                if !is_recording {
+                    was_recording = false;
+                    return;
+                }
+                let mut assembler = assembler.lock().unwrap();
+                if !was_recording {
+                    assembler.reset();
+                    was_recording = true;
+                }
+                converted.clear();
+                converted.extend(data.iter().copied().map(convert));
+                for frame in assembler.push(&converted) {
                     if let Some(level) = &latest_level {
                         level.store(rms_level(&frame).to_bits(), Ordering::Relaxed);
                     }
@@ -255,6 +295,7 @@ mod platform {
         _: f32,
         _: Sender<Vec<i16>>,
         _: Option<Arc<AtomicU32>>,
+        _: Option<Arc<AtomicBool>>,
         _: Option<Sender<AudioEvent>>,
     ) -> Result<CaptureHandle> {
         bail!("microphone capture is Windows-only")

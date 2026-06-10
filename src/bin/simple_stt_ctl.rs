@@ -4,15 +4,13 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uvox::capture::state::ServiceState;
 use uvox::common::line_codec::{escape_field, unescape_field};
 use uvox::common::shell_protocol::{
     ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
-use uvox::config::{
-    replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel, TextDeliveryMode,
-};
+use uvox::config::{replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel, TextDeliveryMode};
 
 #[derive(Debug, Parser)]
 #[command(name = "uvoxctl", about = "One-shot Uvox shell-to-capture helper")]
@@ -40,6 +38,8 @@ enum CommandKind {
     PollEvents {
         #[arg(long, default_value_t = 0)]
         after_seq: u64,
+        #[arg(long, default_value_t = 0)]
+        wait_ms: u64,
     },
     ReloadConfig,
     UnloadModel,
@@ -50,6 +50,7 @@ enum CommandKind {
     },
     ListInputs,
     ListModels,
+    RefreshModels,
     Notice {
         #[arg(long)]
         level: NoticeArg,
@@ -133,18 +134,30 @@ fn run(args: Args) -> Result<ShellResponse> {
         ServerMessage::Error { code, message } => anyhow::bail!("{code}: {message}"),
         other => anyhow::bail!("unexpected handshake response: {other:?}"),
     }
+    match args.command {
+        CommandKind::PollEvents { after_seq, wait_ms } => {
+            poll_events_wait(&mut stream, &mut reader, after_seq, wait_ms)
+        }
+        command => request_once(&mut stream, &mut reader, translate(command)),
+    }
+}
+fn request_once(
+    stream: &mut TcpStream,
+    reader: &mut BufReader<TcpStream>,
+    command: ShellCommand,
+) -> Result<ShellResponse> {
     let request_id = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_micros() as u64;
     write_json_line(
-        &mut stream,
+        stream,
         &ClientMessage::Command {
             request_id,
-            command: translate(args.command),
+            command,
         },
     )?;
-    match read_json_line::<ServerMessage>(&mut reader)? {
+    match read_json_line::<ServerMessage>(reader)? {
         ServerMessage::Response {
             request_id: actual,
             response,
@@ -153,18 +166,34 @@ fn run(args: Args) -> Result<ShellResponse> {
         other => anyhow::bail!("unexpected command response: {other:?}"),
     }
 }
+fn poll_events_wait(
+    stream: &mut TcpStream,
+    reader: &mut BufReader<TcpStream>,
+    after_seq: u64,
+    wait_ms: u64,
+) -> Result<ShellResponse> {
+    let deadline = Instant::now() + Duration::from_millis(wait_ms.min(5_000));
+    loop {
+        let response = request_once(stream, reader, ShellCommand::PollEvents { after_seq })?;
+        if !response.events.is_empty() || wait_ms == 0 || Instant::now() >= deadline {
+            return Ok(response);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
 fn translate(command: CommandKind) -> ShellCommand {
     match command {
         CommandKind::Ping => ShellCommand::Ping,
         CommandKind::StartRecording { session_id } => ShellCommand::StartRecording { session_id },
         CommandKind::StopRecording { session_id } => ShellCommand::StopRecording { session_id },
-        CommandKind::PollEvents { after_seq } => ShellCommand::PollEvents { after_seq },
+        CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
         CommandKind::ReloadConfig => ShellCommand::ReloadConfig,
         CommandKind::UnloadModel => ShellCommand::UnloadModel,
         CommandKind::TestModel => ShellCommand::TestModel,
         CommandKind::DownloadModel { filename } => ShellCommand::DownloadModel { filename },
         CommandKind::ListInputs => ShellCommand::ListInputs,
         CommandKind::ListModels => ShellCommand::ListModels,
+        CommandKind::RefreshModels => ShellCommand::RefreshModels,
         CommandKind::Notice { level, text } => ShellCommand::ShowNotice {
             level: match level {
                 NoticeArg::Info => NoticeLevel::Info,
@@ -225,12 +254,14 @@ fn config_show() -> Result<ShellResponse> {
         }
         .into(),
     );
-    response
-        .values
-        .insert("remove_punctuation".into(), config.remove_punctuation.to_string());
-    response
-        .values
-        .insert("lowercase_output".into(), config.lowercase_output.to_string());
+    response.values.insert(
+        "remove_punctuation".into(),
+        config.remove_punctuation.to_string(),
+    );
+    response.values.insert(
+        "lowercase_output".into(),
+        config.lowercase_output.to_string(),
+    );
     response.values.insert(
         "idle_worker_timeout_secs".into(),
         config.idle_worker_timeout_secs.to_string(),
@@ -301,7 +332,9 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
             .split_once('\t')
             .context("config-save input must contain tab-separated key/value lines")?;
         let key = unescape_field(encoded_key);
-        let key = key.trim_start_matches(char::from_u32(65279).unwrap()).to_owned();
+        let key = key
+            .trim_start_matches(char::from_u32(65279).unwrap())
+            .to_owned();
         let value = unescape_field(encoded_value);
         match key.as_str() {
             "hotkey_enabled" => config.hotkey_enabled = parse_bool(&value)?,

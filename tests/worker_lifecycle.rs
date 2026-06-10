@@ -47,6 +47,25 @@ fn worker_launches_lazily_and_reuses_warm_process() {
 }
 
 #[test]
+fn warm_up_loads_and_primes_worker_before_first_transcript() {
+    let mut worker = WorkerSupervisor::new(worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    ));
+    let mut model_loaded = false;
+    worker.warm_up(|| model_loaded = true).unwrap();
+    assert!(model_loaded);
+    let warm_pid = worker.worker_pid().unwrap();
+    assert_eq!(
+        worker.transcribe_pcm(1, &[1, 2, 3]).unwrap(),
+        "mock مرحبا 世界 🙂"
+    );
+    assert_eq!(worker.worker_pid(), Some(warm_pid));
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
 fn worker_exits_after_idle_timeout() {
     let mut worker = WorkerSupervisor::new(worker_config(
         "normal.gguf",

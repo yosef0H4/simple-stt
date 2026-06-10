@@ -55,6 +55,7 @@ enum BackgroundResult {
     WorkerConfigReplaced {
         result: Result<(), String>,
     },
+    ModelLoaded,
     ModelWarmed {
         result: Result<(), String>,
     },
@@ -78,6 +79,7 @@ struct ControlContext<'a> {
     worker_pid: &'a Arc<AtomicU32>,
     background_tx: &'a Sender<BackgroundResult>,
     overlay: &'a OverlayHandle,
+    recording_active: &'a Arc<AtomicBool>,
     events: &'a mut EventBuffer,
     active: &'a mut Option<Recording>,
     transcribing: &'a mut HashSet<u64>,
@@ -121,6 +123,7 @@ fn main() -> Result<()> {
     tracing::info!(pid = std::process::id(), config = %AppConfig::config_path().display(), "capture service starting");
 
     let overlay = OverlayHandle::spawn()?;
+    let recording_active = Arc::new(AtomicBool::new(false));
     let (frame_tx, frame_rx) = bounded::<Vec<i16>>(4096);
     let (audio_event_tx, audio_event_rx) = unbounded::<AudioEvent>();
     let _capture = audio::start_capture(
@@ -128,6 +131,7 @@ fn main() -> Result<()> {
         config.audio_gain,
         frame_tx,
         Some(overlay.level_cell()),
+        Some(Arc::clone(&recording_active)),
         Some(audio_event_tx),
     )
     .context("starting CPAL microphone capture")?;
@@ -165,6 +169,7 @@ fn main() -> Result<()> {
                     worker_pid: &worker_pid,
                     background_tx: &background_tx,
                     overlay: &overlay,
+                    recording_active: &recording_active,
                     events: &mut events,
                     active: &mut active,
                     transcribing: &mut transcribing,
@@ -173,7 +178,9 @@ fn main() -> Result<()> {
                 let _ = request.reply.send(response);
             },
             recv(timer) -> _ => {
-                if !idle_check_running.swap(true, Ordering::SeqCst) {
+                if nonzero_pid(&worker_pid).is_some()
+                    && !idle_check_running.swap(true, Ordering::SeqCst)
+                {
                     let worker = Arc::clone(&worker);
                     let background_tx = background_tx.clone();
                     let idle_check_running = Arc::clone(&idle_check_running);
@@ -218,6 +225,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         worker_pid,
         background_tx,
         overlay,
+        recording_active,
         events,
         active,
         transcribing,
@@ -238,6 +246,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             if active.is_some() {
                 return ShellResponse::error("a recording is already active");
             }
+            recording_active.store(true, Ordering::Relaxed);
             *active = Some(Recording {
                 session_id,
                 samples: Vec::new(),
@@ -255,10 +264,17 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 let worker = Arc::clone(worker);
                 let tx = background_tx.clone();
                 std::thread::spawn(move || {
+                    let progress_tx = tx.clone();
                     let result = worker
                         .lock()
                         .map_err(|_| "inference-worker mutex poisoned".to_owned())
-                        .and_then(|mut worker| worker.warm_up().map_err(|error| error.to_string()));
+                        .and_then(|mut worker| {
+                            worker
+                                .warm_up(|| {
+                                    let _ = progress_tx.send(BackgroundResult::ModelLoaded);
+                                })
+                                .map_err(|error| error.to_string())
+                        });
                     let _ = tx.send(BackgroundResult::ModelWarmed { result });
                 });
             }
@@ -273,6 +289,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 *active = Some(recording);
                 return ShellResponse::error("recording session id mismatch");
             }
+            recording_active.store(false, Ordering::Relaxed);
             let duration_ms = recording.started.elapsed().as_millis();
             let samples = recording.samples;
             tracing::info!(
@@ -427,8 +444,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             Err(error) => ShellResponse::error(error.to_string()),
         },
         ShellCommand::ListModels => {
-            let mut response = ShellResponse::ok("approved models");
-            for (index, model) in uvox::models::catalog().into_iter().enumerate() {
+            let mut response = ShellResponse::ok("cached models");
+            for (index, model) in uvox::models::catalog_for_config(config)
+                .into_iter()
+                .enumerate()
+            {
                 response.values.insert(
                     format!("model.{index:03}"),
                     format!("{}|{}|{}", model.file, model.size_mb, model.recommended),
@@ -436,6 +456,16 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             response
         }
+        ShellCommand::RefreshModels => match uvox::models::refresh_catalog_cache() {
+            Ok(files) => {
+                let mut response = ShellResponse::ok("model catalog refreshed");
+                response
+                    .values
+                    .insert("count".into(), files.len().to_string());
+                response
+            }
+            Err(error) => ShellResponse::error(error.to_string()),
+        },
         ShellCommand::ShowNotice { level, text } => {
             match level {
                 NoticeLevel::Info => overlay.notify_info(&text, Some(Duration::from_secs(2))),
@@ -445,6 +475,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             ShellResponse::ok("notice shown")
         }
         ShellCommand::Shutdown => {
+            recording_active.store(false, Ordering::Relaxed);
             *shutting_down = true;
             ShellResponse::ok("capture service shutting down")
         }
@@ -520,14 +551,23 @@ fn handle_background(
                 ));
             }
         },
+        BackgroundResult::ModelLoaded => {
+            tracing::info!("speech model loaded; priming inference engine");
+            overlay.notify_info("Speech model loaded - warming up...", None);
+            events.push(ServiceEvent::simple("model_loaded"));
+        }
         BackgroundResult::ModelWarmed { result } => match result {
             Ok(()) => {
                 tracing::info!("speech model warmed while recording");
-                overlay.notify_info("Speech model loaded", Some(Duration::from_secs(2)));
+                overlay.notify_info("Speech model ready", Some(Duration::from_secs(2)));
+                events.push(ServiceEvent::simple("model_ready"));
             }
             Err(error) => {
                 tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
-                overlay.notify_warning("Speech model load failed — transcription will retry", Duration::from_secs(3));
+                overlay.notify_warning(
+                    "Speech model load failed — transcription will retry",
+                    Duration::from_secs(3),
+                );
             }
         },
         BackgroundResult::ModelTested { result } => match result {

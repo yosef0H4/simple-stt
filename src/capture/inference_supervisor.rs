@@ -108,8 +108,23 @@ impl WorkerSupervisor {
         self.config = next;
         Ok(())
     }
-    pub fn warm_up(&mut self) -> Result<()> {
-        self.ensure_worker()
+    pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()> {
+        self.ensure_worker()?;
+        let worker = self.worker.as_mut().unwrap();
+        write_frame(&mut worker.stdin, &Frame::empty(MessageType::WarmUp))
+            .context("requesting inference-worker warm-up")?;
+        match read_frame(&mut worker.stdout).context("reading model-loaded warm-up progress")? {
+            frame if frame.kind == MessageType::ModelLoaded => on_model_loaded(),
+            frame if frame.kind == MessageType::Error => anyhow::bail!(frame.body_as_text()?),
+            frame => anyhow::bail!("unexpected warm-up progress response: {:?}", frame.kind),
+        }
+        match read_frame(&mut worker.stdout)
+            .context("reading inference-worker warm-up completion")?
+        {
+            frame if frame.kind == MessageType::WarmUpAck => Ok(()),
+            frame if frame.kind == MessageType::Error => anyhow::bail!(frame.body_as_text()?),
+            frame => anyhow::bail!("unexpected warm-up completion response: {:?}", frame.kind),
+        }
     }
     pub fn transcribe_pcm(&mut self, session_id: u64, samples: &[i16]) -> Result<String> {
         self.ensure_worker()?;

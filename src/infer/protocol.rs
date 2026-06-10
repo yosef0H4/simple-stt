@@ -18,6 +18,9 @@ pub enum MessageType {
     ShutdownAck = 8,
     Ping = 9,
     Pong = 10,
+    WarmUp = 11,
+    ModelLoaded = 12,
+    WarmUpAck = 13,
 }
 
 impl TryFrom<u16> for MessageType {
@@ -34,6 +37,9 @@ impl TryFrom<u16> for MessageType {
             8 => Ok(Self::ShutdownAck),
             9 => Ok(Self::Ping),
             10 => Ok(Self::Pong),
+            11 => Ok(Self::WarmUp),
+            12 => Ok(Self::ModelLoaded),
+            13 => Ok(Self::WarmUpAck),
             _ => bail!("unknown inference message type {value}"),
         }
     }

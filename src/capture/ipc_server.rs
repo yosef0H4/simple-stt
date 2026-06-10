@@ -90,32 +90,37 @@ fn handle_client(
             anyhow::bail!("shell IPC handshake rejected");
         }
     }
-    let command: ClientMessage = read_json_line(&mut reader).context("reading command")?;
-    let (request_id, command) = match command {
-        ClientMessage::Command {
-            request_id,
-            command,
-        } => (request_id, command),
-        _ => anyhow::bail!("expected a command after handshake"),
-    };
-    let (reply_tx, reply_rx) = bounded(1);
-    control_tx
-        .send(ControlRequest {
-            command,
-            reply: reply_tx,
-        })
-        .context("forwarding command to capture loop")?;
-    let response = reply_rx
-        .recv_timeout(Duration::from_secs(30))
-        .context("waiting for capture-loop response")?;
-    write_json_line(
-        &mut stream,
-        &ServerMessage::Response {
-            request_id,
-            response,
-        },
-    )?;
-    Ok(())
+    loop {
+        let command: ClientMessage = match read_json_line(&mut reader) {
+            Ok(command) => command,
+            Err(error) if error.to_string().contains("unexpected EOF") => return Ok(()),
+            Err(error) => return Err(error).context("reading command"),
+        };
+        let (request_id, command) = match command {
+            ClientMessage::Command {
+                request_id,
+                command,
+            } => (request_id, command),
+            _ => anyhow::bail!("expected a command after handshake"),
+        };
+        let (reply_tx, reply_rx) = bounded(1);
+        control_tx
+            .send(ControlRequest {
+                command,
+                reply: reply_tx,
+            })
+            .context("forwarding command to capture loop")?;
+        let response = reply_rx
+            .recv_timeout(Duration::from_secs(30))
+            .context("waiting for capture-loop response")?;
+        write_json_line(
+            &mut stream,
+            &ServerMessage::Response {
+                request_id,
+                response,
+            },
+        )?;
+    }
 }
 
 fn read_json_line<T: serde::de::DeserializeOwned>(reader: &mut impl BufRead) -> Result<T> {

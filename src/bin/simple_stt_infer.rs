@@ -70,6 +70,15 @@ fn main() -> Result<()> {
         match frame.kind {
             MessageType::Hello => write_frame(&mut output, &Frame::empty(MessageType::HelloAck))?,
             MessageType::Ping => write_frame(&mut output, &Frame::empty(MessageType::Pong))?,
+            MessageType::WarmUp => {
+                ensure_engine(&mut engine, &args)?;
+                write_frame(&mut output, &Frame::empty(MessageType::ModelLoaded))?;
+                tracing::info!("model warm-up begin");
+                let silence = vec![0_i16; 1_600];
+                let _ = engine.as_ref().unwrap().transcribe_pcm16_16k(&silence)?;
+                tracing::info!("model warm-up end");
+                write_frame(&mut output, &Frame::empty(MessageType::WarmUpAck))?;
+            }
             MessageType::Shutdown => {
                 tracing::info!("worker graceful shutdown requested");
                 let _ = write_frame(&mut output, &Frame::empty(MessageType::ShutdownAck));
