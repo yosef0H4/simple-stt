@@ -41,19 +41,23 @@ Require-File (Join-Path $Root 'fixtures\parakeet-smoke.wav')
 Require-File (Join-Path $ParakeetSource 'bin\parakeet.dll')
 Require-File (Join-Path $ParakeetSource 'models\tdt_ctc-110m-f16.gguf')
 
-$BuildArgs = @()
-if ($SkipTests) { $BuildArgs += '-SkipTests' }
-& (Join-Path $PSScriptRoot 'build-release.ps1') @BuildArgs
+$BuildRelease = Join-Path $PSScriptRoot 'build-release.ps1'
+if ($SkipTests) {
+    & $BuildRelease -SkipTests
+} else {
+    & $BuildRelease
+}
 
 if (Test-Path -LiteralPath $Portable) { Remove-Item -LiteralPath $Portable -Recurse -Force }
 New-Item -ItemType Directory -Path $Runtime -Force | Out-Null
 $Shell = Join-Path $Runtime 'simple-stt.exe'
 $SourceScript = Join-Path $Root 'ahk\simple-stt.ahk'
-$CompileArgs = @('/in', $SourceScript, '/out', $Shell, '/base', $AhkBase, '/silent', 'verbose')
+$CompileArgs = @('/in', "`"$SourceScript`"", '/out', "`"$Shell`"", '/base', "`"$AhkBase`"", '/silent', 'verbose')
 $Icon = Join-Path $Root 'icons\simple-stt.ico'
-if (Test-Path -LiteralPath $Icon) { $CompileArgs += @('/icon', $Icon) }
-& $Ahk2Exe @CompileArgs
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $Shell)) { throw "Ahk2Exe failed with exit code $LASTEXITCODE; expected output: $Shell" }
+if (Test-Path -LiteralPath $Icon) { $CompileArgs += @('/icon', "`"$Icon`"") }
+$CompileArgumentLine = $CompileArgs -join ' '
+$CompileProcess = Start-Process -FilePath $Ahk2Exe -ArgumentList $CompileArgumentLine -Wait -PassThru
+if ($CompileProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Shell)) { throw "Ahk2Exe failed with exit code $($CompileProcess.ExitCode); expected output: $Shell" }
 
 foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe')) {
     Copy-Item -LiteralPath (Join-Path $Root "target\release\$Name") -Destination $Runtime -Force
