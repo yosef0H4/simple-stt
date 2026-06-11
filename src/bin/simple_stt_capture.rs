@@ -162,7 +162,7 @@ fn main() -> Result<()> {
             recv(frame_rx) -> message => if let (Some(recording), Ok(frame)) = (&mut active, message) { recording.samples.extend_from_slice(&frame); },
             recv(audio_event_rx) -> message => if let Ok(AudioEvent::StreamError(error)) = message {
                 tracing::error!(%error, "audio service stream failure");
-                overlay.notify_error("Audio service error — see log", Duration::from_secs(3));
+                overlay.notify_error("🎙 Audio service error — see log", Duration::from_secs(3));
                 events.push(notice_event(NoticeLevel::Error, "Audio service error — see log"));
             },
             recv(background_rx) -> message => if let Ok(result) = message { handle_background(result, &overlay, &mut events, config.log_transcripts, active.is_some(), &mut transcribing); },
@@ -261,7 +261,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             event.session_id = Some(session_id);
             events.push(event);
             if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info("Loading speech model…", None);
+                overlay.notify_info("🎙 Loading speech model…", None);
                 let mut loading = ServiceEvent::simple("model_loading");
                 loading.session_id = Some(session_id);
                 events.push(loading);
@@ -303,7 +303,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 "recording stop"
             );
             if samples.len() < MIN_RECORDING_SAMPLES {
-                overlay.notify_warning("Recording too short", Duration::from_secs(2));
+                overlay.notify_warning("🎙 Recording too short", Duration::from_secs(2));
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
                 events.push(notice_event_for_session(
                     NoticeLevel::Warning,
@@ -318,7 +318,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             event.session_id = Some(session_id);
             events.push(event);
             if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info("Loading speech model…", None);
+                overlay.notify_info("🎙 Loading speech model…", None);
                 let mut loading = ServiceEvent::simple("model_loading");
                 loading.session_id = Some(session_id);
                 events.push(loading);
@@ -397,7 +397,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 return ShellResponse::error(error.to_string());
             }
             if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info("Loading speech model…", None);
+                overlay.notify_info("🎙 Loading speech model…", None);
                 events.push(ServiceEvent::simple("model_loading"));
             }
             let worker = Arc::clone(worker);
@@ -513,7 +513,7 @@ fn handle_background(
             let has_pending_transcript = !transcribing.is_empty();
             match result {
                 Ok(text) if text.trim().is_empty() => {
-                    overlay.notify_warning("No speech detected", Duration::from_secs(2));
+                    overlay.notify_warning("🎙 No speech detected", Duration::from_secs(2));
                     restore_overlay_work_state(overlay, active_recording, has_pending_transcript);
                     events.push(notice_event_for_session(
                         NoticeLevel::Warning,
@@ -542,7 +542,7 @@ fn handle_background(
                 }
                 Err(error) => {
                     tracing::error!(session_id, %error, "speech engine failed");
-                    overlay.notify_error("Speech engine failed — see log", Duration::from_secs(3));
+                    overlay.notify_error("🎙 Speech engine failed — see log", Duration::from_secs(3));
                     restore_overlay_work_state(overlay, active_recording, has_pending_transcript);
                     events.push(notice_event_for_session(
                         NoticeLevel::Error,
@@ -554,7 +554,7 @@ fn handle_background(
         }
         BackgroundResult::ModelUnloaded { result } => match result {
             Ok(()) => {
-                overlay.notify_info("Speech model unloaded", Some(Duration::from_secs(2)));
+                overlay.notify_info("🎙 Speech model unloaded", Some(Duration::from_secs(2)));
             }
             Err(error) => tracing::warn!(%error, "worker shutdown failed"),
         },
@@ -570,33 +570,33 @@ fn handle_background(
         },
         BackgroundResult::ModelLoaded => {
             tracing::info!("speech model loaded; priming inference engine");
-            overlay.notify_info("Speech model loaded - warming up...", None);
+            overlay.notify_info("🎙 Speech model loaded - warming up...", None);
             events.push(ServiceEvent::simple("model_loaded"));
         }
         BackgroundResult::ModelWarmed { result } => match result {
             Ok(()) => {
                 tracing::info!("speech model warmed while recording");
-                overlay.notify_info("Speech model ready", Some(Duration::from_secs(2)));
+                overlay.notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
                 events.push(ServiceEvent::simple("model_ready"));
             }
             Err(error) => {
                 tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
                 overlay.notify_warning(
-                    "Speech model load failed — transcription will retry",
+                    "🎙 Speech model load failed — transcription will retry",
                     Duration::from_secs(3),
                 );
             }
         },
         BackgroundResult::ModelTested { result } => match result {
             Ok(text) => {
-                overlay.notify_info("Model test passed", Some(Duration::from_secs(2)));
+                overlay.notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));
                 let mut event = ServiceEvent::simple("model_test_complete");
                 event.text = format!("Model test passed ({} characters)", text.chars().count());
                 events.push(event);
             }
             Err(error) => {
                 tracing::error!(%error, "model test failed");
-                overlay.notify_error("Model test failed — see log", Duration::from_secs(3));
+                overlay.notify_error("🎙 Model test failed — see log", Duration::from_secs(3));
                 events.push(notice_event(
                     NoticeLevel::Error,
                     "Model test failed — see log",

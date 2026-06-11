@@ -34,16 +34,21 @@ class SimpleSttShell {
         this.supervisor.AttachIpc(this.ipc)
         this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"))
         this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger)
+        this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger)
         this.settings := SettingsGui(this)
         this.tray := TrayController(this)
+        this.modeTooltipTimer := ObjBindMethod(this, "HideModeTooltip")
         this.ApplyHotkeyConfig()
         this.ApplyStartupRegistration()
         this.supervisor.Start()
     }
 
     ApplyHotkeyConfig() {
-        try this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), this.config.Get("capslock_behavior", "preserve_tap"))
-        catch Error as err {
+        try {
+            capsMode := this.config.Get("capslock_behavior", "preserve_tap")
+            this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), capsMode)
+            this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+A"), true, capsMode)
+        } catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
             MsgBox(err.Message, "SimpleStt hotkey error", "Iconx")
         }
@@ -161,11 +166,40 @@ class SimpleSttShell {
     Notice(text, level := "info") {
         option := level = "error" ? 3 : level = "warning" ? 2 : 1
         this.logger.Write(level, text)
-        TrayTip(text, "SimpleStt", option)
+        TrayTip("🎙 " . text, "SimpleStt", option)
     }
 
     OpenSettings(*) {
         this.settings.Open()
+    }
+
+    NoopHotkeyUp() {
+    }
+
+    ToggleDeliveryModeHotkey() {
+        current := this.config.Get("text_delivery_mode", "paste_ctrl_v")
+        next := current = "type" ? "paste_ctrl_v" : "type"
+        this.config.Set("text_delivery_mode", next)
+        try {
+            this.config.SaveSync()
+            this.ShowDeliveryModeTooltip(next)
+            this.logger.Write("info", "delivery mode toggled mode=" . next)
+            if IsObject(this.settings) && IsObject(this.settings.gui)
+                this.settings.LoadControls()
+        } catch Error as err {
+            this.logger.Write("error", "delivery mode toggle failed: " . err.Message)
+            this.Notice("Delivery mode toggle failed — see log", "error")
+        }
+    }
+
+    ShowDeliveryModeTooltip(mode) {
+        message := mode = "type" ? "🎙 Typing mode" : "🎙 Paste mode"
+        ToolTip(message)
+        SetTimer(this.modeTooltipTimer, -1200)
+    }
+
+    HideModeTooltip() {
+        ToolTip()
     }
 
     ToggleHotkey(*) {
@@ -263,6 +297,9 @@ class SimpleSttShell {
         this.logger.Write("info", "shell stop reason=" . reason . " code=" . code)
         this.typist.Cancel("shell exiting", false)
         this.hotkeys.DisableBindings()
+        this.deliveryToggleHotkey.DisableBindings()
+        SetTimer(this.modeTooltipTimer, 0)
+        ToolTip()
         this.ipc.Stop()
         this.supervisor.Shutdown()
     }

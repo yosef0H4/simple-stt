@@ -52,12 +52,13 @@ catch Error as err
 if !IsObject(settings.gui)
     Fail("settings GUI object was not created")
 
-for key in ["hotkey_enabled", "record_hotkey", "capslock_behavior", "audio_device_contains", "selected_model_filename", "model_list", "inference_device", "text_delivery_mode", "remove_punctuation", "lowercase_output", "status"] {
+for key in ["hotkey_enabled", "record_hotkey", "toggle_delivery_hotkey", "capslock_behavior", "audio_device_contains", "selected_model_filename", "model_list", "inference_device", "text_delivery_mode", "remove_punctuation", "lowercase_output", "status"] {
     if !settings.controls.Has(key)
         Fail("missing settings control: " . key)
 }
 
 settings.controls["typing_chunk_chars"].Value := "4"
+settings.controls["toggle_delivery_hotkey"].Value := "CapsLock+A"
 settings.controls["audio_device_contains"].Choose("Default microphone")
 settings.controls["inference_device"].Choose("cpu")
 settings.controls["text_delivery_mode"].Choose("paste_ctrl_shift_v")
@@ -69,6 +70,8 @@ catch Error as err
 app.config.LoadSync()
 if app.config.Get("typing_chunk_chars") != "4"
     Fail("settings save did not persist typing_chunk_chars")
+if app.config.Get("toggle_delivery_hotkey") != "CapsLock+A"
+    Fail("settings save did not persist toggle_delivery_hotkey")
 if app.config.Get("inference_device") != "cpu"
     Fail("settings save did not persist inference_device")
 if app.config.Get("text_delivery_mode") != "paste_ctrl_shift_v"

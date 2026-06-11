@@ -229,6 +229,10 @@ fn config_show() -> Result<ShellResponse> {
         .values
         .insert("record_hotkey".into(), config.record_hotkey.clone());
     response.values.insert(
+        "toggle_delivery_hotkey".into(),
+        config.toggle_delivery_hotkey.clone(),
+    );
+    response.values.insert(
         "capslock_behavior".into(),
         match config.capslock_behavior {
             CapsLockBehavior::PreserveTap => "preserve_tap",
@@ -371,6 +375,7 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
         match key.as_str() {
             "hotkey_enabled" => config.hotkey_enabled = parse_bool(&value)?,
             "record_hotkey" => config.record_hotkey = value.to_owned(),
+            "toggle_delivery_hotkey" => config.toggle_delivery_hotkey = value.to_owned(),
             "capslock_behavior" => {
                 config.capslock_behavior = match value.as_str() {
                     "preserve_tap" => CapsLockBehavior::PreserveTap,

@@ -77,6 +77,7 @@ pub struct AppConfig {
     pub schema_version: u32,
     pub hotkey_enabled: bool,
     pub record_hotkey: String,
+    pub toggle_delivery_hotkey: String,
     pub capslock_behavior: CapsLockBehavior,
     pub audio_device_contains: String,
     pub audio_gain: f32,
@@ -104,6 +105,7 @@ impl Default for AppConfig {
             schema_version: CONFIG_SCHEMA_VERSION,
             hotkey_enabled: true,
             record_hotkey: "CapsLock+S".to_owned(),
+            toggle_delivery_hotkey: "CapsLock+A".to_owned(),
             capslock_behavior: CapsLockBehavior::PreserveTap,
             audio_device_contains: String::new(),
             audio_gain: 1.0,
@@ -155,6 +157,10 @@ impl AppConfig {
         anyhow::ensure!(
             !self.record_hotkey.trim().is_empty(),
             "record_hotkey must not be empty"
+        );
+        anyhow::ensure!(
+            !self.toggle_delivery_hotkey.trim().is_empty(),
+            "toggle_delivery_hotkey must not be empty"
         );
         anyhow::ensure!(
             self.audio_gain > 0.0 && self.audio_gain <= 10.0,
@@ -495,6 +501,7 @@ mod tests {
         let config = AppConfig::default();
         config.validate().unwrap();
         assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlV);
+        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+A");
         assert!(!config.remove_punctuation);
         assert!(!config.lowercase_output);
         assert_eq!(config.inference_device, InferenceDevice::NvidiaGpu);

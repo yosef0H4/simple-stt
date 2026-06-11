@@ -43,11 +43,14 @@ class SettingsGui {
         window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
         this.controls["hotkey_enabled"] := window.AddCheckbox("x52 y168 w220", "Enable hold-to-record hotkey")
         this.controls["record_hotkey_label"] := window.AddText("x52 y206 w150", "Keyboard shortcut")
-        this.controls["record_hotkey"] := window.AddEdit("x205 y201 w310 h25")
-        this.AddButton(window, "record_chord", "Record shortcut", "x526 y200 w130 h27", "CaptureHotkey")
-        this.controls["capslock_behavior_label"] := window.AddText("x52 y245 w150", "Caps Lock behavior")
-        this.controls["capslock_behavior"] := window.AddDropDownList("x205 y240 w220", ["preserve_tap", "always_off"])
-        this.controls["hotkey_hint"] := window.AddText("x440 y242 w380 h34 c64748B", "Preserve tap keeps a quick Caps Lock press working normally.")
+        this.controls["record_hotkey"] := window.AddEdit("x205 y201 w250 h25")
+        this.AddButton(window, "record_chord", "Record shortcut", "x466 y200 w130 h27", "CaptureHotkey")
+        this.controls["toggle_delivery_hotkey_label"] := window.AddText("x52 y242 w150", "Toggle typing/paste")
+        this.controls["toggle_delivery_hotkey"] := window.AddEdit("x205 y237 w250 h25")
+        this.AddButton(window, "record_toggle_chord", "Record toggle", "x466 y236 w130 h27", "CaptureToggleHotkey")
+        this.controls["capslock_behavior_label"] := window.AddText("x52 y277 w150", "Caps Lock behavior")
+        this.controls["capslock_behavior"] := window.AddDropDownList("x205 y272 w220", ["preserve_tap", "always_off"])
+        this.controls["hotkey_hint"] := window.AddText("x440 y266 w380 h44 c64748B", "Preserve tap keeps a quick Caps Lock press working normally.`nUse the toggle hotkey to switch between typing and paste.")
 
         this.controls["general_startup_box"] := window.AddText("x34 y320 w810 h132 BackgroundF8FAFC Border")
         window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
@@ -103,7 +106,7 @@ class SettingsGui {
         this.controls["trailing_space"] := window.AddCheckbox("x52 y252 w220", "Append a trailing space")
         this.controls["remove_punctuation"] := window.AddCheckbox("x52 y286 w220", "Remove punctuation marks")
         this.controls["lowercase_output"] := window.AddCheckbox("x292 y286 w250", "Convert output to lowercase")
-        this.controls["delivery_hint"] := window.AddText("x52 y318 w720 h30 c64748B", "Clipboard paste is the fastest option. Simulated typing is useful for applications that block paste.")
+        this.controls["delivery_hint"] := window.AddText("x52 y318 w720 h44 c64748B", "Clipboard paste is the fastest option. Simulated typing is useful for applications that block paste.`nThe toggle hotkey can switch between typing and paste instantly.")
 
         this.controls["worker_box"] := window.AddText("x34 y378 w810 h142 BackgroundF8FAFC Border")
         window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
@@ -207,9 +210,11 @@ class SettingsGui {
 
         this.controls["general_hotkey_box"].Move(contentX, 138, contentW, 164)
         this.controls["general_hotkey_box_title"].Move(contentX + 18, 150, contentW - 36, 22)
-        this.controls["record_hotkey"].Move(fieldX, 201, Max(220, contentW - 468), 25)
+        this.controls["record_hotkey"].Move(fieldX, 201, Max(200, contentW - 528), 25)
         this.controls["record_chord"].Move(right - 150, 200, 132, 27)
-        this.controls["hotkey_hint"].Move(fieldX + 235, 242, Max(210, contentW - 420), 34)
+        this.controls["toggle_delivery_hotkey"].Move(fieldX, 237, Max(200, contentW - 528), 25)
+        this.controls["record_toggle_chord"].Move(right - 150, 236, 132, 27)
+        this.controls["hotkey_hint"].Move(fieldX + 235, 266, Max(210, contentW - 420), 44)
         this.controls["general_startup_box"].Move(contentX, 320, contentW, 132)
         this.controls["general_startup_box_title"].Move(contentX + 18, 332, contentW - 36, 22)
         this.controls["startup_hint"].Move(contentX + 18, 384, contentW - 36, 38)
@@ -260,6 +265,7 @@ class SettingsGui {
         config := this.app.config
         this.controls["hotkey_enabled"].Value := config.Bool("hotkey_enabled")
         this.controls["record_hotkey"].Value := config.Get("record_hotkey")
+        this.controls["toggle_delivery_hotkey"].Value := config.Get("toggle_delivery_hotkey", "CapsLock+A")
         this.ChooseText(this.controls["capslock_behavior"], config.Get("capslock_behavior", "preserve_tap"))
         this.controls["audio_gain"].Value := config.Get("audio_gain", "1")
         this.ChooseText(this.controls["text_delivery_mode"], config.Get("text_delivery_mode", "paste_ctrl_v"))
@@ -322,15 +328,16 @@ class SettingsGui {
     InferenceDeviceChanged(*) {
         device := this.controls["inference_device"].Text
         if device = "cpu"
-            this.controls["device_hint"].Text := device = "cpu"
-            ? "CPU avoids VRAM use."
-            : "NVIDIA GPU is faster."
+            if device = "cpu"
+            this.controls["device_hint"].Text := "CPU avoids VRAM use."
+        else
+            this.controls["device_hint"].Text := "NVIDIA GPU is faster."
         this.ListModels()
     }
 
     Save(*) {
         config := this.app.config
-        for key in ["record_hotkey", "audio_gain", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
+        for key in ["record_hotkey", "toggle_delivery_hotkey", "audio_gain", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
             config.Set(key, this.controls[key].Value)
         for key in ["hotkey_enabled", "trailing_space", "remove_punctuation", "lowercase_output", "start_with_windows", "diagnostic_overlay", "log_transcripts"]
             config.Set(key, SimpleSttBoolText(this.controls[key].Value))
@@ -345,6 +352,7 @@ class SettingsGui {
         config.Set("inference_device", this.controls["inference_device"].Text)
         try {
             HotkeySpec.Parse(config.Get("record_hotkey"))
+            HotkeySpec.Parse(config.Get("toggle_delivery_hotkey"))
             config.SaveSync()
             this.app.ApplySavedConfig()
             this.SetStatus("Settings saved")
@@ -375,9 +383,23 @@ class SettingsGui {
         this.recorder.Start(ObjBindMethod(this, "HotkeyCaptured"))
     }
 
+    CaptureToggleHotkey(*) {
+        if this.app.HasProp("testMode") && this.app.testMode {
+            this.SetStatus("Preview: toggle shortcut recorder opened safely")
+            return
+        }
+        this.SetStatus("Hold the desired modifiers, then press the final key for the delivery-mode toggle.")
+        this.recorder.Start(ObjBindMethod(this, "ToggleHotkeyCaptured"))
+    }
+
     HotkeyCaptured(label) {
         this.controls["record_hotkey"].Value := label
         this.SetStatus("Recorded " . label . ". Press Save to apply it.")
+    }
+
+    ToggleHotkeyCaptured(label) {
+        this.controls["toggle_delivery_hotkey"].Value := label
+        this.SetStatus("Recorded toggle hotkey " . label . ". Press Save to apply it.")
     }
 
     ListInputs(*) {
@@ -540,6 +562,7 @@ class SettingsGui {
         if !(this.app.HasProp("testMode") && this.app.testMode)
             throw Error("Button exercise is available only in test mode")
         this.CaptureHotkey()
+        this.CaptureToggleHotkey()
         this.ListInputs()
         this.RefreshModels()
         this.DownloadModel()

@@ -108,7 +108,7 @@ need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingle
 need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion")
 need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "inference_device: InferenceDevice", "PARAKEET_DEVICE", "InferenceDevice::Cpu", "InferenceDevice::NvidiaGpu")
 need("src/config.rs", "pub enum InferenceDevice", "NvidiaGpu", "inference_device: InferenceDevice")
-need("ahk/lib/SettingsGui.ahk", 'AddDropDownList("x210 y336 w220", ["nvidia_gpu", "cpu"])', 'config.Set("inference_device"')
+need("ahk/lib/SettingsGui.ahk", 'AddDropDownList("x210 y336 w220", ["nvidia_gpu", "cpu"])', 'toggle_delivery_hotkey', 'config.Set("inference_device"')
 need("src/logging.rs", "component={component} pid={}", "prefix_lines", "component_prefix_survives_split_writes_and_multiline_events")
 need("src/capture/inference_supervisor.rs", '.arg("--log-level")', '.arg("--inference-device")')
 forbid("src/bin/simple_stt_capture.rs", "worker.lock().unwrap().worker_pid()", "worker.lock().unwrap().replace_config")
@@ -128,7 +128,7 @@ checks.append("AHK owns tray, GUI, hotkeys, full-format clipboard-preserving pas
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
 ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])')
 supervisor_ahk = need("ahk/lib/ProcessSupervisor.ahk", "Run(command", "ProcessWaitClose", "ProcessClose", "SimpleSttRandomToken", "ResetServiceSession", "readyProbeInFlight", "this.startTimer")
-need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement")
+need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "ToggleDeliveryModeHotkey", "deliveryToggleHotkey")
 if "RunWait(command" in ipc_ahk:
     errors.append("IpcClient.ahk service calls must be asynchronous")
 checks.append("AHK helper IPC is asynchronous, token-rotated, sequenced, and reconnectable")

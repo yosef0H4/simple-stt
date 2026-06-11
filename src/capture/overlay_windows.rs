@@ -378,10 +378,10 @@ impl TooltipState {
         let primary = match self.primary {
             OverlayPrimary::Hidden => None,
             OverlayPrimary::Recording => {
-                Some(ascii_visualizer(self.display_level, self.animation_phase))
+                Some(format!("🎙 {}", ascii_visualizer(self.display_level, self.animation_phase)))
             }
-            OverlayPrimary::Transcribing => Some("Transcribing...".to_owned()),
-            OverlayPrimary::Typing => Some("Typing...".to_owned()),
+            OverlayPrimary::Transcribing => Some("🎙 Transcribing...".to_owned()),
+            OverlayPrimary::Typing => Some("🎙 Typing...".to_owned()),
         };
         match (primary, self.notice.as_ref()) {
             (Some(primary), Some(notice)) => format!("{primary}\r\n{}", notice.text),
