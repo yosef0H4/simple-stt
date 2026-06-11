@@ -53,11 +53,11 @@ SimpleSttBoolText(value) {
 }
 
 SimpleSttWriteStdOut(text := "") {
-    FileAppend(text, "*", "UTF-8")
+    try FileAppend(text, "*", "UTF-8")
 }
 
 SimpleSttWriteStdErr(text := "") {
-    FileAppend(text, "**", "UTF-8")
+    try FileAppend(text, "**", "UTF-8")
 }
 
 SimpleSttConsoleLine(text := "") {

@@ -9,7 +9,7 @@ This execution environment does not provide Cargo, Rust, AutoHotkey v2, PowerShe
 ## 1. Architecture summary
 
 ```text
-ahk/simple-stt.ahk or packaged simple-stt-shell.exe
+ahk/simple-stt.ahk or packaged simple-stt.exe
     AutoHotkey v2 desktop shell
     ├── tray, settings GUI, dynamic hold-to-record hotkeys
     ├── Caps Lock tap preservation and AltGr-aware modifier handling
@@ -152,25 +152,26 @@ The shell launches and supervises the persistent capture service. The capture se
 
 ## 7. Packaging instructions
 
-Compile the development shell with Ahk2Exe and stage the three Rust binaries:
+Build the current Windows distribution with:
 
 ```powershell
-.\scripts\package-release.ps1
+build-distribution.cmd
 ```
 
-The package script stages:
+The underlying implementation lives in `scripts\build-distribution.ps1`; `scripts\package-release.ps1` remains a compatibility wrapper.
+
+The staged portable runtime includes:
 
 ```text
-simple-stt-shell.exe
+simple-stt.exe
 simple-stt-capture.exe
 simple-stt-infer.exe
 simple-stt-ctl.exe
-config.example.json
 fixtures\parakeet-smoke.wav
-icons\
+external\parakeet-runtime\parakeet-windows-cuda\...
 ```
 
-Runtime DLLs and GGUF models are intentionally supplied separately under documented install-relative directories. Start-with-Windows creates a shortcut targeting the AHK shell or compiled `simple-stt-shell.exe`, never the retired monolithic Rust executable.
+Runtime DLLs and GGUF models are intentionally supplied separately under documented install-relative directories. Start-with-Windows creates a shortcut targeting the AHK shell or compiled `simple-stt.exe`, never the retired monolithic Rust executable.
 
 ## 8. Tests and results
 

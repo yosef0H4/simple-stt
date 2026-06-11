@@ -2,7 +2,7 @@
 
 ## AutoHotkey v2 and Ahk2Exe
 
-The development shell requires AutoHotkey v2. Distribution may compile `ahk\simple-stt.ahk` into `simple-stt-shell.exe` with the official Ahk2Exe tool. AutoHotkey and Ahk2Exe are not vendored in this source tree. Preserve their applicable notices when redistributing a compiled shell.
+The development shell requires AutoHotkey v2. Distribution may compile `ahk\simple-stt.ahk` into `simple-stt.exe` with the official Ahk2Exe tool. AutoHotkey and Ahk2Exe are not vendored in this source tree. Preserve their applicable notices when redistributing a compiled shell.
 
 Official projects:
 

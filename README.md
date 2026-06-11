@@ -3,7 +3,7 @@
 Simple STT is a Windows-only local dictation application redesigned around a thin AutoHotkey v2 desktop shell, a persistent lightweight Rust audio service, and a disposable Rust Parakeet inference worker.
 
 ```text
-simple-stt.ahk or simple-stt-shell.exe
+simple-stt.ahk or simple-stt.exe
   └── simple-stt-capture.exe      persistent CPAL capture + fast overlay
         └── simple-stt-infer.exe  disposable Parakeet DLL/model process
 
@@ -106,6 +106,28 @@ The end-to-end smoke uses an isolated temporary config and state directory. It d
 
 The paste smoke intentionally sends only `hello world` into controlled temporary edit boxes. It also places a custom non-text object format on the clipboard before pasting and asserts that the object format is restored afterward.
 
+### Run the settings GUI preview harness
+
+When editing `ahk/lib/SettingsGui.ahk`, validate with the console-first preview harness after each small batch so AHK syntax/runtime errors surface on stderr instead of as modal GUI popups:
+
+```bat
+python scripts\run-settings-preview.py
+```
+
+The launcher first runs AutoHotkey `/Validate`, then opens the isolated preview loop in `ahk\tests\settings-preview.ahk`.
+
+Artifacts:
+
+```text
+artifacts\gui-loop\report.txt
+artifacts\gui-loop\default-*.png
+artifacts\gui-loop\compact-*.png
+artifacts\gui-loop\wide-*.png
+artifacts\gui-loop\final-general.png
+```
+
+A passing run reports `RESULT: PASS` and `screenshots: 13`. The preview loop safely exercises every settings button callback, save/reload flow, mock IPC path, and screenshot capture path without opening the real app or relying on live services.
+
 ### Run only the AutoHotkey validation and runtime smoke suite
 
 ```bat
@@ -168,7 +190,7 @@ startup shortcut creation and removal
 microphone selection followed by audio-service restart
 typing and paste delivery into representative target applications
 RAM and VRAM cleanup after repeated unload and idle-timeout cycles
-packaging with scripts\package-release.ps1
+packaging with build-distribution.cmd
 ```
 
 See `docs/testing.md` and `docs/memory-cleanup-validation.md` for the detailed matrix.
@@ -179,7 +201,7 @@ The retired monolith is no longer checked into the working tree. Use git history
 
 ## Install-relative paths
 
-Relative runtime/model directories resolve from the checkout root for Cargo `target\debug` / `target\release` binaries and from the executable directory for packaged binaries. `scripts\package-release.ps1` stages `fixtures\parakeet-smoke.wav` for model testing.
+Relative runtime/model directories resolve from the checkout root for Cargo `target\debug` / `target\release` binaries and from the executable directory for packaged binaries. `build-distribution.cmd` and `scripts\build-distribution.ps1` stage `fixtures\parakeet-smoke.wav` for model testing.
 
 ## License
 

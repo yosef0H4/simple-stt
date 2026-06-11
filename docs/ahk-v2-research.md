@@ -103,7 +103,7 @@ A direct AHK named-pipe implementation was prototyped on paper but rejected: ope
 
 ## Ahk2Exe and directives
 
-Ahk2Exe is the official script-to-EXE converter and supports v2+ scripts. Development can run `ahk/simple-stt.ahk` with AutoHotkey v2 installed. Distribution compiles it to `simple-stt-shell.exe`; end users do not need a separate AHK installation when the compiled shell is packaged.
+Ahk2Exe is the official script-to-EXE converter and supports v2+ scripts. Development can run `ahk/simple-stt.ahk` with AutoHotkey v2 installed. Distribution compiles it to `simple-stt.exe`; end users do not need a separate AHK installation when the compiled shell is packaged.
 
 Compiler directives are comments beginning with `;@Ahk2Exe-...`. The first packaging pass uses command-line `/in`, `/out`, and optional `/icon` arguments rather than embedding many directives. A future branded package may add metadata directives once the icon and versioning assets are final.
 
@@ -119,4 +119,4 @@ Two common per-user Windows options were considered:
 1. HKCU `Software\\Microsoft\\Windows\\CurrentVersion\\Run`
 2. a shortcut in `A_Startup`
 
-The shell chooses a per-user `A_Startup\\Simple STT.lnk` shortcut through `FileCreateShortcut()`. This visibly targets the AHK shell or compiled shell and avoids carrying forward the old monolith registry registration code. Packaging must launch the compiled `simple-stt-shell.exe`, not a Rust executable.
+The shell chooses a per-user `A_Startup\\Simple STT.lnk` shortcut through `FileCreateShortcut()`. This visibly targets the AHK shell or compiled shell and avoids carrying forward the old monolith registry registration code. Packaging must launch the compiled `simple-stt.exe`, not a Rust executable.

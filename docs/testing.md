@@ -122,6 +122,50 @@ asynchronous polled Unicode TRANSCRIPT
 state-file reconnect after simulated service restart
 ```
 
+## Run settings GUI preview only
+
+```bat
+python scripts\run-settings-preview.py
+```
+
+Use this while editing `ahk\lib\SettingsGui.ahk`. The launcher:
+
+```text
+runs AutoHotkey /Validate with /ErrorStdOut=UTF-8
+starts ahk\tests\settings-preview.ahk
+exercises every settings button callback in test mode
+captures screenshots for default, compact, wide, and final-general states
+writes artifacts\gui-loop\report.txt
+```
+
+Expected success shape:
+
+```text
+RESULT: PASS
+screenshots: 13
+```
+
+Generated artifacts:
+
+```text
+artifacts\gui-loop\report.txt
+artifacts\gui-loop\default-general.png
+artifacts\gui-loop\default-audio-models.png
+artifacts\gui-loop\default-output.png
+artifacts\gui-loop\default-advanced.png
+artifacts\gui-loop\compact-general.png
+artifacts\gui-loop\compact-audio-models.png
+artifacts\gui-loop\compact-output.png
+artifacts\gui-loop\compact-advanced.png
+artifacts\gui-loop\wide-general.png
+artifacts\gui-loop\wide-audio-models.png
+artifacts\gui-loop\wide-output.png
+artifacts\gui-loop\wide-advanced.png
+artifacts\gui-loop\final-general.png
+```
+
+The preview harness is intentionally console-first so syntax or shutdown-path regressions do not surface as modal GUI dialogs.
+
 ## Run AutoHotkey validation and runtime smoke only
 
 ```bat
@@ -155,6 +199,8 @@ ahk\tests\text-transform-smoke.ahk
 ahk\tests\tabprotocol-retry-smoke.ahk
 ahk\tests\full-smoke.ahk
 ```
+
+`ahk\tests\settings-preview.ahk` is validated by `python scripts\run-settings-preview.py`, not by `scripts\test-ahk-full.cmd`.
 
 Runtime smoke scripts:
 
@@ -210,7 +256,7 @@ microphone selection followed by audio-service restart
 compact stationary waveform placement near the cursor on each monitor
 model loading, loaded, and unloaded tooltip notices
 RAM and VRAM cleanup after explicit unload and idle timeout
-release packaging with scripts\package-release.ps1
+release packaging with build-distribution.cmd
 ```
 
 For memory-specific measurements, see `docs/memory-cleanup-validation.md`.

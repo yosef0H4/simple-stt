@@ -8,5 +8,7 @@ Update the canonical schema-v2 path consistently:
 4. `ahk/lib/SettingsGui.ahk`: user-facing control when appropriate.
 5. Capture/infer/shell owner: apply live, recycle worker, restart capture, or document shell restart.
 6. Rust tests and `docs/configuration.md`.
+7. If the setting changes `ahk/lib/SettingsGui.ahk`, run `python scripts\run-settings-preview.py` after each small UI edit batch and keep `artifacts\gui-loop\report.txt` at `RESULT: PASS`.
+8. Update the user-facing docs that mention the setting, usually `README.md`, `docs/testing.md`, and any relevant workflow skill.
 
 Keep one JSON config file. Do not add undocumented sidecar state. Do not introduce clipboard-default typing or anti-detection randomness.

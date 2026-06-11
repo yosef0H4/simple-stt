@@ -63,10 +63,14 @@ docs/change-manifest.md
 tools/ipc-poc/mock_service.py
 tools/ipc-poc/test_poc.py
 tools/ipc-poc/README.md
+ahk/tests/settings-preview.ahk
 scripts/build-release.ps1
+scripts/build-distribution.ps1
 scripts/check-prereqs.ps1
 scripts/run-dev.ps1
 scripts/package-release.ps1
+scripts/run-settings-preview.cmd
+scripts/run-settings-preview.py
 scripts/test-static.ps1
 scripts/ipc-poc.ps1
 scripts/memory-cleanup-validation.ps1

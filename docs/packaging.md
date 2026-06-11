@@ -10,13 +10,21 @@ build-distribution.cmd
 
 This is the supported release command. It runs Rust tests, builds the release binaries, compiles the AutoHotkey shell, stages a self-contained portable layout, creates the installer, creates the ZIP archive, and prints SHA-256 hashes.
 
+The implementation lives in `scripts\build-distribution.ps1`. `build-distribution.cmd` is the convenience wrapper and `scripts\package-release.ps1` is now a compatibility wrapper that forwards to the distribution builder.
+
 For a faster local packaging pass after tests have already passed:
 
 ```cmd
 build-distribution.cmd -SkipTests
 ```
 
-The legacy PowerShell entry point remains as a compatibility wrapper:
+The native PowerShell entry point is:
+
+```powershell
+.\scripts\build-distribution.ps1
+```
+
+The legacy compatibility wrapper remains available:
 
 ```powershell
 .\scripts\package-release.ps1
@@ -40,7 +48,7 @@ simple-stt-portable\
     START_HERE.txt
     THIRD_PARTY_NOTICES.md
     runtime\
-        simple-stt.exe
+        simple-stt.exe                      compiled AutoHotkey shell
         simple-stt-capture.exe
         simple-stt-infer.exe
         simple-stt-ctl.exe
@@ -78,3 +86,13 @@ For an editable source run with AutoHotkey installed:
 ```
 
 Runtime data remains under `%APPDATA%\simple-stt` and `%LOCALAPPDATA%\simple-stt`.
+
+## Settings GUI preview during packaging-adjacent UI work
+
+For `ahk\lib\SettingsGui.ahk` changes, validate separately before a full package build:
+
+```bat
+python scripts\run-settings-preview.py
+```
+
+This lightweight loop runs `/Validate` first and writes `artifacts\gui-loop\report.txt` plus screenshots, which is much faster than rebuilding the full distribution just to catch a GUI syntax or layout regression.

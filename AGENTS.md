@@ -61,6 +61,14 @@ AHK helper response files can briefly produce Windows sharing violation error 32
 
 Paste delivery must preserve the complete clipboard, not only text. Keep the `ClipboardAll()` backup, guarded restore, clipboard sequence-number check, and the non-text clipboard-format E2E assertion.
 
+When editing `ahk\lib\SettingsGui.ahk`, use the console-first preview harness after every small batch:
+
+```bat
+python scripts\run-settings-preview.py
+```
+
+Read `artifacts\gui-loop\report.txt` and require `RESULT: PASS` before continuing. The preview harness exists specifically to catch AHK GUI syntax/runtime errors without modal popups.
+
 ## Required pre-commit validation
 
 Run the complete Windows validation suite before committing code changes:
@@ -107,6 +115,12 @@ Run only AHK validation and runtime smoke tests:
 scripts\test-ahk-full.cmd
 ```
 
+Run only the isolated settings GUI preview harness:
+
+```bat
+python scripts\run-settings-preview.py
+```
+
 ## AutoHotkey suite coverage
 
 The AHK runner validates every entry point with:
@@ -145,6 +159,8 @@ restoration of a custom non-text clipboard object format
 ```
 
 Do not expand the typing test into a large keyboard simulation. `hello world` is deliberately enough to exercise the normal path without causing unnecessary input activity.
+
+For settings-window visual or layout work, also use `ahk\tests\settings-preview.ahk` through `python scripts\run-settings-preview.py`. That preview loop validates first, exercises the settings callbacks in test mode, and writes `artifacts\gui-loop\report.txt` plus the captured `default-*`, `compact-*`, `wide-*`, and `final-general.png` screenshots.
 
 ## Rust suite coverage
 

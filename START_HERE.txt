@@ -27,4 +27,7 @@ Outputs:
 Static source checks and IPC POC:
   .\scripts\test-static.ps1
 
+Settings GUI preview loop:
+  python scripts\run-settings-preview.py
+
 The Linux editing environment did not build binaries. Run the documented Windows checks before release.
