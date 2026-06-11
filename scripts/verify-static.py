@@ -41,7 +41,7 @@ required_files = [
     "ahk/lib/Config.ahk", "ahk/lib/Hotkeys.ahk", "ahk/lib/IpcClient.ahk",
     "ahk/lib/Logging.ahk", "ahk/lib/ProcessSupervisor.ahk", "ahk/lib/SettingsGui.ahk",
     "ahk/lib/TabProtocol.ahk", "ahk/lib/Tray.ahk", "ahk/lib/Typist.ahk", "ahk/lib/Utils.ahk",
-    "src/bin/simple_stt_capture.rs", "src/bin/simple_stt_infer.rs", "src/bin/simple-stt-ctl.rs", "src/bin/simple_stt_mock_infer.rs",
+    "src/bin/simple_stt_capture.rs", "src/bin/simple_stt_infer.rs", "src/bin/simple_stt_ctl.rs", "src/bin/simple_stt_mock_infer.rs",
     "src/capture/audio.rs", "src/capture/inference_supervisor.rs", "src/capture/ipc_server.rs", "src/capture/process.rs",
     "src/infer/parakeet_native.rs", "src/infer/protocol.rs", "src/common/shell_protocol.rs",
     "docs/ahk-v2-research.md", "docs/current-behavior-inventory.md", "docs/ipc-decision.md",
@@ -69,7 +69,7 @@ checks.append("release lockfile hygiene is explicit: Cargo.lock is not ignored")
 directives = "#Requires AutoHotkey v2.0\n#SingleInstance Force"
 need("ahk/simple-stt.ahk", directives, "OnExit(", "OnError(")
 for path in sorted((root / "ahk/tests").glob("*.ahk")):
-    head = "\n".join(path.read_text(encoding="utf-8").splitlines()[:2])
+    head = "\n".join(path.read_text(encoding="utf-8").lstrip("\ufeff").splitlines()[:2])
     if head != directives:
         errors.append(f"{path.relative_to(root)} missing mandatory v2 entry directives")
 checks.append("shell entry and AHK smoke scripts are v2-only")
@@ -80,7 +80,7 @@ need("Cargo.toml", '"Win32_System_Threading"')
 lib = forbid("src/lib.rs", "pub mod parakeet_native;", "pub mod protocol;")
 if (root / "src/main.rs").exists():
     errors.append("legacy src/main.rs is still active")
-for binary in ["simple_stt_capture", "simple_stt_infer", "simple-stt-ctl"]:
+for binary in ["simple_stt_capture", "simple_stt_infer", "simple_stt_ctl"]:
     if f"src/bin/{binary}.rs" not in required_files:
         errors.append(f"required split binary not registered in verifier: {binary}")
 checks.append("active Cargo graph has split binaries and no Slint frontend dependency")
@@ -106,15 +106,17 @@ need("src/bin/simple_stt_infer.rs", "ParakeetNative", "worker idle timeout reach
 need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()>", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
 need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion")
-need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level")
+need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "inference_device: InferenceDevice", "PARAKEET_DEVICE", "InferenceDevice::Cpu", "InferenceDevice::NvidiaGpu")
+need("src/config.rs", "pub enum InferenceDevice", "NvidiaGpu", "inference_device: InferenceDevice")
+need("ahk/lib/SettingsGui.ahk", 'AddDropDownList("x210 y336 w220", ["nvidia_gpu", "cpu"])', 'config.Set("inference_device"')
 need("src/logging.rs", "component={component} pid={}", "prefix_lines", "component_prefix_survives_split_writes_and_multiline_events")
-need("src/capture/inference_supervisor.rs", '.arg("--log-level")')
+need("src/capture/inference_supervisor.rs", '.arg("--log-level")', '.arg("--inference-device")')
 forbid("src/bin/simple_stt_capture.rs", "worker.lock().unwrap().worker_pid()", "worker.lock().unwrap().replace_config")
 checks.append("Parakeet DLL/model loading is isolated to disposable simple-stt-infer with exact-PID forced-exit fallback")
 
 # AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
 need("ahk/lib/Tray.ahk", "A_TrayMenu", "TraySetIcon", "Open Settings", "Restart Audio Service", "Unload Speech Model")
-need("ahk/lib/SettingsGui.ahk", "Gui(", "Record chord", "List microphones", "Download model", "Advanced runtime directory", "text_delivery_mode")
+need("ahk/lib/SettingsGui.ahk", "Gui(", "Record shortcut", "Refresh devices", "Download model", "Runtime locations", "text_delivery_mode")
 hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "Hotkey(", "InputHook(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
 if '"*CapsLock & "' in hotkeys_ahk:
     errors.append("CapsLock custom combination must not prepend wildcard; combinations already wildcard-match")
@@ -140,14 +142,14 @@ checks.append("control IPC is loopback-only and versioned; raw PCM stays on fram
 # Canonical schema-v2 config, partial downloads, and process-exit diagnostics are present.
 need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 2", "MoveFileExW", "MOVEFILE_REPLACE_EXISTING", "schema1_is_migrated_and_backed_up", "runtime_root", "current_exe")
 need("src/models.rs", 'https://', 'gguf.partial.', "replace_file_atomic", "validate_model_filename", 'join("fixtures")')
-need("scripts/package-release.ps1", "fixtures\\parakeet-smoke.wav")
+need("scripts/build-distribution.ps1", "fixtures\\parakeet-smoke.wav")
 need("scripts/build-release.ps1", "--bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl")
 need("scripts/memory-cleanup-validation.ps1", "Get-Process", "nvidia-smi", "unload-model")
 checks.append("schema-v2 migration, install-relative paths, atomic writes, HTTPS partial downloads, and diagnostics are present")
 
 # Deterministic worker integration coverage exists but is intentionally not shipped.
 need("src/bin/simple_stt_mock_infer.rs", "Test-only disposable inference worker", "hang-handshake", "mock مرحبا 世界 🙂", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
-need("tests/worker_lifecycle.rs", "worker_launches_lazily_and_reuses_warm_process", "warm_up_loads_and_primes_worker_before_first_transcript", "worker_exits_after_idle_timeout", "model_switch_recycles_worker_before_next_request", "crashed_worker_is_discarded_and_recoverable", "blocked_inference_is_force_terminated_by_exact_pid")
+need("tests/worker_lifecycle.rs", "worker_launches_lazily_and_reuses_warm_process", "warm_up_loads_and_primes_worker_before_first_transcript", "worker_exits_after_idle_timeout", "model_switch_recycles_worker_before_next_request", "device_switch_recycles_worker_before_next_request", "crashed_worker_is_discarded_and_recoverable", "blocked_inference_is_force_terminated_by_exact_pid")
 if "--bins" in text("scripts/build-release.ps1"):
     errors.append("release build must not ship the mock inference binary via --bins")
 checks.append("mock-worker lifecycle integration sources cover reuse, idle exit, model switch, crash recovery, and forced shutdown")

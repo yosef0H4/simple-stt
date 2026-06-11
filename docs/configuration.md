@@ -2,13 +2,15 @@
 
 ## Canonical source
 
-Simple STT has one canonical persisted config file: human-readable JSON schema version 2.
+Simple STT has one canonical persisted config file per runtime root: human-readable JSON schema version 2.
 
-Default Windows path:
+Default Windows path shape:
 
 ```text
-%APPDATA%\simple-stt\config.json
+%APPDATA%\simple-stt\instances\<runtime-root-id>\config.json
 ```
+
+This keeps portable, installed, and checkout/dev builds isolated from each other so one build cannot silently reuse another build's runtime, model, log, or state paths.
 
 Override for development and diagnostics:
 
@@ -35,6 +37,7 @@ The Rust config module owns JSON serialization, migration, validation, and atomi
   "log_level": "normal",
   "diagnostic_overlay": false,
   "log_transcripts": false,
+  "inference_device": "nvidia_gpu",
   "parakeet_runtime_dir": "external\\parakeet-runtime\\parakeet-windows-cuda",
   "model_dir": "external\\parakeet-runtime\\parakeet-windows-cuda\\models",
   "selected_model_filename": "tdt_ctc-110m-f16.gguf"
@@ -60,6 +63,7 @@ The Rust config module owns JSON serialization, migration, validation, and atomi
 | `log_level` | `minimal`, `normal`, `debug`, or `extreme`. | Immediate shell filter update; restart capture service and recycle infer worker. |
 | `diagnostic_overlay` | Boolean. | Capture reload. |
 | `log_transcripts` | Boolean; default false. | Capture reload / worker diagnostics. Transcript content must stay off by default. |
+| `inference_device` | `nvidia_gpu` or `cpu`; default `nvidia_gpu`. The CUDA runtime auto-selects the NVIDIA GPU unless CPU is forced. | Recycle infer worker. |
 | `parakeet_runtime_dir` | Non-empty path. | Recycle infer worker. |
 | `model_dir` | Non-empty path. | Recycle infer worker. |
 | `selected_model_filename` | Plain approved `.gguf` filename; no slash, backslash, or `..`. | Recycle infer worker. |
@@ -87,7 +91,7 @@ On Windows, schema-v2 saves, helper response files, and completed model download
 The only additional runtime state is the ephemeral capture discovery file:
 
 ```text
-%LOCALAPPDATA%\simple-stt\state\capture-state.json
+%LOCALAPPDATA%\simple-stt\instances\<runtime-root-id>\state\capture-state.json
 ```
 
 It contains protocol number, capture PID, loopback address, and startup timestamp. The per-launch random token is passed directly from shell to capture/helper command lines and is not persisted as long-lived configuration.

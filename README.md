@@ -54,7 +54,7 @@ The shell does not parse JSON, move PCM, read a long pipe, load the model, or pe
 
 When recording begins, `simple-stt-capture.exe` starts warming the speech model in the background. The tooltip reports model loading, loaded, and unloaded lifecycle events. The recording tooltip is a compact stationary Unicode waveform whose bar heights change only with microphone level.
 
-`simple-stt-infer.exe` dynamically loads Parakeet, loads the selected GGUF lazily, handles framed PCM/WAV requests, returns transcripts, and exits after graceful shutdown or its idle backstop.
+`simple-stt-infer.exe` dynamically loads Parakeet, loads the selected GGUF lazily, handles framed PCM/WAV requests, returns transcripts, and exits after graceful shutdown or its idle backstop. Settings exposes an inference-device dropdown: `nvidia_gpu` uses the bundled CUDA backend and `cpu` forces CPU inference without VRAM use. The settings UI also separates installed-model selection from the downloadable catalog, uses a microphone dropdown instead of a free-text box, and shows absolute runtime/model paths.
 
 ## Testing
 
@@ -201,7 +201,7 @@ The retired monolith is no longer checked into the working tree. Use git history
 
 ## Install-relative paths
 
-Relative runtime/model directories resolve from the checkout root for Cargo `target\debug` / `target\release` binaries and from the executable directory for packaged binaries. `build-distribution.cmd` and `scripts\build-distribution.ps1` stage `fixtures\parakeet-smoke.wav` for model testing.
+Relative runtime/model directories resolve from the checkout root for Cargo `target\debug` / `target\release` binaries and from the executable directory for packaged binaries. Persisted config, logs, state, and cached catalog data are isolated per runtime root so portable, installed, and checkout/dev builds do not accidentally share the wrong model or runtime location. `build-distribution.cmd` and `scripts\build-distribution.ps1` stage `fixtures\parakeet-smoke.wav` for model testing.
 
 ## License
 

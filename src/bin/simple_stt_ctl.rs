@@ -6,7 +6,7 @@ use simple_stt::common::shell_protocol::{
     ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
 use simple_stt::config::{
-    replace_file_atomic, AppConfig, CapsLockBehavior, LogLevel, TextDeliveryMode,
+    replace_file_atomic, AppConfig, CapsLockBehavior, InferenceDevice, LogLevel, TextDeliveryMode,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -227,7 +227,7 @@ fn config_show() -> Result<ShellResponse> {
         .insert("hotkey_enabled".into(), config.hotkey_enabled.to_string());
     response
         .values
-        .insert("record_hotkey".into(), config.record_hotkey);
+        .insert("record_hotkey".into(), config.record_hotkey.clone());
     response.values.insert(
         "capslock_behavior".into(),
         match config.capslock_behavior {
@@ -238,7 +238,7 @@ fn config_show() -> Result<ShellResponse> {
     );
     response
         .values
-        .insert("audio_device_contains".into(), config.audio_device_contains);
+        .insert("audio_device_contains".into(), config.audio_device_contains.clone());
     response
         .values
         .insert("audio_gain".into(), config.audio_gain.to_string());
@@ -299,17 +299,41 @@ fn config_show() -> Result<ShellResponse> {
     response
         .values
         .insert("log_transcripts".into(), config.log_transcripts.to_string());
-    response
-        .values
-        .insert("parakeet_runtime_dir".into(), config.parakeet_runtime_dir);
-    response.values.insert("model_dir".into(), config.model_dir);
+    response.values.insert(
+        "inference_device".into(),
+        config.inference_device.as_str().into(),
+    );
+    response.values.insert(
+        "parakeet_runtime_dir".into(),
+        config.parakeet_runtime_dir_path().display().to_string(),
+    );
+    response.values.insert(
+        "parakeet_runtime_dir_resolved".into(),
+        config.parakeet_runtime_dir_path().display().to_string(),
+    );
+    response.values.insert(
+        "model_dir".into(),
+        config.model_dir_path().display().to_string(),
+    );
+    response.values.insert(
+        "model_dir_resolved".into(),
+        config.model_dir_path().display().to_string(),
+    );
     response.values.insert(
         "selected_model_filename".into(),
-        config.selected_model_filename,
+        config.selected_model_filename.clone(),
     );
     response.values.insert(
         "config_path".into(),
         AppConfig::config_path().display().to_string(),
+    );
+    response.values.insert(
+        "runtime_root".into(),
+        simple_stt::config::runtime_root().display().to_string(),
+    );
+    response.values.insert(
+        "instance_id".into(),
+        simple_stt::config::app_instance_id(),
     );
     response.values.insert(
         "shell_log_path".into(),
@@ -383,6 +407,13 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
             }
             "diagnostic_overlay" => config.diagnostic_overlay = parse_bool(&value)?,
             "log_transcripts" => config.log_transcripts = parse_bool(&value)?,
+            "inference_device" => {
+                config.inference_device = match value.as_str() {
+                    "cpu" => InferenceDevice::Cpu,
+                    "nvidia_gpu" => InferenceDevice::NvidiaGpu,
+                    _ => anyhow::bail!("invalid inference_device: {value}"),
+                }
+            }
             "parakeet_runtime_dir" => config.parakeet_runtime_dir = value.to_owned(),
             "model_dir" => config.model_dir = value.to_owned(),
             "selected_model_filename" => config.selected_model_filename = value.to_owned(),

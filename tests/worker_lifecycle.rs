@@ -1,7 +1,7 @@
 use simple_stt::capture::inference_supervisor::{
     nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
 };
-use simple_stt::config::LogLevel;
+use simple_stt::config::{InferenceDevice, LogLevel};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -19,6 +19,7 @@ fn worker_config(model_name: &str, idle: Duration, grace: Duration) -> WorkerCon
         model_path: root.join(model_name),
         log_path: root.join("simple-stt-mock-infer.log"),
         log_level: LogLevel::Debug,
+        inference_device: InferenceDevice::Cpu,
         idle_timeout: idle,
         shutdown_grace: grace,
     }
@@ -99,6 +100,34 @@ fn model_switch_recycles_worker_before_next_request() {
         worker.transcribe_pcm(2, &[2]).unwrap(),
         "mock مرحبا 世界 🙂"
     );
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
+fn device_switch_recycles_worker_before_next_request() {
+    let mut first = worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    );
+    first.inference_device = InferenceDevice::Cpu;
+
+    let mut worker = WorkerSupervisor::new(first);
+    worker.transcribe_pcm(1, &[1]).unwrap();
+    let first_pid = worker.worker_pid().unwrap();
+
+    let mut second = worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    );
+    second.inference_device = InferenceDevice::NvidiaGpu;
+
+    worker.replace_config(second).unwrap();
+    assert_eq!(worker.worker_pid(), None);
+
+    worker.transcribe_pcm(2, &[2]).unwrap();
+    assert_ne!(worker.worker_pid(), Some(first_pid));
     worker.shutdown_now().unwrap();
 }
 

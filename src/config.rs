@@ -53,6 +53,24 @@ pub enum TextDeliveryMode {
     PasteCtrlShiftV,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
+#[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
+pub enum InferenceDevice {
+    Cpu,
+    #[default]
+    NvidiaGpu,
+}
+
+impl InferenceDevice {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cpu => "cpu",
+            Self::NvidiaGpu => "nvidia_gpu",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -74,6 +92,7 @@ pub struct AppConfig {
     pub log_level: LogLevel,
     pub diagnostic_overlay: bool,
     pub log_transcripts: bool,
+    pub inference_device: InferenceDevice,
     pub parakeet_runtime_dir: String,
     pub model_dir: String,
     pub selected_model_filename: String,
@@ -100,6 +119,7 @@ impl Default for AppConfig {
             log_level: LogLevel::Normal,
             diagnostic_overlay: false,
             log_transcripts: false,
+            inference_device: InferenceDevice::NvidiaGpu,
             parakeet_runtime_dir: r"external\parakeet-runtime\parakeet-windows-cuda".to_owned(),
             model_dir: r"external\parakeet-runtime\parakeet-windows-cuda\models".to_owned(),
             selected_model_filename: "tdt_ctc-110m-f16.gguf".to_owned(),
@@ -172,16 +192,11 @@ impl AppConfig {
         if let Some(path) = std::env::var_os("SIMPLE_STT_CONFIG") {
             return PathBuf::from(path);
         }
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("simple-stt")
-            .join("config.json")
+        instance_config_dir().join("config.json")
     }
 
     pub fn local_data_dir() -> PathBuf {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("simple-stt")
+        instance_local_data_dir()
     }
 
     pub fn logs_dir() -> PathBuf {
@@ -413,6 +428,9 @@ fn normalize_legacy_hotkey(value: &str) -> String {
 /// `target\release`, so walk back to the checkout root. A staged distribution
 /// places binaries directly beside the shell, so use the executable directory.
 pub fn runtime_root() -> PathBuf {
+    if let Some(path) = std::env::var_os("SIMPLE_STT_RUNTIME_ROOT") {
+        return PathBuf::from(path);
+    }
     if let Ok(executable) = std::env::current_exe() {
         if let Some(directory) = executable.parent() {
             let profile = directory.file_name().and_then(|value| value.to_str());
@@ -431,6 +449,43 @@ pub fn runtime_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+pub fn app_instance_id() -> String {
+    let root = runtime_root();
+    let stem = root
+        .file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("simple-stt");
+    let sanitized = stem
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_ascii_lowercase();
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in root.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{}-{:016x}", if sanitized.is_empty() { "simple-stt" } else { &sanitized }, hash)
+}
+
+fn instance_config_dir() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("simple-stt")
+        .join("instances")
+        .join(app_instance_id())
+}
+
+fn instance_local_data_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("simple-stt")
+        .join("instances")
+        .join(app_instance_id())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -442,6 +497,7 @@ mod tests {
         assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlV);
         assert!(!config.remove_punctuation);
         assert!(!config.lowercase_output);
+        assert_eq!(config.inference_device, InferenceDevice::NvidiaGpu);
     }
 
     #[test]
@@ -486,5 +542,26 @@ mod tests {
             config.resolve_from_runtime_root(absolute.to_str().unwrap()),
             absolute
         );
+    }
+
+    #[test]
+    fn instance_paths_are_scoped_by_runtime_root() {
+        let original = std::env::var_os("SIMPLE_STT_RUNTIME_ROOT");
+        let temp_a = tempfile::tempdir().unwrap();
+        let temp_b = tempfile::tempdir().unwrap();
+        std::env::set_var("SIMPLE_STT_RUNTIME_ROOT", temp_a.path());
+        let config_a = AppConfig::config_path();
+        let data_a = AppConfig::local_data_dir();
+        std::env::set_var("SIMPLE_STT_RUNTIME_ROOT", temp_b.path());
+        let config_b = AppConfig::config_path();
+        let data_b = AppConfig::local_data_dir();
+        match original {
+            Some(value) => std::env::set_var("SIMPLE_STT_RUNTIME_ROOT", value),
+            None => std::env::remove_var("SIMPLE_STT_RUNTIME_ROOT"),
+        }
+        assert_ne!(config_a, config_b);
+        assert_ne!(data_a, data_b);
+        assert!(config_a.to_string_lossy().contains("instances"));
+        assert!(data_a.to_string_lossy().contains("instances"));
     }
 }

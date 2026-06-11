@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use simple_stt::config::LogLevel;
+use simple_stt::config::{InferenceDevice, LogLevel};
 use simple_stt::infer::parakeet_native::ParakeetNative;
 use simple_stt::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use std::io::{stdin, stdout, BufReader};
@@ -22,6 +22,8 @@ struct Args {
     log_path: PathBuf,
     #[arg(long, value_enum, default_value = "normal")]
     log_level: LogLevel,
+    #[arg(long, value_enum, default_value = "nvidia_gpu")]
+    inference_device: InferenceDevice,
     #[arg(long, default_value_t = 180)]
     idle_timeout_secs: u64,
 }
@@ -29,7 +31,8 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     simple_stt::logging::init_component("infer", &args.log_path, &args.log_level)?;
-    tracing::info!(pid = std::process::id(), model = %args.model_path.display(), "disposable inference worker started");
+    apply_inference_device(&args.inference_device);
+    tracing::info!(pid = std::process::id(), model = %args.model_path.display(), inference_device = args.inference_device.as_str(), "disposable inference worker started");
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut input = BufReader::new(stdin());
@@ -136,6 +139,13 @@ fn main() -> Result<()> {
         "inference worker exiting; process exit is the memory cleanup guarantee"
     );
     Ok(())
+}
+
+fn apply_inference_device(device: &InferenceDevice) {
+    match device {
+        InferenceDevice::Cpu => std::env::set_var("PARAKEET_DEVICE", "cpu"),
+        InferenceDevice::NvidiaGpu => std::env::remove_var("PARAKEET_DEVICE"),
+    }
 }
 
 fn ensure_engine(engine: &mut Option<ParakeetNative>, args: &Args) -> Result<()> {

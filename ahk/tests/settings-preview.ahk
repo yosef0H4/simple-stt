@@ -21,8 +21,10 @@ class PreviewIpc {
             response["values"]["input.1"] := "Default USB microphone"
             response["values"]["input.2"] := "Studio headset microphone"
         } else if InStr(arguments, "list-models") = 1 {
-            response["values"]["model.1"] := "tdt_ctc-110m-f16.gguf|1374|true"
-            response["values"]["model.2"] := "ctc-0.6b-f16.gguf|1374|true"
+            response["values"]["recommended_model"] := "tdt_ctc-110m-f16.gguf"
+            response["values"]["installed_model.1"] := "tdt_ctc-110m-f16.gguf|268|true|f16"
+            response["values"]["catalog_model.1"] := "tdt_ctc-110m-q4_k.gguf|131|false|q4_k"
+            response["values"]["catalog_model.2"] := "ctc-0.6b-f16.gguf|1374|false|f16"
         }
         if IsObject(callback)
             SetTimer(() => callback(response), -20)
@@ -96,7 +98,7 @@ class GuiLoop {
         tests := [
             [1, "record_chord", "Preview: shortcut recorder opened safely"],
             [2, "list_microphones", "Microphone list refreshed"],
-            [2, "refresh_models", "Approved model list refreshed"],
+            [2, "refresh_models", "Installed and downloadable model lists refreshed"],
             [2, "download_model", "Model download queued:"],
             [2, "test_model", "Model test queued"],
             [4, "browse_models", "Preview: folder picker opened safely"],

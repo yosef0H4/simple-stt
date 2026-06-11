@@ -449,13 +449,26 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         },
         ShellCommand::ListModels => {
             let mut response = ShellResponse::ok("cached models");
-            for (index, model) in simple_stt::models::catalog_for_config(config)
+            response.values.insert(
+                "recommended_model".into(),
+                simple_stt::models::recommended_model_for_device(&config.inference_device).into(),
+            );
+            for (index, model) in simple_stt::models::installed_models(config)
                 .into_iter()
                 .enumerate()
             {
                 response.values.insert(
-                    format!("model.{index:03}"),
-                    format!("{}|{}|{}", model.file, model.size_mb, model.recommended),
+                    format!("installed_model.{index:03}"),
+                    format!("{}|{}|{}|{}", model.file, model.size_mb, model.recommended, model.quant),
+                );
+            }
+            for (index, model) in simple_stt::models::downloadable_models(config)
+                .into_iter()
+                .enumerate()
+            {
+                response.values.insert(
+                    format!("catalog_model.{index:03}"),
+                    format!("{}|{}|{}|{}", model.file, model.size_mb, model.recommended, model.quant),
                 );
             }
             response
@@ -681,6 +694,7 @@ fn worker_config(config: &AppConfig) -> Result<WorkerConfig> {
         model_path: config.selected_model_path(),
         log_path: AppConfig::infer_log_path(),
         log_level: config.log_level.clone(),
+        inference_device: config.inference_device.clone(),
         idle_timeout: Duration::from_secs(config.idle_worker_timeout_secs),
         shutdown_grace: Duration::from_millis(config.worker_shutdown_grace_ms),
     })

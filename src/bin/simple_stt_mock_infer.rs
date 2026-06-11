@@ -20,6 +20,8 @@ struct Args {
     log_path: PathBuf,
     #[arg(long, default_value = "normal")]
     log_level: String,
+    #[arg(long, default_value = "nvidia_gpu")]
+    inference_device: String,
     #[arg(long, default_value_t = 180)]
     idle_timeout_secs: u64,
 }
@@ -42,6 +44,7 @@ fn main() -> Result<()> {
         &args.runtime_dir,
         &args.log_path,
         &args.log_level,
+        &args.inference_device,
         args.idle_timeout_secs,
     );
     let mut input = BufReader::new(stdin());

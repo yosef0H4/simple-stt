@@ -1,5 +1,5 @@
 use crate::capture::process::force_terminate_pid;
-use crate::config::LogLevel;
+use crate::config::{InferenceDevice, LogLevel};
 use crate::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use anyhow::{Context, Result};
 use crossbeam_channel::{bounded, RecvTimeoutError};
@@ -23,6 +23,7 @@ pub struct WorkerConfig {
     pub model_path: PathBuf,
     pub log_path: PathBuf,
     pub log_level: LogLevel,
+    pub inference_device: InferenceDevice,
     pub idle_timeout: Duration,
     pub shutdown_grace: Duration,
 }
@@ -99,6 +100,7 @@ impl WorkerSupervisor {
         if self.config.runtime_dir != next.runtime_dir
             || self.config.model_path != next.model_path
             || self.config.log_level != next.log_level
+            || self.config.inference_device != next.inference_device
             || self.config.idle_timeout != next.idle_timeout
             || self.config.shutdown_grace != next.shutdown_grace
         {
@@ -242,7 +244,8 @@ impl WorkerSupervisor {
         }
         let action = self.policy.before_request(&self.config.model_path);
         tracing::info!(?action, model = %self.config.model_path.display(), "launching disposable inference worker");
-        let mut child = match Command::new(&self.config.executable)
+        let mut command = Command::new(&self.config.executable);
+        command
             .arg("--runtime-dir")
             .arg(&self.config.runtime_dir)
             .arg("--model-path")
@@ -251,13 +254,22 @@ impl WorkerSupervisor {
             .arg(&self.config.log_path)
             .arg("--log-level")
             .arg(self.config.log_level.as_str())
+            .arg("--inference-device")
+            .arg(self.config.inference_device.as_str())
             .arg("--idle-timeout-secs")
             .arg(self.config.idle_timeout.as_secs().to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()
-        {
+            .stderr(Stdio::inherit());
+        match self.config.inference_device {
+            InferenceDevice::Cpu => {
+                command.env("PARAKEET_DEVICE", "cpu");
+            }
+            InferenceDevice::NvidiaGpu => {
+                command.env_remove("PARAKEET_DEVICE");
+            }
+        }
+        let mut child = match command.spawn() {
             Ok(child) => child,
             Err(error) => {
                 self.mark_stopped();

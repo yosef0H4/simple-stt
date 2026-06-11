@@ -1,4 +1,4 @@
-use crate::config::{replace_file_atomic, validate_model_filename, AppConfig};
+use crate::config::{replace_file_atomic, validate_model_filename, AppConfig, InferenceDevice};
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::fs;
@@ -15,6 +15,7 @@ pub struct ModelSpec {
     pub file: String,
     pub size_mb: u32,
     pub recommended: bool,
+    pub installed: bool,
 }
 const FAMILIES: &[(&str, &[(&str, u32)])] = &[
     (
@@ -128,7 +129,8 @@ pub fn catalog() -> Vec<ModelSpec> {
                 quant: (*quant).to_owned(),
                 file: format!("{family}-{quant}.gguf"),
                 size_mb: *size_mb,
-                recommended: *quant == "f16",
+                recommended: false,
+                installed: false,
             })
         })
         .collect()
@@ -174,33 +176,118 @@ pub fn refresh_catalog_cache() -> Result<Vec<String>> {
 }
 pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
     let mut models = BTreeMap::<String, ModelSpec>::new();
-    for model in catalog() {
+    for mut model in catalog() {
+        model.recommended = is_recommended_for_device(&model.file, &config.inference_device);
         models.insert(model.file.clone(), model);
     }
     for file in cached_catalog_files() {
+        let recommended = is_recommended_for_device(&file, &config.inference_device);
         models.entry(file.clone()).or_insert_with(|| ModelSpec {
             family: "online".into(),
             quant: "unknown".into(),
             file,
             size_mb: 0,
-            recommended: false,
+            recommended,
+            installed: false,
         });
     }
+    for file in installed_model_files(config) {
+        let recommended = is_recommended_for_device(&file, &config.inference_device);
+        models
+            .entry(file.clone())
+            .and_modify(|model| model.installed = true)
+            .or_insert_with(|| ModelSpec {
+                family: "local".into(),
+                quant: "unknown".into(),
+                file,
+                size_mb: 0,
+                recommended,
+                installed: true,
+            });
+    }
+    models.into_values().collect()
+}
+
+pub fn installed_model_files(config: &AppConfig) -> Vec<String> {
+    let mut files = Vec::new();
     if let Ok(entries) = fs::read_dir(config.model_dir_path()) {
         for entry in entries.flatten() {
             let file = entry.file_name().to_string_lossy().into_owned();
             if file.ends_with(".gguf") {
-                models.entry(file.clone()).or_insert_with(|| ModelSpec {
-                    family: "local".into(),
-                    quant: "unknown".into(),
-                    file,
-                    size_mb: 0,
-                    recommended: false,
-                });
+                files.push(file);
             }
         }
     }
-    models.into_values().collect()
+    files.sort();
+    files.dedup();
+    files
+}
+
+pub fn installed_models(config: &AppConfig) -> Vec<ModelSpec> {
+    let mut installed = catalog_for_config(config)
+        .into_iter()
+        .filter(|model| model.installed)
+        .collect::<Vec<_>>();
+    installed.sort_by(|a, b| a.file.cmp(&b.file));
+    installed
+}
+
+pub fn downloadable_models(config: &AppConfig) -> Vec<ModelSpec> {
+    let mut models = catalog_for_config(config)
+        .into_iter()
+        .filter(|model| !model.installed)
+        .collect::<Vec<_>>();
+    models.sort_by(|a, b| {
+        let a_rank = recommendation_rank(&a.file, &config.inference_device, Some(a.size_mb));
+        let b_rank = recommendation_rank(&b.file, &config.inference_device, Some(b.size_mb));
+        match (a_rank, b_rank) {
+            (Some(a_rank), Some(b_rank)) => a_rank
+                .cmp(&b_rank)
+                .then_with(|| a.size_mb.cmp(&b.size_mb))
+                .then_with(|| a.file.cmp(&b.file)),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a.size_mb.cmp(&b.size_mb).then_with(|| a.file.cmp(&b.file)),
+        }
+    });
+    models
+}
+
+pub fn recommended_model_for_device(device: &InferenceDevice) -> &'static str {
+    match device {
+        InferenceDevice::NvidiaGpu => "tdt_ctc-110m-f16.gguf",
+        InferenceDevice::Cpu => "tdt_ctc-110m-q4_k.gguf",
+    }
+}
+
+pub fn is_recommended_for_device(file: &str, device: &InferenceDevice) -> bool {
+    recommendation_rank(file, device, known_size_mb(file)).is_some()
+}
+
+fn known_size_mb(file: &str) -> Option<u32> {
+    find_by_file(file).map(|model| model.size_mb)
+}
+
+fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32>) -> Option<u8> {
+    let file = file.to_ascii_lowercase();
+    let preferred_family = file.starts_with("tdt_ctc-110m") || file.starts_with("realtime_eou_120m-v1");
+    match device {
+        InferenceDevice::NvidiaGpu => {
+            if file.ends_with("-f16.gguf") && preferred_family && size_mb.unwrap_or(u32::MAX) <= 300 {
+                Some(if file.starts_with("tdt_ctc-110m") { 0 } else { 1 })
+            } else {
+                None
+            }
+        }
+        InferenceDevice::Cpu => {
+            let compact_quant = file.ends_with("-q4_k.gguf") || file.ends_with("-q5_k.gguf");
+            if compact_quant && preferred_family && size_mb.unwrap_or(u32::MAX) <= 160 {
+                Some(if file.starts_with("tdt_ctc-110m") { 0 } else { 1 })
+            } else {
+                None
+            }
+        }
+    }
 }
 
 pub fn download_model<F>(config: &AppConfig, filename: &str, mut on_progress: F) -> Result<PathBuf>
@@ -287,11 +374,19 @@ mod tests {
         }
     }
     #[test]
-    fn every_f16_variant_remains_recommended() {
-        assert!(catalog()
-            .into_iter()
-            .filter(|model| model.quant == "f16")
-            .all(|model| model.recommended));
+    fn gpu_and_cpu_recommendations_are_device_specific() {
+        assert!(is_recommended_for_device(
+            "tdt_ctc-110m-f16.gguf",
+            &InferenceDevice::NvidiaGpu
+        ));
+        assert!(is_recommended_for_device(
+            "tdt_ctc-110m-q4_k.gguf",
+            &InferenceDevice::Cpu
+        ));
+        assert!(!is_recommended_for_device(
+            "tdt_ctc-110m-f16.gguf",
+            &InferenceDevice::Cpu
+        ));
     }
     #[test]
     fn only_approved_names_are_downloadable() {
