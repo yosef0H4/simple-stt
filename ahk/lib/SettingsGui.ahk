@@ -1,176 +1,432 @@
+; SettingsNav is a thin adapter so the preview/smoke harnesses can keep driving
+; page switches through controls["tabs"].Choose(index) after the tab strip was
+; replaced with a custom left sidebar.
+class SettingsNav {
+    __New(owner) {
+        this.owner := owner
+    }
+
+    Choose(index) {
+        this.owner.ShowPage(index)
+    }
+
+    Value {
+        get => this.owner.activePage
+    }
+}
+
 class SettingsGui {
     __New(app) {
         this.app := app
         this.gui := ""
         this.controls := Map()
         this.buttons := Map()
+        this.buttonCallbacks := Map()
         this.installedModelChoices := Map()
         this.catalogModelChoices := Map()
         this.recorder := HotkeyRecorder(app.logger)
-        this.minWidth := 780
-        this.minHeight := 650
+        this.minWidth := 900
+        this.minHeight := 740
+        this.defaultWidth := 1040
+        this.defaultHeight := 740
+        this.dark := false
+        this.themeMode := "auto"
+        this.col := Map()
+        this.pages := Map()
+        this.navButtons := []
+        this.activePage := 1
+        this.loadingControls := false
     }
 
-    Open(*) {
+    Open(refreshLists := true, *) {
         if IsObject(this.gui) {
             this.gui.Show()
-            this.ListInputs()
-            this.ListModels()
+            if refreshLists {
+                this.ListInputs()
+                this.ListModels()
+            }
             return
         }
 
-        window := Gui("+Resize +MinSize780x650", "SimpleStt Settings")
+        this.controls := Map()
+        this.buttons := Map()
+        this.buttonCallbacks := Map()
+        this.pages := Map()
+        this.navButtons := []
+        this.activePage := 1
+        this.themeMode := this.app.config.Get("ui_theme", "auto")
+        this.dark := this.ResolveDark()
+        this.BuildPalette()
+
+        window := Gui("+Resize +MinSize" . this.minWidth . "x" . this.minHeight, "SimpleStt Settings")
         this.gui := window
-        window.BackColor := "F8FAFC"
+        window.BackColor := this.col["win"]
         window.SetFont("s9", "Segoe UI")
         window.OnEvent("Close", ObjBindMethod(this, "Hide"))
         window.OnEvent("Size", ObjBindMethod(this, "OnSize"))
+        this.ApplyAppMode()
 
-        window.SetFont("s17 bold c172033", "Segoe UI Variable Display")
-        this.controls["title"] := window.AddText("x18 y14 w540 h30", "🎙  SimpleStt")
-        window.SetFont("s9 norm c64748B", "Segoe UI Variable Text")
-        this.controls["subtitle"] := window.AddText("x20 y48 w820 h30", "Fast local dictation with a calmer setup experience. Tune only what you need, then save once.")
-        this.controls["header_line"] := window.AddText("x18 y80 w850 h1 0x10")
+        ; ---- sidebar shell ----
+        this.controls["sidebar"] := window.AddText("x0 y0 w204 h720 Background" . this.col["sidebar"], "")
+        this.controls["sidebar_divider"] := window.AddText("x203 y0 w1 h720 Background" . this.col["border"], "")
+        window.SetFont("s14 bold c" . this.col["text"], "Segoe UI Variable Display")
+        this.controls["brand"] := window.AddText("x20 y22 w170 h30 +0x80 Background" . this.col["sidebar"], "🎙  SimpleStt")
+        window.SetFont("s8 norm c" . this.col["subtext"], "Segoe UI")
+        this.controls["brand_sub"] := window.AddText("x22 y54 w168 h20 +0x80 Background" . this.col["sidebar"], "Local dictation settings")
 
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        tabs := window.AddTab3("x18 y94 w850 h520 Buttons", ["⌨  General", "🎙  Audio", "✨  Output", "⚙  Advanced"])
-        this.controls["tabs"] := tabs
+        this.controls["nav_accent"] := window.AddText("x0 y112 w4 h40 Background" . this.col["accent"], "")
+        navLabels := ["   ⌨  General", "   🎙  Audio & models", "   ✨  Output", "   ⚙  Advanced"]
+        for i, label in navLabels {
+            window.SetFont("s10 norm c" . this.col["navText"], "Segoe UI")
+            item := window.AddText("x4 y" . (112 + (i - 1) * 46) . " w196 h40 +0x200 +0x80 +0x100 Background" . this.col["sidebar"], label)
+            item.OnEvent("Click", this.NavHandler(i))
+            this.controls["nav" . i] := item
+            this.navButtons.Push(item)
+        }
 
-        tabs.UseTab("⌨  General")
-        this.controls["general_hotkey_box"] := window.AddText("x34 y138 w810 h164 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["general_hotkey_box_title"] := window.AddText("x52 y150 w300 h22", "⌨  Recording shortcut")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["hotkey_enabled"] := window.AddCheckbox("x52 y168 w220", "Enable hold-to-record hotkey")
-        this.controls["record_hotkey_label"] := window.AddText("x52 y206 w150", "Keyboard shortcut")
-        this.controls["record_hotkey"] := window.AddEdit("x205 y201 w250 h25")
-        this.AddButton(window, "record_chord", "Record shortcut", "x466 y200 w130 h27", "CaptureHotkey")
-        this.controls["toggle_delivery_hotkey_label"] := window.AddText("x52 y242 w150", "Toggle typing/paste")
-        this.controls["toggle_delivery_hotkey"] := window.AddEdit("x205 y237 w250 h25")
-        this.AddButton(window, "record_toggle_chord", "Record toggle", "x466 y236 w130 h27", "CaptureToggleHotkey")
-        this.controls["capslock_behavior_label"] := window.AddText("x52 y277 w150", "Caps Lock behavior")
-        this.controls["capslock_behavior"] := window.AddDropDownList("x205 y272 w220", ["preserve_tap", "always_off"])
-        this.controls["hotkey_hint"] := window.AddText("x440 y266 w380 h44 c64748B", "Preserve tap keeps a quick Caps Lock press working normally.`nUse the toggle hotkey to switch between typing and paste.")
+        ; ---- content header ----
+        window.SetFont("s15 bold c" . this.col["text"], "Segoe UI Variable Display")
+        this.controls["page_title"] := window.AddText("x228 y22 w600 h30 +0x80 Background" . this.col["win"], "General")
+        window.SetFont("s9 norm c" . this.col["subtext"], "Segoe UI")
+        this.controls["page_sub"] := window.AddText("x228 y56 w600 h22 +0x80 Background" . this.col["win"], "")
 
-        this.controls["general_startup_box"] := window.AddText("x34 y320 w810 h132 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["general_startup_box_title"] := window.AddText("x52 y332 w300 h22", "🚀  Startup")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["start_with_windows"] := window.AddCheckbox("x52 y352 w320", "Start the SimpleStt shell when Windows starts")
-        this.controls["startup_hint"] := window.AddText("x52 y384 w720 h38 c64748B", "SimpleStt remains in the tray and only records while the shortcut is held.")
-        this.controls["general_tips_box"] := window.AddText("x34 y470 w810 h108 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["general_tips_box_title"] := window.AddText("x52 y482 w300 h22", "💡  Quick tips")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["general_tips"] := window.AddText("x52 y500 w748 h54 c64748B", "Tap Caps Lock quickly to preserve its normal behavior.`nHold the shortcut only while speaking.`nUse the tray icon to reopen settings anytime.")
+        ; ---- page 1: General ----
+        this.Panel("general_hotkey_box", 1)
+        this.PTitle("general_hotkey_box_title", 1, "⌨  Recording shortcut")
+        this.MkCheck("hotkey_enabled", 1, "Enable hold-to-record hotkey")
+        this.Field("record_hotkey_label", 1, "Keyboard shortcut")
+        this.MkDisplay("record_hotkey", 1)
+        this.AddButton("record_chord", "Record shortcut", "CaptureHotkey", false, 1)
+        this.Field("toggle_delivery_hotkey_label", 1, "Toggle typing/paste")
+        this.MkDisplay("toggle_delivery_hotkey", 1)
+        this.AddButton("record_toggle_chord", "Record toggle", "CaptureToggleHotkey", false, 1)
+        this.Field("capslock_behavior_label", 1, "Caps Lock behavior")
+        this.MkDrop("capslock_behavior", 1, ["preserve_tap", "always_off"])
+        this.Hint("hotkey_hint", 1, "Preserve tap keeps a quick Caps Lock press working normally.`nUse the toggle hotkey to switch between typing and paste.")
 
-        tabs.UseTab("🎙  Audio")
-        this.controls["audio_box"] := window.AddText("x34 y138 w810 h186 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["audio_box_title"] := window.AddText("x52 y150 w300 h22", "Microphone")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["audio_device_contains_label"] := window.AddText("x52 y169 w156", "Microphone")
-        this.controls["audio_device_contains"] := window.AddDropDownList("x210 y164 w390", ["Default microphone"])
+        this.Panel("general_startup_box", 1)
+        this.PTitle("general_startup_box_title", 1, "🚀  Startup")
+        this.MkCheck("start_with_windows", 1, "Start the SimpleStt shell when Windows starts")
+        this.Hint("startup_hint", 1, "SimpleStt remains in the tray and only records while the shortcut is held.")
+
+        this.Panel("general_appearance_box", 1)
+        this.PTitle("general_appearance_box_title", 1, "🎨  Appearance")
+        this.Field("ui_theme_label", 1, "Theme")
+        this.MkDrop("ui_theme", 1, ["auto", "light", "dark"])
+        this.controls["ui_theme"].OnEvent("Change", ObjBindMethod(this, "ThemeChanged"))
+        this.Hint("ui_theme_hint", 1, "Preview updates immediately. Press Save changes to keep the theme.")
+
+
+        ; ---- page 2: Audio & models ----
+        this.Panel("audio_box", 2)
+        this.PTitle("audio_box_title", 2, "🎙  Microphone")
+        this.Field("audio_device_contains_label", 2, "Microphone")
+        this.MkDrop("audio_device_contains", 2, ["Default microphone"])
         this.controls["audio_device_contains"].OnEvent("Change", ObjBindMethod(this, "ChooseInput"))
-        this.AddButton(window, "list_microphones", "Refresh devices", "x612 y163 w126 h27", "ListInputs")
-        this.controls["audio_gain_label"] := window.AddText("x52 y247 w156", "Input gain")
-        this.controls["audio_gain"] := window.AddEdit("x210 y242 w110 h25")
-        this.controls["audio_hint"] := window.AddText("x336 y244 w440 h34 c64748B", "Pick a device directly. Use 1.0 for normal volume unless recordings are consistently quiet or loud.")
+        this.AddButton("list_microphones", "Refresh devices", "ListInputs", false, 2)
+        this.Field("audio_gain_label", 2, "Input gain")
+        this.MkEdit("audio_gain", 2)
+        this.Hint("audio_hint", 2, "Pick a device directly. Use 1.0 for normal volume unless recordings are consistently quiet or loud.")
 
-        this.controls["model_box"] := window.AddText("x34 y342 w810 h214 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["model_box_title"] := window.AddText("x52 y354 w300 h22", "Speech model")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["selected_model_filename_label"] := window.AddText("x52 y374 w156", "Installed model")
-        this.controls["selected_model_filename"] := window.AddDropDownList("x210 y369 w390", ["No installed models found"])
+        this.Panel("model_box", 2)
+        this.PTitle("model_box_title", 2, "🧠  Speech model")
+        this.Field("selected_model_filename_label", 2, "Installed model")
+        this.MkDrop("selected_model_filename", 2, ["No installed models found"])
         this.controls["selected_model_filename"].OnEvent("Change", ObjBindMethod(this, "ChooseInstalledModel"))
-        this.AddButton(window, "refresh_models", "Refresh catalog", "x612 y368 w126 h27", "RefreshModels")
-        this.controls["model_list_label"] := window.AddText("x52 y415 w156", "Download catalog")
-        this.controls["model_list"] := window.AddDropDownList("x210 y410 w528", ["Load approved model list"])
+        this.AddButton("refresh_models", "Refresh catalog", "RefreshModels", false, 2)
+        this.Field("model_list_label", 2, "Download catalog")
+        this.MkDrop("model_list", 2, ["Load approved model list"])
         this.controls["model_list"].OnEvent("Change", ObjBindMethod(this, "ChooseCatalogModel"))
-        this.AddButton(window, "download_model", "Download model", "x52 y453 w140 h29", "DownloadModel")
-        this.AddButton(window, "test_model", "Run model test", "x202 y453 w140 h29", "TestModel")
-        this.controls["model_hint"] := window.AddText("x52 y496 w720 h34 c64748B", "Installed models are for loading now. The download catalog stays separate and highlights the recommendation for the selected device.")
+        this.AddButton("download_model", "Download model", "DownloadModel", false, 2)
+        this.AddButton("test_model", "Run model test", "TestModel", false, 2)
+        this.Hint("model_hint", 2, "Installed models are for loading now. The download catalog stays separate and highlights the recommendation for the selected device.")
 
-        tabs.UseTab("✨  Output")
-        this.controls["delivery_box"] := window.AddText("x34 y138 w810 h220 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["delivery_box_title"] := window.AddText("x52 y150 w300 h22", "✨  Transcript delivery")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["text_delivery_mode_label"] := window.AddText("x52 y170 w158", "Delivery method")
-        this.controls["text_delivery_mode"] := window.AddDropDownList("x212 y165 w250", ["type", "paste_ctrl_v", "paste_ctrl_shift_v"])
-        this.controls["typing_chunk_chars_label"] := window.AddText("x52 y211 w158", "Characters per chunk")
-        this.controls["typing_chunk_chars"] := window.AddEdit("x212 y206 w110 h25")
-        this.controls["typing_interval_ms_label"] := window.AddText("x352 y211 w150", "Interval, milliseconds")
-        this.controls["typing_interval_ms"] := window.AddEdit("x512 y206 w110 h25")
-        this.controls["trailing_space"] := window.AddCheckbox("x52 y252 w220", "Append a trailing space")
-        this.controls["remove_punctuation"] := window.AddCheckbox("x52 y286 w220", "Remove punctuation marks")
-        this.controls["lowercase_output"] := window.AddCheckbox("x292 y286 w250", "Convert output to lowercase")
-        this.controls["delivery_hint"] := window.AddText("x52 y318 w720 h44 c64748B", "Clipboard paste is the fastest option. Simulated typing is useful for applications that block paste.`nThe toggle hotkey can switch between typing and paste instantly.")
+        ; ---- page 3: Output ----
+        this.Panel("delivery_box", 3)
+        this.PTitle("delivery_box_title", 3, "✨  Transcript delivery")
+        this.Field("text_delivery_mode_label", 3, "Delivery method")
+        this.MkDrop("text_delivery_mode", 3, ["type", "paste_ctrl_v", "paste_ctrl_shift_v"])
+        this.Field("typing_chunk_chars_label", 3, "Characters per chunk")
+        this.MkEdit("typing_chunk_chars", 3)
+        this.Field("typing_interval_ms_label", 3, "Interval, milliseconds")
+        this.MkEdit("typing_interval_ms", 3)
+        this.MkCheck("trailing_space", 3, "Append a trailing space")
+        this.MkCheck("remove_punctuation", 3, "Remove punctuation marks")
+        this.MkCheck("lowercase_output", 3, "Convert output to lowercase")
+        this.Hint("delivery_hint", 3, "Clipboard paste is the fastest option. Simulated typing is useful for applications that block paste.`nThe toggle hotkey can switch between typing and paste instantly.")
 
-        this.controls["worker_box"] := window.AddText("x34 y378 w810 h142 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["worker_box_title"] := window.AddText("x52 y390 w300 h22", "⏱  Speech worker")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["idle_worker_timeout_secs_label"] := window.AddText("x52 y411 w180", "Idle timeout, seconds")
-        this.controls["idle_worker_timeout_secs"] := window.AddEdit("x234 y406 w110 h25")
-        this.controls["worker_shutdown_grace_ms_label"] := window.AddText("x382 y411 w180", "Shutdown grace, milliseconds")
-        this.controls["worker_shutdown_grace_ms"] := window.AddEdit("x566 y406 w110 h25")
-        this.controls["worker_hint"] := window.AddText("x52 y452 w720 h38 c64748B", "The worker is recycled automatically after model changes or after the idle timeout.")
+        this.Panel("worker_box", 3)
+        this.PTitle("worker_box_title", 3, "⏱  Speech worker")
+        this.Field("idle_worker_timeout_secs_label", 3, "Idle timeout, seconds")
+        this.MkEdit("idle_worker_timeout_secs", 3)
+        this.Field("worker_shutdown_grace_ms_label", 3, "Shutdown grace, milliseconds")
+        this.MkEdit("worker_shutdown_grace_ms", 3)
+        this.Hint("worker_hint", 3, "The worker is recycled automatically after model changes or after the idle timeout.")
 
-        tabs.UseTab("⚙  Advanced")
-        this.controls["logging_box"] := window.AddText("x34 y138 w810 h150 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["logging_box_title"] := window.AddText("x52 y150 w300 h22", "🔧  Diagnostics")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["log_level_label"] := window.AddText("x52 y171 w156", "Logging level")
-        this.controls["log_level"] := window.AddDropDownList("x210 y166 w180", ["minimal", "normal", "debug", "extreme"])
-        this.controls["diagnostic_overlay"] := window.AddCheckbox("x52 y211 w230", "Show diagnostic overlay notices")
-        this.controls["log_transcripts"] := window.AddCheckbox("x302 y211 w260", "Write transcripts to the diagnostic log")
-        this.controls["logging_hint"] := window.AddText("x52 y246 w720 h28 c64748B", "Leave diagnostics off for normal use. Enable them temporarily while troubleshooting.")
+        ; ---- page 4: Advanced ----
+        this.Panel("logging_box", 4)
+        this.PTitle("logging_box_title", 4, "🔧  Diagnostics")
+        this.Field("log_level_label", 4, "Logging level")
+        this.MkDrop("log_level", 4, ["minimal", "normal", "debug", "extreme"])
+        this.MkCheck("diagnostic_overlay", 4, "Show diagnostic overlay notices")
+        this.MkCheck("log_transcripts", 4, "Write transcripts to the diagnostic log")
+        this.Hint("logging_hint", 4, "Leave diagnostics off for normal use. Enable them temporarily while troubleshooting.")
 
-        this.controls["device_box"] := window.AddText("x34 y306 w810 h108 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["device_box_title"] := window.AddText("x52 y318 w300 h22", "⚡  Inference device")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["inference_device_label"] := window.AddText("x52 y341 w156", "Compute backend")
-        this.controls["inference_device"] := window.AddDropDownList("x210 y336 w220", ["nvidia_gpu", "cpu"])
+        this.Panel("device_box", 4)
+        this.PTitle("device_box_title", 4, "⚡  Inference device")
+        this.Field("inference_device_label", 4, "Compute backend")
+        this.MkDrop("inference_device", 4, ["nvidia_gpu", "cpu"])
         this.controls["inference_device"].OnEvent("Change", ObjBindMethod(this, "InferenceDeviceChanged"))
-        this.controls["device_hint"] := window.AddText("x448 y334 w360 h48 c64748B", "NVIDIA GPU is faster. CPU works without using VRAM.`nModel recommendations update when this changes.")
+        this.Hint("device_hint", 4, "NVIDIA GPU is faster. CPU works without using VRAM.`nModel recommendations update when this changes.")
 
-        this.controls["paths_box"] := window.AddText("x34 y430 w810 h170 BackgroundF8FAFC Border")
-        window.SetFont("s10 bold c334155", "Segoe UI Variable Text")
-        this.controls["paths_box_title"] := window.AddText("x52 y442 w300 h22", "📁  Runtime locations")
-        window.SetFont("s9 norm c1F2937", "Segoe UI Variable Text")
-        this.controls["parakeet_runtime_dir_label"] := window.AddText("x52 y464 w156", "Runtime directory")
-        this.controls["parakeet_runtime_dir"] := window.AddEdit("x210 y459 w570 h25")
-        this.controls["model_dir_label"] := window.AddText("x52 y506 w156", "Model directory")
-        this.controls["model_dir"] := window.AddEdit("x210 y501 w420 h25")
-        this.AddButton(window, "browse_models", "Browse", "x642 y500 w80 h27", "BrowseModelDir")
-        this.AddButton(window, "open_models", "Open folder", "x732 y500 w100 h27", "OpenModelDir")
-        this.controls["paths_hint"] := window.AddText("x52 y540 w720 h42 c64748B", "Paths here are shown as absolute locations so portable, installed, and dev builds do not accidentally share the wrong runtime or model folder.")
+        this.Panel("paths_box", 4)
+        this.PTitle("paths_box_title", 4, "📁  Runtime locations")
+        this.Field("parakeet_runtime_dir_label", 4, "Runtime directory")
+        this.MkEdit("parakeet_runtime_dir", 4)
+        this.Field("model_dir_label", 4, "Model directory")
+        this.MkEdit("model_dir", 4)
+        this.AddButton("browse_models", "Browse", "BrowseModelDir", false, 4)
+        this.AddButton("open_models", "Open folder", "OpenModelDir", false, 4)
+        this.Hint("paths_hint", 4, "Paths here are shown as absolute locations so portable, installed, and dev builds do not accidentally share the wrong runtime or model folder.")
 
-        tabs.UseTab()
-        this.controls["footer_line"] := window.AddText("x18 y624 w850 h1 0x10")
-        this.controls["status"] := window.AddText("x20 y640 w500 h25 c475569", "✓ Ready")
-        this.AddButton(window, "save", "✓ Save changes", "x560 y635 w124 h30 Default", "Save")
-        this.AddButton(window, "reload", "↻ Reload", "x694 y635 w92 h30", "Reload")
-        this.AddButton(window, "open_log", "📄 Open log", "x796 y635 w102 h30", "OpenLatestLog", true)
+        ; ---- footer ----
+        this.controls["footer_line"] := window.AddText("x0 y0 w100 h1 Background" . this.col["border"], "")
+        window.SetFont("s9 norm c" . this.col["subtext"], "Segoe UI")
+        this.controls["status"] := window.AddText("x0 y0 w400 h22 +0x80 Background" . this.col["win"], "✓ Ready")
+        this.AddButton("save", "✓  Save changes", "Save", false, 0, "accent")
+        this.AddButton("reload", "↻  Reload", "Reload", false, 0, "normal")
+        this.AddButton("open_log", "📄  Open log", "OpenLatestLog", true, 0, "normal")
 
+        this.controls["tabs"] := SettingsNav(this)
+
+        this.ApplyTitleBar()
+        this.loadingControls := true
         this.LoadControls()
-        window.Show("w900 h700")
-        this.Layout(900, 700)
-        this.ListInputs()
-        this.ListModels()
+        this.loadingControls := false
+        this.Layout(this.defaultWidth, this.defaultHeight)
+        this.ShowPage(1)
+        window.Show("w" . this.defaultWidth . " h" . this.defaultHeight)
+        this.RefreshVisibleControls()
+        if refreshLists {
+            this.ListInputs()
+            this.ListModels()
+        }
     }
 
-    AddButton(window, key, label, options, method, appMethod := false) {
-        button := window.AddButton(options, label)
+    ; ---- theme detection and palette ----
+
+    ResolveDark() {
+        if this.themeMode = "dark"
+            return true
+        if this.themeMode = "light"
+            return false
+        try {
+            value := RegRead("HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme")
+            return value = 0
+        }
+        return false
+    }
+
+    BuildPalette() {
+        if this.dark {
+            this.col := Map(
+                "win", "1B1B1F",
+                "sidebar", "202024",
+                "card", "28282E",
+                "border", "3A3A42",
+                "text", "ECECF1",
+                "subtext", "9A9AA5",
+                "accent", "3B82F6",
+                "navText", "C2C2CC",
+                "navActiveBg", "31313A",
+                "input", "2E2E36")
+        } else {
+            this.col := Map(
+                "win", "F3F5F8",
+                "sidebar", "FFFFFF",
+                "card", "FFFFFF",
+                "border", "E2E8F0",
+                "text", "1F2933",
+                "subtext", "64748B",
+                "accent", "2563EB",
+                "navText", "475569",
+                "navActiveBg", "EAF1FB",
+                "input", "FFFFFF")
+        }
+    }
+
+    ; ---- Windows theming hooks ----
+
+    ApplyAppMode() {
+        try {
+            ux := DllCall("GetModuleHandle", "str", "uxtheme", "ptr")
+            if !ux
+                ux := DllCall("LoadLibrary", "str", "uxtheme.dll", "ptr")
+            if !ux
+                return
+            setPref := DllCall("GetProcAddress", "ptr", ux, "ptr", 135, "ptr")
+            flush := DllCall("GetProcAddress", "ptr", ux, "ptr", 136, "ptr")
+            preferred := this.themeMode = "dark" ? 2 : this.themeMode = "light" ? 3 : 0
+            if setPref
+                DllCall(setPref, "int", preferred)
+            if flush
+                DllCall(flush)
+        }
+    }
+
+    ApplyTitleBar() {
+        hwnd := this.gui.Hwnd
+        buf := Buffer(4, 0)
+        NumPut("int", this.dark ? 1 : 0, buf)
+        for attr in [20, 19] {
+            try DllCall("dwmapi\DwmSetWindowAttribute", "ptr", hwnd, "int", attr, "ptr", buf, "int", 4)
+        }
+    }
+
+    ThemeCtrl(ctrl, darkTheme) {
+        theme := this.dark ? darkTheme : "Explorer"
+        try DllCall("uxtheme\SetWindowTheme", "ptr", ctrl.Hwnd, "wstr", theme, "ptr", 0)
+    }
+
+    ; ---- control factories (positions are assigned later in Layout) ----
+
+    Reg(key, page, ctrl) {
+        this.controls[key] := ctrl
+        this.RegPage(key, page)
+    }
+
+    RegPage(key, page) {
+        if page = 0
+            return
+        if !this.pages.Has(page)
+            this.pages[page] := []
+        this.pages[page].Push(key)
+    }
+
+    Panel(key, page) {
+        opt := "x0 y0 w300 h100 Background" . this.col["card"] . (this.dark ? "" : " Border")
+        ctrl := this.gui.AddText(opt, "")
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    PTitle(key, page, text) {
+        this.gui.SetFont("s10 bold c" . this.col["text"], "Segoe UI Variable Display")
+        ctrl := this.gui.AddText("x0 y0 w300 h22 +0x80 Background" . this.col["card"], text)
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    Field(key, page, text) {
+        this.gui.SetFont("s9 norm c" . this.col["text"], "Segoe UI")
+        ctrl := this.gui.AddText("x0 y0 w150 h22 Background" . this.col["card"], text)
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    Hint(key, page, text) {
+        this.gui.SetFont("s9 norm c" . this.col["subtext"], "Segoe UI")
+        ctrl := this.gui.AddText("x0 y0 w300 h30 Background" . this.col["card"], text)
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    MkEdit(key, page) {
+        this.gui.SetFont("s9 norm c" . this.col["text"], "Segoe UI")
+        ; Use a flat, thin bordered edit field in both themes so text inputs
+        ; read as fields instead of blending into the card background. ES_CENTER
+        ; keeps short values visually balanced inside wide fields.
+        opts := "x0 y0 w120 h25 -E0x200 +0x800000 +0x1 Background" . this.col["input"]
+        ctrl := this.gui.AddEdit(opts)
+        this.ThemeCtrl(ctrl, "DarkMode_Explorer")
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    MkDisplay(key, page) {
+        this.gui.SetFont("s9 norm c" . this.col["text"], "Segoe UI")
+        ; Hotkey fields are changed through the recorder buttons. Text controls
+        ; allow true horizontal and vertical centering, unlike native Edit.
+        ctrl := this.gui.AddText("x0 y0 w120 h25 +0x200 Center Border Background" . this.col["input"], "")
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    MkDrop(key, page, items) {
+        this.gui.SetFont("s9 norm c" . this.col["text"], "Segoe UI")
+        ctrl := this.gui.AddDropDownList("x0 y0 w200 Background" . this.col["input"], items)
+        this.ThemeCtrl(ctrl, "DarkMode_CFD")
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    MkCheck(key, page, text) {
+        this.gui.SetFont("s9 norm c" . this.col["text"], "Segoe UI")
+        ctrl := this.gui.AddCheckbox("x0 y0 w260 h22 Background" . this.col["card"], text)
+        this.ThemeCtrl(ctrl, "DarkMode_Explorer")
+        this.Reg(key, page, ctrl)
+        return ctrl
+    }
+
+    AddButton(key, label, method, appMethod := false, page := 0, style := "normal") {
         callback := appMethod ? ObjBindMethod(this.app, method) : ObjBindMethod(this, method)
+        this.buttonCallbacks[key] := callback
+        this.gui.SetFont("s9 norm c" . this.col["text"], "Segoe UI")
+        ; Native Win32 buttons do not theme cleanly in dark mode and look too
+        ; different between themes. Use one flat clickable Text-button style in
+        ; both light and dark modes, with a thin border so actions remain clear.
+        bg := style = "accent" ? this.col["input"] : this.col["input"]
+        button := this.gui.AddText("x0 y0 w120 h28 +0x100 +0x200 Center Border Background" . bg, label)
         button.OnEvent("Click", callback)
         this.controls[key] := button
         this.buttons[key] := button
+        this.RegPage(key, page)
         return button
+    }
+
+    ; ---- page switching ----
+
+    RefreshVisibleControls() {
+        for _, ctrl in this.controls {
+            if IsObject(ctrl) && ctrl.HasProp("Hwnd")
+                try DllCall("user32\InvalidateRect", "ptr", ctrl.Hwnd, "ptr", 0, "int", 1)
+        }
+        try DllCall("user32\RedrawWindow", "ptr", this.gui.Hwnd, "ptr", 0, "ptr", 0, "uint", 0x0101)
+    }
+
+    ; Returns a click handler bound to a specific page index. A fat-arrow
+    ; closure created directly in the build loop would capture the loop
+    ; variable by reference, so every nav item would share the final value
+    ; (Advanced). Binding through a parameter gives each handler its own index.
+    NavHandler(index) {
+        return (*) => this.ShowPage(index)
+    }
+
+    ShowPage(index) {
+        if !IsObject(this.gui)
+            return
+        if index < 1 || index > 4
+            index := 1
+        this.activePage := index
+        titles := ["General", "Audio & models", "Output", "Advanced"]
+        subs := [
+            "Recording shortcut, Caps Lock behavior, and startup.",
+            "Microphone input and the speech recognition model.",
+            "How transcripts are delivered and the speech worker.",
+            "Diagnostics, inference device, and runtime locations."]
+        this.controls["page_title"].Text := titles[index]
+        this.controls["page_sub"].Text := subs[index]
+        for pageNumber, keys in this.pages
+            for key in keys
+                this.controls[key].Visible := (pageNumber = index)
+        for i, btn in this.navButtons {
+            active := (i = index)
+            btn.Opt("Background" . (active ? this.col["navActiveBg"] : this.col["sidebar"]))
+            btn.SetFont("c" . (active ? this.col["text"] : this.col["navText"]))
+            DllCall("user32\InvalidateRect", "ptr", btn.Hwnd, "ptr", 0, "int", 1)
+        }
+        this.controls["nav_accent"].Move(0, 112 + (index - 1) * 46, 4, 40)
+        this.RefreshVisibleControls()
     }
 
     OnSize(guiObj, minMax, width, height) {
@@ -184,76 +440,123 @@ class SettingsGui {
             return
         width := Max(width, this.minWidth)
         height := Max(height, this.minHeight)
-        margin := 18
-        inner := width - (margin * 2)
-        pageW := Min(inner, 1040)
-        pageX := Floor((width - pageW) / 2)
-        tabTop := 94
-        footerHeight := 72
-        tabHeight := height - tabTop - footerHeight - 8
-        contentX := pageX + 16
-        contentW := pageW - 32
+        sidebarW := 204
+        footerH := 64
+        footerY := height - footerH
+        pad := 24
+
+        this.controls["sidebar"].Move(0, 0, sidebarW, footerY)
+        this.controls["sidebar_divider"].Move(sidebarW - 1, 0, 1, footerY)
+        this.controls["brand"].Move(20, 22, sidebarW - 34, 30)
+        this.controls["brand_sub"].Move(22, 54, sidebarW - 36, 20)
+        for i, btn in this.navButtons
+            btn.Move(4, 112 + (i - 1) * 46, sidebarW - 8, 40)
+        this.controls["nav_accent"].Move(0, 112 + (this.activePage - 1) * 46, 4, 40)
+
+        contentX := sidebarW + pad
+        contentW := width - contentX - pad
         right := contentX + contentW
         fieldX := contentX + 176
-        buttonW := 126
+        ; Second column for two-up rows, scaled to the available width so the
+        ; right-hand field always stays inside the card at the minimum size.
+        col2X := contentX + Max(330, Floor(contentW / 2))
+        col2FieldX := col2X + 184
 
-        this.controls["title"].Move(pageX, 14, pageW - 12, 30)
-        this.controls["subtitle"].Move(pageX + 2, 48, pageW - 12, 30)
-        this.controls["header_line"].Move(pageX, 80, pageW, 1)
-        this.controls["tabs"].Move(pageX, tabTop, pageW, tabHeight)
-        footerY := height - footerHeight + 8
-        this.controls["footer_line"].Move(margin, footerY, inner, 1)
-        this.controls["status"].Move(20, footerY + 17, Max(250, width - 430), 25)
-        this.controls["save"].Move(width - 362, footerY + 11, 124, 30)
-        this.controls["reload"].Move(width - 228, footerY + 11, 92, 30)
-        this.controls["open_log"].Move(width - 126, footerY + 11, 108, 30)
+        this.controls["page_title"].Move(contentX, 22, contentW, 30)
+        this.controls["page_sub"].Move(contentX, 56, contentW, 22)
 
-        this.controls["general_hotkey_box"].Move(contentX, 138, contentW, 164)
-        this.controls["general_hotkey_box_title"].Move(contentX + 18, 150, contentW - 36, 22)
-        this.controls["record_hotkey"].Move(fieldX, 201, Max(200, contentW - 528), 25)
-        this.controls["record_chord"].Move(right - 150, 200, 132, 27)
-        this.controls["toggle_delivery_hotkey"].Move(fieldX, 237, Max(200, contentW - 528), 25)
-        this.controls["record_toggle_chord"].Move(right - 150, 236, 132, 27)
-        this.controls["hotkey_hint"].Move(fieldX + 235, 266, Max(210, contentW - 420), 44)
-        this.controls["general_startup_box"].Move(contentX, 320, contentW, 132)
-        this.controls["general_startup_box_title"].Move(contentX + 18, 332, contentW - 36, 22)
-        this.controls["startup_hint"].Move(contentX + 18, 384, contentW - 36, 38)
-        this.controls["general_tips_box"].Move(contentX, 470, contentW, 108)
-        this.controls["general_tips_box_title"].Move(contentX + 18, 482, contentW - 36, 22)
-        this.controls["general_tips"].Move(contentX + 18, 500, contentW - 36, 54)
+        this.controls["footer_line"].Move(0, footerY, width, 1)
+        this.controls["status"].Move(contentX, footerY + 21, Max(200, width - 380 - contentX), 22)
+        this.controls["save"].Move(width - 360, footerY + 16, 132, 32)
+        this.controls["reload"].Move(width - 214, footerY + 16, 92, 32)
+        this.controls["open_log"].Move(width - 112, footerY + 16, 96, 32)
 
-        this.controls["audio_box"].Move(contentX, 138, contentW, 186)
-        this.controls["audio_box_title"].Move(contentX + 18, 150, contentW - 36, 22)
-        this.controls["audio_device_contains"].Move(fieldX, 164, Max(210, contentW - 366), 120)
-        this.controls["list_microphones"].Move(right - 144, 163, buttonW, 27)
-        this.controls["audio_hint"].Move(fieldX + 126, 244, Max(240, contentW - 320), 34)
-        this.controls["model_box"].Move(contentX, 342, contentW, 214)
-        this.controls["model_box_title"].Move(contentX + 18, 354, contentW - 36, 22)
-        this.controls["selected_model_filename"].Move(fieldX, 369, Max(210, contentW - 366), 120)
-        this.controls["refresh_models"].Move(right - 144, 368, buttonW, 27)
-        this.controls["model_list"].Move(fieldX, 410, Max(210, contentW - 366), 120)
-        this.controls["model_hint"].Move(contentX + 18, 496, contentW - 36, 34)
+        ; ---- page 1: General ----
+        this.controls["general_hotkey_box"].Move(contentX, 96, contentW, 220)
+        this.controls["general_hotkey_box_title"].Move(contentX + 18, 108, contentW - 36, 22)
+        this.controls["hotkey_enabled"].Move(contentX + 18, 138, 300, 22)
+        this.controls["record_hotkey_label"].Move(contentX + 18, 178, 150, 22)
+        this.controls["record_hotkey"].Move(fieldX, 174, Max(180, contentW - 360), 25)
+        this.controls["record_chord"].Move(right - 150, 173, 132, 27)
+        this.controls["toggle_delivery_hotkey_label"].Move(contentX + 18, 214, 150, 22)
+        this.controls["toggle_delivery_hotkey"].Move(fieldX, 210, Max(180, contentW - 360), 25)
+        this.controls["record_toggle_chord"].Move(right - 150, 209, 132, 27)
+        this.controls["capslock_behavior_label"].Move(contentX + 18, 250, 150, 22)
+        this.controls["capslock_behavior"].Move(fieldX, 246, 220, 120)
+        this.controls["hotkey_hint"].Move(contentX + 18, 280, contentW - 36, 30)
+        this.controls["general_startup_box"].Move(contentX, 336, contentW, 96)
+        this.controls["general_startup_box_title"].Move(contentX + 18, 348, contentW - 36, 22)
+        this.controls["start_with_windows"].Move(contentX + 18, 376, contentW - 36, 22)
+        this.controls["startup_hint"].Move(contentX + 18, 402, contentW - 36, 22)
+        this.controls["general_appearance_box"].Move(contentX, 452, contentW, 104)
+        this.controls["general_appearance_box_title"].Move(contentX + 18, 464, contentW - 36, 22)
+        this.controls["ui_theme_label"].Move(contentX + 18, 496, 150, 22)
+        this.controls["ui_theme"].Move(fieldX, 492, 160, 120)
+        this.controls["ui_theme_hint"].Move(contentX + 18, 526, contentW - 36, 22)
 
-        this.controls["delivery_box"].Move(contentX, 138, contentW, 220)
-        this.controls["delivery_box_title"].Move(contentX + 18, 150, contentW - 36, 22)
-        this.controls["delivery_hint"].Move(contentX + 18, 318, contentW - 36, 30)
-        this.controls["worker_box"].Move(contentX, 378, contentW, 142)
-        this.controls["worker_box_title"].Move(contentX + 18, 390, contentW - 36, 22)
-        this.controls["worker_hint"].Move(contentX + 18, 452, contentW - 36, 38)
+        ; ---- page 2: Audio & models ----
+        this.controls["audio_box"].Move(contentX, 96, contentW, 172)
+        this.controls["audio_box_title"].Move(contentX + 18, 108, contentW - 36, 22)
+        this.controls["audio_device_contains_label"].Move(contentX + 18, 142, 150, 22)
+        this.controls["audio_device_contains"].Move(fieldX, 138, Max(200, contentW - 360), 200)
+        this.controls["list_microphones"].Move(right - 150, 137, 132, 27)
+        this.controls["audio_gain_label"].Move(contentX + 18, 184, 150, 22)
+        this.controls["audio_gain"].Move(fieldX, 180, 110, 25)
+        this.controls["audio_hint"].Move(contentX + 18, 214, contentW - 36, 34)
+        this.controls["model_box"].Move(contentX, 288, contentW, 224)
+        this.controls["model_box_title"].Move(contentX + 18, 300, contentW - 36, 22)
+        this.controls["selected_model_filename_label"].Move(contentX + 18, 334, 150, 22)
+        this.controls["selected_model_filename"].Move(fieldX, 330, Max(200, contentW - 360), 200)
+        this.controls["refresh_models"].Move(right - 150, 329, 132, 27)
+        this.controls["model_list_label"].Move(contentX + 18, 374, 150, 22)
+        this.controls["model_list"].Move(fieldX, 370, contentW - 208, 200)
+        this.controls["download_model"].Move(contentX + 18, 410, 150, 30)
+        this.controls["test_model"].Move(contentX + 180, 410, 150, 30)
+        this.controls["model_hint"].Move(contentX + 18, 452, contentW - 36, 44)
 
-        this.controls["logging_box"].Move(contentX, 138, contentW, 150)
-        this.controls["logging_box_title"].Move(contentX + 18, 150, contentW - 36, 22)
-        this.controls["logging_hint"].Move(contentX + 18, 246, contentW - 36, 28)
-        this.controls["device_box"].Move(contentX, 306, contentW, 108)
-        this.controls["device_box_title"].Move(contentX + 18, 318, contentW - 36, 22)
-        this.controls["device_hint"].Move(fieldX + 238, 334, Max(220, contentW - 430), 48)
-        this.controls["paths_box"].Move(contentX, 430, contentW, 170)
-        this.controls["paths_box_title"].Move(contentX + 18, 442, contentW - 36, 22)
-        this.controls["parakeet_runtime_dir"].Move(fieldX, 459, contentW - 212, 25)
-        this.controls["model_dir"].Move(fieldX, 501, Max(180, contentW - 372), 25)
-        this.controls["browse_models"].Move(right - 190, 500, 80, 27)
-        this.controls["open_models"].Move(right - 100, 500, 82, 27)
-        this.controls["paths_hint"].Move(contentX + 18, 540, contentW - 36, 42)
+        ; ---- page 3: Output ----
+        this.controls["delivery_box"].Move(contentX, 96, contentW, 236)
+        this.controls["delivery_box_title"].Move(contentX + 18, 108, contentW - 36, 22)
+        this.controls["text_delivery_mode_label"].Move(contentX + 18, 142, 158, 22)
+        this.controls["text_delivery_mode"].Move(fieldX, 138, 250, 120)
+        this.controls["typing_chunk_chars_label"].Move(contentX + 18, 182, 158, 22)
+        this.controls["typing_chunk_chars"].Move(fieldX, 178, 110, 25)
+        this.controls["typing_interval_ms_label"].Move(col2X, 182, 180, 22)
+        this.controls["typing_interval_ms"].Move(col2FieldX, 178, 110, 25)
+        this.controls["trailing_space"].Move(contentX + 18, 222, contentW - 36, 22)
+        this.controls["remove_punctuation"].Move(contentX + 18, 256, col2X - contentX - 18, 22)
+        this.controls["lowercase_output"].Move(col2X, 256, right - col2X - 18, 22)
+        this.controls["delivery_hint"].Move(contentX + 18, 292, contentW - 36, 34)
+        this.controls["worker_box"].Move(contentX, 352, contentW, 150)
+        this.controls["worker_box_title"].Move(contentX + 18, 364, contentW - 36, 22)
+        this.controls["idle_worker_timeout_secs_label"].Move(contentX + 18, 398, 158, 22)
+        this.controls["idle_worker_timeout_secs"].Move(fieldX, 394, 110, 25)
+        this.controls["worker_shutdown_grace_ms_label"].Move(col2X, 398, 180, 22)
+        this.controls["worker_shutdown_grace_ms"].Move(col2FieldX, 394, 110, 25)
+        this.controls["worker_hint"].Move(contentX + 18, 438, contentW - 36, 34)
+
+        ; ---- page 4: Advanced ----
+        this.controls["logging_box"].Move(contentX, 96, contentW, 150)
+        this.controls["logging_box_title"].Move(contentX + 18, 108, contentW - 36, 22)
+        this.controls["log_level_label"].Move(contentX + 18, 142, 156, 22)
+        this.controls["log_level"].Move(fieldX, 138, 180, 120)
+        this.controls["diagnostic_overlay"].Move(contentX + 18, 182, col2X - contentX - 18, 22)
+        this.controls["log_transcripts"].Move(col2X, 182, right - col2X - 18, 22)
+        this.controls["logging_hint"].Move(contentX + 18, 216, contentW - 36, 22)
+        this.controls["device_box"].Move(contentX, 266, contentW, 124)
+        this.controls["device_box_title"].Move(contentX + 18, 278, contentW - 36, 22)
+        this.controls["inference_device_label"].Move(contentX + 18, 312, 156, 22)
+        this.controls["inference_device"].Move(fieldX, 308, 220, 120)
+        this.controls["device_hint"].Move(contentX + 18, 348, contentW - 36, 34)
+        this.controls["paths_box"].Move(contentX, 410, contentW, 168)
+        this.controls["paths_box_title"].Move(contentX + 18, 422, contentW - 36, 22)
+        this.controls["parakeet_runtime_dir_label"].Move(contentX + 18, 452, 156, 22)
+        this.controls["parakeet_runtime_dir"].Move(fieldX, 448, contentW - 212, 25)
+        this.controls["model_dir_label"].Move(contentX + 18, 492, 156, 22)
+        this.controls["model_dir"].Move(fieldX, 488, Max(180, contentW - 392), 25)
+        this.controls["browse_models"].Move(right - 190, 487, 80, 27)
+        this.controls["open_models"].Move(right - 100, 487, 82, 27)
+        this.controls["paths_hint"].Move(contentX + 18, 528, contentW - 36, 40)
     }
 
     Hide(*) {
@@ -264,8 +567,8 @@ class SettingsGui {
     LoadControls() {
         config := this.app.config
         this.controls["hotkey_enabled"].Value := config.Bool("hotkey_enabled")
-        this.controls["record_hotkey"].Value := config.Get("record_hotkey")
-        this.controls["toggle_delivery_hotkey"].Value := config.Get("toggle_delivery_hotkey", "CapsLock+A")
+        this.controls["record_hotkey"].Text := config.Get("record_hotkey")
+        this.controls["toggle_delivery_hotkey"].Text := config.Get("toggle_delivery_hotkey", "CapsLock+A")
         this.ChooseText(this.controls["capslock_behavior"], config.Get("capslock_behavior", "preserve_tap"))
         this.controls["audio_gain"].Value := config.Get("audio_gain", "1")
         this.ChooseText(this.controls["text_delivery_mode"], config.Get("text_delivery_mode", "paste_ctrl_v"))
@@ -281,6 +584,7 @@ class SettingsGui {
         this.controls["diagnostic_overlay"].Value := config.Bool("diagnostic_overlay")
         this.controls["log_transcripts"].Value := config.Bool("log_transcripts")
         this.ChooseText(this.controls["inference_device"], config.Get("inference_device", "nvidia_gpu"))
+        this.ChooseText(this.controls["ui_theme"], config.Get("ui_theme", "auto"))
         this.controls["parakeet_runtime_dir"].Value := config.Get("parakeet_runtime_dir_resolved", config.Get("parakeet_runtime_dir"))
         this.controls["model_dir"].Value := config.Get("model_dir_resolved", config.Get("model_dir"))
     }
@@ -328,16 +632,40 @@ class SettingsGui {
     InferenceDeviceChanged(*) {
         device := this.controls["inference_device"].Text
         if device = "cpu"
-            if device = "cpu"
             this.controls["device_hint"].Text := "CPU avoids VRAM use."
         else
             this.controls["device_hint"].Text := "NVIDIA GPU is faster."
         this.ListModels()
     }
 
+    ThemeChanged(*) {
+        if this.loadingControls
+            return
+        mode := this.controls["ui_theme"].Text
+        if mode = ""
+            return
+        this.themeMode := mode
+        this.app.config.Set("ui_theme", mode)
+        SetTimer(ObjBindMethod(this, "ReopenAfterThemeChange"), -1)
+    }
+
+    ReopenAfterThemeChange(*) {
+        mode := this.themeMode
+        if IsObject(this.gui) {
+            this.gui.Destroy()
+            this.gui := ""
+        }
+        this.themeMode := mode
+        this.Open(false)
+        this.ChooseText(this.controls["ui_theme"], mode)
+        this.SetStatus("Theme preview applied — press Save changes to keep it")
+    }
+
     Save(*) {
         config := this.app.config
-        for key in ["record_hotkey", "toggle_delivery_hotkey", "audio_gain", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
+        config.Set("record_hotkey", this.controls["record_hotkey"].Text)
+        config.Set("toggle_delivery_hotkey", this.controls["toggle_delivery_hotkey"].Text)
+        for key in ["audio_gain", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
             config.Set(key, this.controls[key].Value)
         for key in ["hotkey_enabled", "trailing_space", "remove_punctuation", "lowercase_output", "start_with_windows", "diagnostic_overlay", "log_transcripts"]
             config.Set(key, SimpleSttBoolText(this.controls[key].Value))
@@ -350,6 +678,7 @@ class SettingsGui {
         config.Set("text_delivery_mode", this.controls["text_delivery_mode"].Text)
         config.Set("log_level", this.controls["log_level"].Text)
         config.Set("inference_device", this.controls["inference_device"].Text)
+        config.Set("ui_theme", this.controls["ui_theme"].Text)
         try {
             HotkeySpec.Parse(config.Get("record_hotkey"))
             HotkeySpec.Parse(config.Get("toggle_delivery_hotkey"))
@@ -367,7 +696,9 @@ class SettingsGui {
     Reload(*) {
         try {
             this.app.config.LoadSync()
+            this.loadingControls := true
             this.LoadControls()
+            this.loadingControls := false
             this.SetStatus("Settings reloaded")
         } catch Error as err {
             this.SetStatus("Reload failed: " . err.Message)
@@ -393,12 +724,12 @@ class SettingsGui {
     }
 
     HotkeyCaptured(label) {
-        this.controls["record_hotkey"].Value := label
+        this.controls["record_hotkey"].Text := label
         this.SetStatus("Recorded " . label . ". Press Save to apply it.")
     }
 
     ToggleHotkeyCaptured(label) {
-        this.controls["toggle_delivery_hotkey"].Value := label
+        this.controls["toggle_delivery_hotkey"].Text := label
         this.SetStatus("Recorded toggle hotkey " . label . ". Press Save to apply it.")
     }
 

@@ -7,6 +7,7 @@ class TrayController {
     }
 
     Rebuild() {
+        this.ApplyMenuTheme()
         menu := A_TrayMenu
         menu.Delete()
         menu.Add("Open Settings", ObjBindMethod(this.app, "OpenSettings"))
@@ -21,5 +22,36 @@ class TrayController {
         menu.Add("Test Model", ObjBindMethod(this.app, "TestModel"))
         menu.Add()
         menu.Add("Exit", (*) => ExitApp())
+        this.ApplyMenuColor(menu)
+    }
+
+    ApplyMenuTheme() {
+        mode := this.app.config.Get("ui_theme", "auto")
+        preferred := mode = "dark" ? 2 : mode = "light" ? 3 : 0
+        try {
+            ux := DllCall("GetModuleHandle", "str", "uxtheme", "ptr")
+            if !ux
+                ux := DllCall("LoadLibrary", "str", "uxtheme.dll", "ptr")
+            if !ux
+                return
+            setPref := DllCall("GetProcAddress", "ptr", ux, "ptr", 135, "ptr")
+            flush := DllCall("GetProcAddress", "ptr", ux, "ptr", 136, "ptr")
+            if setPref
+                DllCall(setPref, "int", preferred)
+            if flush
+                DllCall(flush)
+        }
+    }
+
+    ApplyMenuColor(menu) {
+        mode := this.app.config.Get("ui_theme", "auto")
+        try {
+            if mode = "light"
+                menu.SetColor("FFFFFF", true)
+            else if mode = "dark"
+                menu.SetColor("2B2B2B", true)
+            else
+                menu.SetColor("Default", true)
+        }
     }
 }

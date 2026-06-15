@@ -123,6 +123,18 @@ class GuiLoop {
         this.Assert(this.HasIpcCall("list-inputs"), "list_microphones invoked IPC")
         this.Assert(this.HasIpcCall("refresh-models"), "refresh_models invoked IPC")
         this.Assert(this.HasIpcCall("download-model --filename"), "download_model invoked IPC")
+        this.ExerciseThemePreview()
+    }
+
+    ExerciseThemePreview() {
+        this.settings.controls["tabs"].Choose(1)
+        Sleep(100)
+        this.settings.ChooseText(this.settings.controls["ui_theme"], "light")
+        this.settings.ThemeChanged()
+        Sleep(300)
+        status := this.settings.controls["status"].Text
+        this.Assert(InStr(status, "Theme preview applied"), "theme dropdown live preview status")
+        this.Assert(this.settings.controls["ui_theme"].Text = "light", "theme dropdown keeps preview choice")
     }
 
     ClickButton(key, tabIndex := 0) {
@@ -130,8 +142,12 @@ class GuiLoop {
             this.settings.controls["tabs"].Choose(tabIndex)
             Sleep(100)
         }
-        control := this.settings.controls[key]
-        DllCall("user32\SendMessage", "ptr", control.Hwnd, "uint", 0x00F5, "ptr", 0, "ptr", 0)
+        if this.settings.buttonCallbacks.Has(key) {
+            this.settings.buttonCallbacks[key].Call()
+        } else {
+            control := this.settings.controls[key]
+            DllCall("user32\SendMessage", "ptr", control.Hwnd, "uint", 0x00F5, "ptr", 0, "ptr", 0)
+        }
         Sleep(75)
     }
 

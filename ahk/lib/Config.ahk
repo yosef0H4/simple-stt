@@ -22,7 +22,7 @@ class ConfigStore {
     SaveSync() {
         input := SimpleSttTempFile("config-save-input")
         output := SimpleSttTempFile("config-save-output")
-        keys := ["hotkey_enabled", "record_hotkey", "toggle_delivery_hotkey", "capslock_behavior", "audio_device_contains", "audio_gain", "typing_chunk_chars", "typing_interval_ms", "trailing_space", "text_delivery_mode", "remove_punctuation", "lowercase_output", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "start_with_windows", "log_level", "diagnostic_overlay", "log_transcripts", "inference_device", "parakeet_runtime_dir", "model_dir", "selected_model_filename"]
+        keys := ["hotkey_enabled", "record_hotkey", "toggle_delivery_hotkey", "capslock_behavior", "audio_device_contains", "audio_gain", "typing_chunk_chars", "typing_interval_ms", "trailing_space", "text_delivery_mode", "remove_punctuation", "lowercase_output", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "start_with_windows", "log_level", "diagnostic_overlay", "log_transcripts", "inference_device", "ui_theme", "parakeet_runtime_dir", "model_dir", "selected_model_filename"]
         text := ""
         for key in keys
             text .= TabProtocol.Escape(key) . "`t" . TabProtocol.Escape(this.Get(key, "")) . "`n"

@@ -7,6 +7,7 @@ use simple_stt::common::shell_protocol::{
 };
 use simple_stt::config::{
     replace_file_atomic, AppConfig, CapsLockBehavior, InferenceDevice, LogLevel, TextDeliveryMode,
+    UiTheme,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -240,9 +241,10 @@ fn config_show() -> Result<ShellResponse> {
         }
         .into(),
     );
-    response
-        .values
-        .insert("audio_device_contains".into(), config.audio_device_contains.clone());
+    response.values.insert(
+        "audio_device_contains".into(),
+        config.audio_device_contains.clone(),
+    );
     response
         .values
         .insert("audio_gain".into(), config.audio_gain.to_string());
@@ -307,6 +309,9 @@ fn config_show() -> Result<ShellResponse> {
         "inference_device".into(),
         config.inference_device.as_str().into(),
     );
+    response
+        .values
+        .insert("ui_theme".into(), config.ui_theme.as_str().into());
     response.values.insert(
         "parakeet_runtime_dir".into(),
         config.parakeet_runtime_dir_path().display().to_string(),
@@ -335,10 +340,9 @@ fn config_show() -> Result<ShellResponse> {
         "runtime_root".into(),
         simple_stt::config::runtime_root().display().to_string(),
     );
-    response.values.insert(
-        "instance_id".into(),
-        simple_stt::config::app_instance_id(),
-    );
+    response
+        .values
+        .insert("instance_id".into(), simple_stt::config::app_instance_id());
     response.values.insert(
         "shell_log_path".into(),
         AppConfig::shell_log_path().display().to_string(),
@@ -417,6 +421,14 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
                     "cpu" => InferenceDevice::Cpu,
                     "nvidia_gpu" => InferenceDevice::NvidiaGpu,
                     _ => anyhow::bail!("invalid inference_device: {value}"),
+                }
+            }
+            "ui_theme" => {
+                config.ui_theme = match value.as_str() {
+                    "light" => UiTheme::Light,
+                    "dark" => UiTheme::Dark,
+                    "auto" => UiTheme::Auto,
+                    _ => anyhow::bail!("invalid ui_theme: {value}"),
                 }
             }
             "parakeet_runtime_dir" => config.parakeet_runtime_dir = value.to_owned(),

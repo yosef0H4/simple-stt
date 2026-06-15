@@ -71,6 +71,25 @@ impl InferenceDevice {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum UiTheme {
+    Light,
+    Dark,
+    #[default]
+    Auto,
+}
+
+impl UiTheme {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::Auto => "auto",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AppConfig {
@@ -94,6 +113,7 @@ pub struct AppConfig {
     pub diagnostic_overlay: bool,
     pub log_transcripts: bool,
     pub inference_device: InferenceDevice,
+    pub ui_theme: UiTheme,
     pub parakeet_runtime_dir: String,
     pub model_dir: String,
     pub selected_model_filename: String,
@@ -122,6 +142,7 @@ impl Default for AppConfig {
             diagnostic_overlay: false,
             log_transcripts: false,
             inference_device: InferenceDevice::NvidiaGpu,
+            ui_theme: UiTheme::Auto,
             parakeet_runtime_dir: r"external\parakeet-runtime\parakeet-windows-cuda".to_owned(),
             model_dir: r"external\parakeet-runtime\parakeet-windows-cuda\models".to_owned(),
             selected_model_filename: "tdt_ctc-110m-f16.gguf".to_owned(),
@@ -473,7 +494,15 @@ pub fn app_instance_id() -> String {
         hash ^= u64::from(*byte);
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    format!("{}-{:016x}", if sanitized.is_empty() { "simple-stt" } else { &sanitized }, hash)
+    format!(
+        "{}-{:016x}",
+        if sanitized.is_empty() {
+            "simple-stt"
+        } else {
+            &sanitized
+        },
+        hash
+    )
 }
 
 fn instance_config_dir() -> PathBuf {
