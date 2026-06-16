@@ -64,7 +64,6 @@ class SettingsGui {
         window.SetFont("s9", "Segoe UI")
         window.OnEvent("Close", ObjBindMethod(this, "Hide"))
         window.OnEvent("Size", ObjBindMethod(this, "OnSize"))
-        this.ApplyAppMode()
 
         ; ---- sidebar shell ----
         this.controls["sidebar"] := window.AddText("x0 y0 w204 h720 Background" . this.col["sidebar"], "")
@@ -256,23 +255,6 @@ class SettingsGui {
     }
 
     ; ---- Windows theming hooks ----
-
-    ApplyAppMode() {
-        try {
-            ux := DllCall("GetModuleHandle", "str", "uxtheme", "ptr")
-            if !ux
-                ux := DllCall("LoadLibrary", "str", "uxtheme.dll", "ptr")
-            if !ux
-                return
-            setPref := DllCall("GetProcAddress", "ptr", ux, "ptr", 135, "ptr")
-            flush := DllCall("GetProcAddress", "ptr", ux, "ptr", 136, "ptr")
-            preferred := this.themeMode = "dark" ? 2 : this.themeMode = "light" ? 3 : 0
-            if setPref
-                DllCall(setPref, "int", preferred)
-            if flush
-                DllCall(flush)
-        }
-    }
 
     ApplyTitleBar() {
         hwnd := this.gui.Hwnd

@@ -126,7 +126,15 @@ forbid("src/bin/simple_stt_capture.rs", "worker.lock().unwrap().worker_pid()", "
 checks.append("Parakeet DLL/model loading is isolated to disposable simple-stt-infer with exact-PID forced-exit fallback")
 
 # AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
-need("ahk/lib/Tray.ahk", "A_TrayMenu", "TraySetIcon", "Open Settings", "Restart Audio Service", "Unload Speech Model")
+tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", "Open Settings", "Restart Audio Service", "Unload Speech Model")
+for needle in ["TraySetIcon", "SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
+    if needle in tray_ahk:
+        errors.append(f"tray menu must use the default Windows/AHK drawing path, but found {needle!r}")
+for path in ["ahk/lib/SettingsGui.ahk", "ahk/simple-stt.ahk"]:
+    body = text(path)
+    for needle in ["GetProcAddress", "SetPreferredAppMode"]:
+        if needle in body:
+            errors.append(f"{path} must not set process-wide app theme state; found {needle!r}")
 need("ahk/lib/SettingsGui.ahk", "Gui(", "Record shortcut", "Refresh devices", "Download model", "Runtime locations", "text_delivery_mode")
 hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "Hotkey(", "InputHook(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
 if '"*CapsLock & "' in hotkeys_ahk:
