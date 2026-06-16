@@ -254,9 +254,10 @@ pub fn downloadable_models(config: &AppConfig) -> Vec<ModelSpec> {
 }
 
 pub fn recommended_model_for_device(device: &InferenceDevice) -> &'static str {
-    match device {
+    match device.effective() {
         InferenceDevice::NvidiaGpu => "tdt_ctc-110m-f16.gguf",
         InferenceDevice::Cpu => "tdt_ctc-110m-q4_k.gguf",
+        InferenceDevice::Auto => unreachable!("auto must resolve before model recommendation"),
     }
 }
 
@@ -270,11 +271,17 @@ fn known_size_mb(file: &str) -> Option<u32> {
 
 fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32>) -> Option<u8> {
     let file = file.to_ascii_lowercase();
-    let preferred_family = file.starts_with("tdt_ctc-110m") || file.starts_with("realtime_eou_120m-v1");
-    match device {
+    let preferred_family =
+        file.starts_with("tdt_ctc-110m") || file.starts_with("realtime_eou_120m-v1");
+    match device.effective() {
         InferenceDevice::NvidiaGpu => {
-            if file.ends_with("-f16.gguf") && preferred_family && size_mb.unwrap_or(u32::MAX) <= 300 {
-                Some(if file.starts_with("tdt_ctc-110m") { 0 } else { 1 })
+            if file.ends_with("-f16.gguf") && preferred_family && size_mb.unwrap_or(u32::MAX) <= 300
+            {
+                Some(if file.starts_with("tdt_ctc-110m") {
+                    0
+                } else {
+                    1
+                })
             } else {
                 None
             }
@@ -282,11 +289,16 @@ fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32
         InferenceDevice::Cpu => {
             let compact_quant = file.ends_with("-q4_k.gguf") || file.ends_with("-q5_k.gguf");
             if compact_quant && preferred_family && size_mb.unwrap_or(u32::MAX) <= 160 {
-                Some(if file.starts_with("tdt_ctc-110m") { 0 } else { 1 })
+                Some(if file.starts_with("tdt_ctc-110m") {
+                    0
+                } else {
+                    1
+                })
             } else {
                 None
             }
         }
+        InferenceDevice::Auto => unreachable!("auto must resolve before model ranking"),
     }
 }
 

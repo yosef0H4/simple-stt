@@ -37,7 +37,7 @@ The Rust config module owns JSON serialization, migration, validation, and atomi
   "log_level": "normal",
   "diagnostic_overlay": false,
   "log_transcripts": false,
-  "inference_device": "nvidia_gpu",
+  "inference_device": "auto",
   "parakeet_runtime_dir": "external\\parakeet-runtime\\parakeet-windows-cuda",
   "model_dir": "external\\parakeet-runtime\\parakeet-windows-cuda\\models",
   "selected_model_filename": "tdt_ctc-110m-f16.gguf"
@@ -63,7 +63,7 @@ The Rust config module owns JSON serialization, migration, validation, and atomi
 | `log_level` | `minimal`, `normal`, `debug`, or `extreme`. | Immediate shell filter update; restart capture service and recycle infer worker. |
 | `diagnostic_overlay` | Boolean. | Capture reload. |
 | `log_transcripts` | Boolean; default false. | Capture reload / worker diagnostics. Transcript content must stay off by default. |
-| `inference_device` | `nvidia_gpu` or `cpu`; default `nvidia_gpu`. The CUDA runtime auto-selects the NVIDIA GPU unless CPU is forced. | Recycle infer worker. |
+| `inference_device` | `auto`, `nvidia_gpu`, or `cpu`; default `auto`. Auto uses NVIDIA GPU when `nvidia-smi` reports at least 1024 MB free VRAM within 2.5 seconds, otherwise CPU. Diagnostic override: `SIMPLE_STT_AUTO_INFERENCE_DEVICE=cpu` or `nvidia_gpu`. | Recycle infer worker. |
 | `parakeet_runtime_dir` | Non-empty path. | Recycle infer worker. |
 | `model_dir` | Non-empty path. | Recycle infer worker. |
 | `selected_model_filename` | Plain approved `.gguf` filename; no slash, backslash, or `..`. | Recycle infer worker. |

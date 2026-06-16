@@ -22,7 +22,7 @@ struct Args {
     log_path: PathBuf,
     #[arg(long, value_enum, default_value = "normal")]
     log_level: LogLevel,
-    #[arg(long, value_enum, default_value = "nvidia_gpu")]
+    #[arg(long, value_enum, default_value = "auto")]
     inference_device: InferenceDevice,
     #[arg(long, default_value_t = 180)]
     idle_timeout_secs: u64,
@@ -142,9 +142,10 @@ fn main() -> Result<()> {
 }
 
 fn apply_inference_device(device: &InferenceDevice) {
-    match device {
+    match device.effective() {
         InferenceDevice::Cpu => std::env::set_var("PARAKEET_DEVICE", "cpu"),
         InferenceDevice::NvidiaGpu => std::env::remove_var("PARAKEET_DEVICE"),
+        InferenceDevice::Auto => unreachable!("auto must resolve before applying inference device"),
     }
 }
 

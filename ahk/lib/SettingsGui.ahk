@@ -175,9 +175,9 @@ class SettingsGui {
         this.Panel("device_box", 4)
         this.PTitle("device_box_title", 4, "⚡  Inference device")
         this.Field("inference_device_label", 4, "Compute backend")
-        this.MkDrop("inference_device", 4, ["nvidia_gpu", "cpu"])
+        this.MkDrop("inference_device", 4, ["auto", "nvidia_gpu", "cpu"])
         this.controls["inference_device"].OnEvent("Change", ObjBindMethod(this, "InferenceDeviceChanged"))
-        this.Hint("device_hint", 4, "NVIDIA GPU is faster. CPU works without using VRAM.`nModel recommendations update when this changes.")
+        this.Hint("device_hint", 4, "Auto uses NVIDIA GPU when available, otherwise CPU.`nModel recommendations update when this changes.")
 
         this.Panel("paths_box", 4)
         this.PTitle("paths_box_title", 4, "📁  Runtime locations")
@@ -583,7 +583,7 @@ class SettingsGui {
         this.ChooseText(this.controls["log_level"], config.Get("log_level", "normal"))
         this.controls["diagnostic_overlay"].Value := config.Bool("diagnostic_overlay")
         this.controls["log_transcripts"].Value := config.Bool("log_transcripts")
-        this.ChooseText(this.controls["inference_device"], config.Get("inference_device", "nvidia_gpu"))
+        this.ChooseText(this.controls["inference_device"], config.Get("inference_device", "auto"))
         this.ChooseText(this.controls["ui_theme"], config.Get("ui_theme", "auto"))
         this.controls["parakeet_runtime_dir"].Value := config.Get("parakeet_runtime_dir_resolved", config.Get("parakeet_runtime_dir"))
         this.controls["model_dir"].Value := config.Get("model_dir_resolved", config.Get("model_dir"))
@@ -633,8 +633,10 @@ class SettingsGui {
         device := this.controls["inference_device"].Text
         if device = "cpu"
             this.controls["device_hint"].Text := "CPU avoids VRAM use."
-        else
+        else if device = "nvidia_gpu"
             this.controls["device_hint"].Text := "NVIDIA GPU is faster."
+        else
+            this.controls["device_hint"].Text := "Auto uses NVIDIA GPU when available, otherwise CPU."
         this.ListModels()
     }
 

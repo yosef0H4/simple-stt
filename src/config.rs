@@ -53,13 +53,14 @@ pub enum TextDeliveryMode {
     PasteCtrlShiftV,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
 pub enum InferenceDevice {
     Cpu,
-    #[default]
     NvidiaGpu,
+    #[default]
+    Auto,
 }
 
 impl InferenceDevice {
@@ -67,6 +68,74 @@ impl InferenceDevice {
         match self {
             Self::Cpu => "cpu",
             Self::NvidiaGpu => "nvidia_gpu",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub fn effective(self) -> Self {
+        match self {
+            Self::Auto => auto_inference_device(),
+            other => other,
+        }
+    }
+}
+
+pub fn auto_inference_device() -> InferenceDevice {
+    static RESOLVED: std::sync::OnceLock<InferenceDevice> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        if std::env::var("SIMPLE_STT_AUTO_INFERENCE_DEVICE")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("cpu"))
+        {
+            return InferenceDevice::Cpu;
+        }
+        if std::env::var("SIMPLE_STT_AUTO_INFERENCE_DEVICE")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("nvidia_gpu"))
+        {
+            return InferenceDevice::NvidiaGpu;
+        }
+        if nvidia_smi_has_usable_gpu() {
+            InferenceDevice::NvidiaGpu
+        } else {
+            InferenceDevice::Cpu
+        }
+    })
+}
+
+fn nvidia_smi_has_usable_gpu() -> bool {
+    let mut child = match std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_500);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let Ok(output) = child.wait_with_output() else {
+                    return false;
+                };
+                if !status.success() {
+                    return false;
+                }
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                return stdout
+                    .lines()
+                    .filter_map(|line| line.trim().parse::<u64>().ok())
+                    .any(|free_mb| free_mb >= 1024);
+            }
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+            Err(_) => return false,
         }
     }
 }
@@ -141,7 +210,7 @@ impl Default for AppConfig {
             log_level: LogLevel::Normal,
             diagnostic_overlay: false,
             log_transcripts: false,
-            inference_device: InferenceDevice::NvidiaGpu,
+            inference_device: InferenceDevice::Auto,
             ui_theme: UiTheme::Auto,
             parakeet_runtime_dir: r"external\parakeet-runtime\parakeet-windows-cuda".to_owned(),
             model_dir: r"external\parakeet-runtime\parakeet-windows-cuda\models".to_owned(),
@@ -533,7 +602,7 @@ mod tests {
         assert_eq!(config.toggle_delivery_hotkey, "CapsLock+A");
         assert!(!config.remove_punctuation);
         assert!(!config.lowercase_output);
-        assert_eq!(config.inference_device, InferenceDevice::NvidiaGpu);
+        assert_eq!(config.inference_device, InferenceDevice::Auto);
     }
 
     #[test]

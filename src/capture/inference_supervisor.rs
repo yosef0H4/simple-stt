@@ -255,19 +255,26 @@ impl WorkerSupervisor {
             .arg("--log-level")
             .arg(self.config.log_level.as_str())
             .arg("--inference-device")
-            .arg(self.config.inference_device.as_str())
+            .arg(self.config.inference_device.effective().as_str())
             .arg("--idle-timeout-secs")
             .arg(self.config.idle_timeout.as_secs().to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
-        match self.config.inference_device {
+        let effective_device = self.config.inference_device.effective();
+        tracing::info!(
+            configured_device = self.config.inference_device.as_str(),
+            effective_device = effective_device.as_str(),
+            "resolved inference device"
+        );
+        match effective_device {
             InferenceDevice::Cpu => {
                 command.env("PARAKEET_DEVICE", "cpu");
             }
             InferenceDevice::NvidiaGpu => {
                 command.env_remove("PARAKEET_DEVICE");
             }
+            InferenceDevice::Auto => unreachable!("auto must resolve before worker launch"),
         }
         let mut child = match command.spawn() {
             Ok(child) => child,

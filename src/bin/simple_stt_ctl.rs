@@ -309,6 +309,10 @@ fn config_show() -> Result<ShellResponse> {
         "inference_device".into(),
         config.inference_device.as_str().into(),
     );
+    response.values.insert(
+        "resolved_inference_device".into(),
+        config.inference_device.effective().as_str().into(),
+    );
     response
         .values
         .insert("ui_theme".into(), config.ui_theme.as_str().into());
@@ -420,6 +424,7 @@ fn config_save(input: &Path) -> Result<ShellResponse> {
                 config.inference_device = match value.as_str() {
                     "cpu" => InferenceDevice::Cpu,
                     "nvidia_gpu" => InferenceDevice::NvidiaGpu,
+                    "auto" => InferenceDevice::Auto,
                     _ => anyhow::bail!("invalid inference_device: {value}"),
                 }
             }
