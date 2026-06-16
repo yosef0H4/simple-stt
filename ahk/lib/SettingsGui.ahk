@@ -96,6 +96,9 @@ class SettingsGui {
         this.Field("record_hotkey_label", 1, "Keyboard shortcut")
         this.MkDisplay("record_hotkey", 1)
         this.AddButton("record_chord", "Record shortcut", "CaptureHotkey", false, 1)
+        this.Field("cancel_hotkey_label", 1, "Cancel shortcut")
+        this.MkDisplay("cancel_hotkey", 1)
+        this.AddButton("record_cancel_chord", "Record cancel", "CaptureCancelHotkey", false, 1)
         this.Field("toggle_delivery_hotkey_label", 1, "Toggle typing/paste")
         this.MkDisplay("toggle_delivery_hotkey", 1)
         this.AddButton("record_toggle_chord", "Record toggle", "CaptureToggleHotkey", false, 1)
@@ -454,27 +457,30 @@ class SettingsGui {
         this.controls["open_log"].Move(width - 112, footerY + 16, 96, 32)
 
         ; ---- page 1: General ----
-        this.controls["general_hotkey_box"].Move(contentX, 96, contentW, 220)
+        this.controls["general_hotkey_box"].Move(contentX, 96, contentW, 256)
         this.controls["general_hotkey_box_title"].Move(contentX + 18, 108, contentW - 36, 22)
         this.controls["hotkey_enabled"].Move(contentX + 18, 138, 300, 22)
         this.controls["record_hotkey_label"].Move(contentX + 18, 178, 150, 22)
         this.controls["record_hotkey"].Move(fieldX, 174, Max(180, contentW - 360), 25)
         this.controls["record_chord"].Move(right - 150, 173, 132, 27)
-        this.controls["toggle_delivery_hotkey_label"].Move(contentX + 18, 214, 150, 22)
-        this.controls["toggle_delivery_hotkey"].Move(fieldX, 210, Max(180, contentW - 360), 25)
-        this.controls["record_toggle_chord"].Move(right - 150, 209, 132, 27)
-        this.controls["capslock_behavior_label"].Move(contentX + 18, 250, 150, 22)
-        this.controls["capslock_behavior"].Move(fieldX, 246, 220, 120)
-        this.controls["hotkey_hint"].Move(contentX + 18, 280, contentW - 36, 30)
-        this.controls["general_startup_box"].Move(contentX, 336, contentW, 96)
-        this.controls["general_startup_box_title"].Move(contentX + 18, 348, contentW - 36, 22)
-        this.controls["start_with_windows"].Move(contentX + 18, 376, contentW - 36, 22)
-        this.controls["startup_hint"].Move(contentX + 18, 402, contentW - 36, 22)
-        this.controls["general_appearance_box"].Move(contentX, 452, contentW, 104)
-        this.controls["general_appearance_box_title"].Move(contentX + 18, 464, contentW - 36, 22)
-        this.controls["ui_theme_label"].Move(contentX + 18, 496, 150, 22)
-        this.controls["ui_theme"].Move(fieldX, 492, 160, 120)
-        this.controls["ui_theme_hint"].Move(contentX + 18, 526, contentW - 36, 22)
+        this.controls["cancel_hotkey_label"].Move(contentX + 18, 214, 150, 22)
+        this.controls["cancel_hotkey"].Move(fieldX, 210, Max(180, contentW - 360), 25)
+        this.controls["record_cancel_chord"].Move(right - 150, 209, 132, 27)
+        this.controls["toggle_delivery_hotkey_label"].Move(contentX + 18, 250, 150, 22)
+        this.controls["toggle_delivery_hotkey"].Move(fieldX, 246, Max(180, contentW - 360), 25)
+        this.controls["record_toggle_chord"].Move(right - 150, 245, 132, 27)
+        this.controls["capslock_behavior_label"].Move(contentX + 18, 286, 150, 22)
+        this.controls["capslock_behavior"].Move(fieldX, 282, 220, 120)
+        this.controls["hotkey_hint"].Move(contentX + 18, 316, contentW - 36, 30)
+        this.controls["general_startup_box"].Move(contentX, 372, contentW, 96)
+        this.controls["general_startup_box_title"].Move(contentX + 18, 384, contentW - 36, 22)
+        this.controls["start_with_windows"].Move(contentX + 18, 412, contentW - 36, 22)
+        this.controls["startup_hint"].Move(contentX + 18, 438, contentW - 36, 22)
+        this.controls["general_appearance_box"].Move(contentX, 488, contentW, 104)
+        this.controls["general_appearance_box_title"].Move(contentX + 18, 500, contentW - 36, 22)
+        this.controls["ui_theme_label"].Move(contentX + 18, 532, 150, 22)
+        this.controls["ui_theme"].Move(fieldX, 528, 160, 120)
+        this.controls["ui_theme_hint"].Move(contentX + 18, 562, contentW - 36, 22)
 
         ; ---- page 2: Audio & models ----
         this.controls["audio_box"].Move(contentX, 96, contentW, 172)
@@ -550,7 +556,8 @@ class SettingsGui {
         config := this.app.config
         this.controls["hotkey_enabled"].Value := config.Bool("hotkey_enabled")
         this.controls["record_hotkey"].Text := config.Get("record_hotkey")
-        this.controls["toggle_delivery_hotkey"].Text := config.Get("toggle_delivery_hotkey", "CapsLock+A")
+        this.controls["cancel_hotkey"].Text := config.Get("cancel_hotkey", "CapsLock+A")
+        this.controls["toggle_delivery_hotkey"].Text := config.Get("toggle_delivery_hotkey", "CapsLock+D")
         this.ChooseText(this.controls["capslock_behavior"], config.Get("capslock_behavior", "preserve_tap"))
         this.controls["audio_gain"].Value := config.Get("audio_gain", "1")
         this.ChooseText(this.controls["text_delivery_mode"], config.Get("text_delivery_mode", "paste_ctrl_v"))
@@ -648,6 +655,7 @@ class SettingsGui {
     Save(*) {
         config := this.app.config
         config.Set("record_hotkey", this.controls["record_hotkey"].Text)
+        config.Set("cancel_hotkey", this.controls["cancel_hotkey"].Text)
         config.Set("toggle_delivery_hotkey", this.controls["toggle_delivery_hotkey"].Text)
         for key in ["audio_gain", "typing_chunk_chars", "typing_interval_ms", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "parakeet_runtime_dir", "model_dir"]
             config.Set(key, this.controls[key].Value)
@@ -665,6 +673,7 @@ class SettingsGui {
         config.Set("ui_theme", this.controls["ui_theme"].Text)
         try {
             HotkeySpec.Parse(config.Get("record_hotkey"))
+            HotkeySpec.Parse(config.Get("cancel_hotkey"))
             HotkeySpec.Parse(config.Get("toggle_delivery_hotkey"))
             config.SaveSync()
             this.app.ApplySavedConfig()
@@ -707,6 +716,15 @@ class SettingsGui {
         this.recorder.Start(ObjBindMethod(this, "ToggleHotkeyCaptured"))
     }
 
+    CaptureCancelHotkey(*) {
+        if this.app.HasProp("testMode") && this.app.testMode {
+            this.SetStatus("Preview: cancel shortcut recorder opened safely")
+            return
+        }
+        this.SetStatus("Hold the desired modifiers, then press the final key for global cancel.")
+        this.recorder.Start(ObjBindMethod(this, "CancelHotkeyCaptured"))
+    }
+
     HotkeyCaptured(label) {
         this.controls["record_hotkey"].Text := label
         this.SetStatus("Recorded " . label . ". Press Save to apply it.")
@@ -715,6 +733,11 @@ class SettingsGui {
     ToggleHotkeyCaptured(label) {
         this.controls["toggle_delivery_hotkey"].Text := label
         this.SetStatus("Recorded toggle hotkey " . label . ". Press Save to apply it.")
+    }
+
+    CancelHotkeyCaptured(label) {
+        this.controls["cancel_hotkey"].Text := label
+        this.SetStatus("Recorded cancel hotkey " . label . ". Press Save to apply it.")
     }
 
     ListInputs(*) {
@@ -877,6 +900,7 @@ class SettingsGui {
         if !(this.app.HasProp("testMode") && this.app.testMode)
             throw Error("Button exercise is available only in test mode")
         this.CaptureHotkey()
+        this.CaptureCancelHotkey()
         this.CaptureToggleHotkey()
         this.ListInputs()
         this.RefreshModels()

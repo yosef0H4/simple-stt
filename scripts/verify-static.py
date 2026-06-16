@@ -116,10 +116,10 @@ if loader_paths != ["src/infer/parakeet_native.rs"]:
 need("src/bin/simple_stt_infer.rs", "ParakeetNative", "worker idle timeout reached; exiting process", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck", "model warm-up begin", "model warm-up end")
 need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()>", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
-need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion")
+need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion", "cancel_generation", "ShellCommand::Cancel", "discarding stale transcript after cancellation", "had_warming", "had_transcribing")
 need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "inference_device: InferenceDevice", "PARAKEET_DEVICE", "InferenceDevice::Cpu", "InferenceDevice::NvidiaGpu", "InferenceDevice::Auto")
-need("src/config.rs", "pub enum InferenceDevice", "NvidiaGpu", "Auto", "auto_inference_device", "inference_device: InferenceDevice")
-need("ahk/lib/SettingsGui.ahk", '["auto", "nvidia_gpu", "cpu"]', 'toggle_delivery_hotkey', 'config.Set("inference_device"')
+need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 3", "cancel_hotkey", 'toggle_delivery_hotkey: "CapsLock+D"', 'cancel_hotkey: "CapsLock+A"', "schema2_migrates_cancel_hotkey_and_moves_default_toggle", "pub enum InferenceDevice", "NvidiaGpu", "Auto", "auto_inference_device", "inference_device: InferenceDevice")
+need("ahk/lib/SettingsGui.ahk", '["auto", "nvidia_gpu", "cpu"]', 'toggle_delivery_hotkey', 'cancel_hotkey', 'config.Set("inference_device"')
 need("src/logging.rs", "component={component} pid={}", "prefix_lines", "component_prefix_survives_split_writes_and_multiline_events")
 need("src/capture/inference_supervisor.rs", '.arg("--log-level")', '.arg("--inference-device")')
 forbid("src/bin/simple_stt_capture.rs", "worker.lock().unwrap().worker_pid()", "worker.lock().unwrap().replace_config")
@@ -136,7 +136,7 @@ for path in ["ahk/lib/SettingsGui.ahk", "ahk/simple-stt.ahk"]:
         if needle in body:
             errors.append(f"{path} must not set process-wide app theme state; found {needle!r}")
 need("ahk/lib/SettingsGui.ahk", "Gui(", "Record shortcut", "Refresh devices", "Download model", "Runtime locations", "text_delivery_mode")
-hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "Hotkey(", "InputHook(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
+hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "class CapsLockTapController", "Register(capslockBehavior)", "Unregister()", "Hotkey(", "InputHook(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
 if '"*CapsLock & "' in hotkeys_ahk:
     errors.append("CapsLock custom combination must not prepend wildcard; combinations already wildcard-match")
 need("ahk/lib/TabProtocol.ahk", 'StrReplace(value . "", "\\", "\\\\")', 'case "\\": out .= "\\"', "Loop 20", "unable to read helper response after retry")
@@ -147,24 +147,24 @@ checks.append("AHK owns tray, GUI, hotkeys, full-format clipboard-preserving pas
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
 ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])', '"missing_since"', "A_TickCount - job[\"missing_since\"] < 250")
 supervisor_ahk = need("ahk/lib/ProcessSupervisor.ahk", "Run(command", "ProcessWaitClose", "ProcessClose", "SimpleSttRandomToken", "ResetServiceSession", "readyProbeInFlight", "this.startTimer")
-need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "ToggleDeliveryModeHotkey", "deliveryToggleHotkey")
+need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "CancelAll", "cancelHotkey", 'CallService("cancel")', "ToggleDeliveryModeHotkey", "deliveryToggleHotkey")
 if "RunWait(command" in ipc_ahk:
     errors.append("IpcClient.ahk service calls must be asynchronous")
 checks.append("AHK helper IPC is asynchronous, token-rotated, sequenced, and reconnectable")
 
 # Public control IPC is loopback-only and versioned; Rust-to-Rust PCM stays framed.
 need("src/capture/ipc_server.rs", 'TcpListener::bind("127.0.0.1:0")', "SHELL_PROTOCOL_VERSION", "protocol_mismatch", "unauthorized")
-need("src/common/shell_protocol.rs", "SHELL_PROTOCOL_VERSION", "StartRecording", "PollEvents")
+need("src/common/shell_protocol.rs", "SHELL_PROTOCOL_VERSION", "StartRecording", "Cancel", "PollEvents")
 need("src/infer/protocol.rs", 'pub const MAGIC: [u8; 4] = *b"UVX1"', "VERSION", "TranscribePcm", "sample_rate")
 checks.append("control IPC is loopback-only and versioned; raw PCM stays on framed child pipes")
 
 # Canonical schema-v2 config, partial downloads, and process-exit diagnostics are present.
-need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 2", "MoveFileExW", "MOVEFILE_REPLACE_EXISTING", "schema1_is_migrated_and_backed_up", "runtime_root", "current_exe")
+need("src/config.rs", "MoveFileExW", "MOVEFILE_REPLACE_EXISTING", "schema1_is_migrated_and_backed_up", "runtime_root", "current_exe")
 need("src/models.rs", 'https://', 'gguf.partial.', "replace_file_atomic", "validate_model_filename", 'join("fixtures")')
 need("scripts/build-distribution.ps1", "fixtures\\parakeet-smoke.wav")
 need("scripts/build-release.ps1", "--bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl")
 need("scripts/memory-cleanup-validation.ps1", "Get-Process", "nvidia-smi", "unload-model")
-checks.append("schema-v2 migration, install-relative paths, atomic writes, HTTPS partial downloads, and diagnostics are present")
+checks.append("schema migration, install-relative paths, atomic writes, HTTPS partial downloads, and diagnostics are present")
 
 # Deterministic worker integration coverage exists but is intentionally not shipped.
 need("src/bin/simple_stt_mock_infer.rs", "Test-only disposable inference worker", "hang-handshake", "mock مرحبا 世界 🙂", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")

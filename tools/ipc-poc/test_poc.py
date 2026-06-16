@@ -79,6 +79,12 @@ def main() -> int:
             events = request(state, token, {"name": "poll_events", "after_seq": 0})["events"]
             assert [event["kind"] for event in events] == ["recording_started", "transcript"], events
             assert events[-1]["text"] == "مرحبا 世界 🙂", events[-1]
+            latest = events[-1]["seq"]
+            assert request(state, token, {"name": "start_recording", "session_id": 43})["ok"]
+            assert request(state, token, {"name": "cancel"})["ok"]
+            events = request(state, token, {"name": "poll_events", "after_seq": latest})["events"]
+            assert [event["kind"] for event in events] == ["recording_started", "notice"], events
+            assert events[-1]["text"] == "Cancelled", events[-1]
         finally:
             stop(service)
 
@@ -99,6 +105,7 @@ def main() -> int:
     print("IPC POC PASSED")
     print(" - authenticated loopback PING/PONG")
     print(" - START_RECORDING / STOP_RECORDING")
+    print(" - CANCEL without transcript delivery")
     print(" - asynchronous polled Unicode TRANSCRIPT")
     print(" - state-file reconnect after simulated service restart")
     return 0

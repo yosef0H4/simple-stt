@@ -14,7 +14,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     Arc, Mutex,
 };
 use std::time::{Duration, Instant};
@@ -46,6 +46,7 @@ struct Recording {
 #[derive(Debug)]
 enum BackgroundResult {
     Transcript {
+        generation: u64,
         session_id: u64,
         result: Result<String, String>,
     },
@@ -55,11 +56,17 @@ enum BackgroundResult {
     WorkerConfigReplaced {
         result: Result<(), String>,
     },
-    ModelLoaded,
+    ModelLoaded {
+        generation: u64,
+        session_id: Option<u64>,
+    },
     ModelWarmed {
+        generation: u64,
+        session_id: Option<u64>,
         result: Result<(), String>,
     },
     ModelTested {
+        generation: u64,
         result: Result<String, String>,
     },
     DownloadProgress {
@@ -80,9 +87,11 @@ struct ControlContext<'a> {
     background_tx: &'a Sender<BackgroundResult>,
     overlay: &'a OverlayHandle,
     recording_active: &'a Arc<AtomicBool>,
+    cancel_generation: &'a Arc<AtomicU64>,
     events: &'a mut EventBuffer,
     active: &'a mut Option<Recording>,
     transcribing: &'a mut HashSet<u64>,
+    warming: &'a mut HashSet<u64>,
     shutting_down: &'a mut bool,
 }
 
@@ -128,6 +137,7 @@ fn main() -> Result<()> {
 
     let overlay = OverlayHandle::spawn()?;
     let recording_active = Arc::new(AtomicBool::new(false));
+    let cancel_generation = Arc::new(AtomicU64::new(0));
     let (frame_tx, frame_rx) = bounded::<Vec<i16>>(4096);
     let (audio_event_tx, audio_event_rx) = unbounded::<AudioEvent>();
     let _capture = audio::start_capture(
@@ -154,6 +164,7 @@ fn main() -> Result<()> {
     let timer = tick(Duration::from_millis(250));
     let mut active: Option<Recording> = None;
     let mut transcribing = HashSet::<u64>::new();
+    let mut warming = HashSet::<u64>::new();
     let mut shutting_down = false;
     let idle_check_running = Arc::new(AtomicBool::new(false));
 
@@ -165,7 +176,7 @@ fn main() -> Result<()> {
                 overlay.notify_error("🎙 Audio service error — see log", Duration::from_secs(3));
                 events.push(notice_event(NoticeLevel::Error, "Audio service error — see log"));
             },
-            recv(background_rx) -> message => if let Ok(result) = message { handle_background(result, &overlay, &mut events, config.log_transcripts, active.is_some(), &mut transcribing); },
+            recv(background_rx) -> message => if let Ok(result) = message { handle_background(result, &overlay, &mut events, config.log_transcripts, active.is_some(), &mut transcribing, &mut warming, &cancel_generation); },
             recv(control_rx) -> message => if let Ok(request) = message {
                 let response = handle_control(request.command, ControlContext {
                     config: &mut config,
@@ -174,9 +185,11 @@ fn main() -> Result<()> {
                     background_tx: &background_tx,
                     overlay: &overlay,
                     recording_active: &recording_active,
+                    cancel_generation: &cancel_generation,
                     events: &mut events,
                     active: &mut active,
                     transcribing: &mut transcribing,
+                    warming: &mut warming,
                     shutting_down: &mut shutting_down,
                 });
                 let _ = request.reply.send(response);
@@ -230,9 +243,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         background_tx,
         overlay,
         recording_active,
+        cancel_generation,
         events,
         active,
         transcribing,
+        warming,
         shutting_down,
     } = context;
     match command {
@@ -261,13 +276,19 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             event.session_id = Some(session_id);
             events.push(event);
             if nonzero_pid(worker_pid).is_none() {
+                warming.insert(session_id);
                 overlay.notify_info("🎙 Loading speech model…", None);
                 let mut loading = ServiceEvent::simple("model_loading");
                 loading.session_id = Some(session_id);
                 events.push(loading);
                 let worker = Arc::clone(worker);
+                let generation = cancel_generation.load(Ordering::SeqCst);
+                let cancel_generation = Arc::clone(cancel_generation);
                 let tx = background_tx.clone();
                 std::thread::spawn(move || {
+                    if cancel_generation.load(Ordering::SeqCst) != generation {
+                        return;
+                    }
                     let progress_tx = tx.clone();
                     let result = worker
                         .lock()
@@ -275,11 +296,18 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                         .and_then(|mut worker| {
                             worker
                                 .warm_up(|| {
-                                    let _ = progress_tx.send(BackgroundResult::ModelLoaded);
+                                    let _ = progress_tx.send(BackgroundResult::ModelLoaded {
+                                        generation,
+                                        session_id: Some(session_id),
+                                    });
                                 })
                                 .map_err(|error| error.to_string())
                         });
-                    let _ = tx.send(BackgroundResult::ModelWarmed { result });
+                    let _ = tx.send(BackgroundResult::ModelWarmed {
+                        generation,
+                        session_id: Some(session_id),
+                        result,
+                    });
                 });
             }
             tracing::info!(session_id, "recording start");
@@ -324,16 +352,55 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 events.push(loading);
             }
             let worker = Arc::clone(worker);
+            let generation = cancel_generation.load(Ordering::SeqCst);
+            let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
             std::thread::spawn(move || {
+                if cancel_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
                 let result = worker
                     .lock()
                     .unwrap()
                     .transcribe_pcm(session_id, &samples)
                     .map_err(|error| error.to_string());
-                let _ = tx.send(BackgroundResult::Transcript { session_id, result });
+                let _ = tx.send(BackgroundResult::Transcript {
+                    generation,
+                    session_id,
+                    result,
+                });
             });
             ShellResponse::ok("transcription queued")
+        }
+        ShellCommand::Cancel => {
+            let generation = cancel_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let had_recording = active.take().is_some();
+            let had_transcribing = !transcribing.is_empty();
+            let had_warming = !warming.is_empty();
+            transcribing.clear();
+            warming.clear();
+            recording_active.store(false, Ordering::Relaxed);
+            overlay.hide();
+            events.push(notice_event(NoticeLevel::Warning, "Cancelled"));
+            tracing::warn!(
+                generation,
+                had_recording,
+                had_transcribing,
+                had_warming,
+                "global cancellation requested"
+            );
+            if had_transcribing || had_warming {
+                let worker = Arc::clone(worker);
+                let tracker = Arc::clone(worker_pid);
+                let tx = background_tx.clone();
+                let grace = Duration::from_millis(config.worker_shutdown_grace_ms);
+                std::thread::spawn(move || {
+                    let result =
+                        shutdown_shared(worker, tracker, grace).map_err(|error| error.to_string());
+                    let _ = tx.send(BackgroundResult::ModelUnloaded { result });
+                });
+            }
+            ShellResponse::ok("cancel requested")
         }
         ShellCommand::PollEvents { after_seq } => {
             let mut response = ShellResponse::ok("events");
@@ -401,14 +468,19 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 events.push(ServiceEvent::simple("model_loading"));
             }
             let worker = Arc::clone(worker);
+            let generation = cancel_generation.load(Ordering::SeqCst);
+            let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
             std::thread::spawn(move || {
+                if cancel_generation.load(Ordering::SeqCst) != generation {
+                    return;
+                }
                 let result = worker
                     .lock()
                     .unwrap()
                     .transcribe_wav(0, &audio)
                     .map_err(|error| error.to_string());
-                let _ = tx.send(BackgroundResult::ModelTested { result });
+                let _ = tx.send(BackgroundResult::ModelTested { generation, result });
             });
             ShellResponse::ok("model test queued")
         }
@@ -512,9 +584,23 @@ fn handle_background(
     log_transcripts: bool,
     active_recording: bool,
     transcribing: &mut HashSet<u64>,
+    warming: &mut HashSet<u64>,
+    cancel_generation: &AtomicU64,
 ) {
     match result {
-        BackgroundResult::Transcript { session_id, result } => {
+        BackgroundResult::Transcript {
+            generation,
+            session_id,
+            result,
+        } => {
+            if cancel_generation.load(Ordering::SeqCst) != generation {
+                tracing::info!(
+                    session_id,
+                    generation,
+                    "discarding stale transcript after cancellation"
+                );
+                return;
+            }
             transcribing.remove(&session_id);
             let has_pending_transcript = !transcribing.is_empty();
             match result {
@@ -575,41 +661,77 @@ fn handle_background(
                 ));
             }
         },
-        BackgroundResult::ModelLoaded => {
+        BackgroundResult::ModelLoaded {
+            generation,
+            session_id,
+        } => {
+            if cancel_generation.load(Ordering::SeqCst) != generation {
+                tracing::info!(
+                    generation,
+                    "discarding stale model-loaded event after cancellation"
+                );
+                return;
+            }
             tracing::info!("speech model loaded; priming inference engine");
             overlay.notify_info("🎙 Speech model loaded - warming up...", None);
             events.push(ServiceEvent::simple("model_loaded"));
+            let _ = session_id;
         }
-        BackgroundResult::ModelWarmed { result } => match result {
-            Ok(()) => {
-                tracing::info!("speech model warmed while recording");
-                overlay.notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
-                events.push(ServiceEvent::simple("model_ready"));
+        BackgroundResult::ModelWarmed {
+            generation,
+            session_id,
+            result,
+        } => {
+            if let Some(session_id) = session_id {
+                warming.remove(&session_id);
             }
-            Err(error) => {
-                tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
-                overlay.notify_warning(
-                    "🎙 Speech model load failed — transcription will retry",
-                    Duration::from_secs(3),
+            if cancel_generation.load(Ordering::SeqCst) != generation {
+                tracing::info!(
+                    generation,
+                    "discarding stale model-warmed event after cancellation"
                 );
+                return;
             }
-        },
-        BackgroundResult::ModelTested { result } => match result {
-            Ok(text) => {
-                overlay.notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));
-                let mut event = ServiceEvent::simple("model_test_complete");
-                event.text = format!("Model test passed ({} characters)", text.chars().count());
-                events.push(event);
+            match result {
+                Ok(()) => {
+                    tracing::info!("speech model warmed while recording");
+                    overlay.notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
+                    events.push(ServiceEvent::simple("model_ready"));
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
+                    overlay.notify_warning(
+                        "🎙 Speech model load failed — transcription will retry",
+                        Duration::from_secs(3),
+                    );
+                }
             }
-            Err(error) => {
-                tracing::error!(%error, "model test failed");
-                overlay.notify_error("🎙 Model test failed — see log", Duration::from_secs(3));
-                events.push(notice_event(
-                    NoticeLevel::Error,
-                    "Model test failed — see log",
-                ));
+        }
+        BackgroundResult::ModelTested { generation, result } => {
+            if cancel_generation.load(Ordering::SeqCst) != generation {
+                tracing::info!(
+                    generation,
+                    "discarding stale model-test event after cancellation"
+                );
+                return;
             }
-        },
+            match result {
+                Ok(text) => {
+                    overlay.notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));
+                    let mut event = ServiceEvent::simple("model_test_complete");
+                    event.text = format!("Model test passed ({} characters)", text.chars().count());
+                    events.push(event);
+                }
+                Err(error) => {
+                    tracing::error!(%error, "model test failed");
+                    overlay.notify_error("🎙 Model test failed — see log", Duration::from_secs(3));
+                    events.push(notice_event(
+                        NoticeLevel::Error,
+                        "Model test failed — see log",
+                    ));
+                }
+            }
+        }
         BackgroundResult::DownloadProgress {
             filename,
             downloaded,

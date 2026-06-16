@@ -25,6 +25,7 @@ def main():
             if name=="ping": response={"ok":True,"message":"pong","events":[]}
             elif name=="start_recording": seq+=1; events.append({"seq":seq,"kind":"recording_started","session_id":request["command"]["session_id"],"text":""}); response={"ok":True,"message":"started","events":[]}
             elif name=="stop_recording": seq+=1; events.append({"seq":seq,"kind":"transcript","session_id":request["command"]["session_id"],"text":"مرحبا 世界 🙂"}); response={"ok":True,"message":"stopped","events":[]}
+            elif name=="cancel": seq+=1; events.append({"seq":seq,"kind":"notice","level":"warning","text":"Cancelled"}); response={"ok":True,"message":"cancelled","events":[]}
             elif name=="poll_events": response={"ok":True,"message":"events","values":{"latest_seq":str(seq)},"events":[e for e in events if e["seq"]>request["command"]["after_seq"]]}
             else: response={"ok":False,"message":"unsupported poc command","events":[]}
             response.setdefault("values",{})

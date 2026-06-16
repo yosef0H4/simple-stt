@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 2;
+pub const CONFIG_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
 #[serde(rename_all = "snake_case")]
@@ -166,6 +166,7 @@ pub struct AppConfig {
     pub hotkey_enabled: bool,
     pub record_hotkey: String,
     pub toggle_delivery_hotkey: String,
+    pub cancel_hotkey: String,
     pub capslock_behavior: CapsLockBehavior,
     pub audio_device_contains: String,
     pub audio_gain: f32,
@@ -194,7 +195,8 @@ impl Default for AppConfig {
             schema_version: CONFIG_SCHEMA_VERSION,
             hotkey_enabled: true,
             record_hotkey: "CapsLock+S".to_owned(),
-            toggle_delivery_hotkey: "CapsLock+A".to_owned(),
+            toggle_delivery_hotkey: "CapsLock+D".to_owned(),
+            cancel_hotkey: "CapsLock+A".to_owned(),
             capslock_behavior: CapsLockBehavior::PreserveTap,
             audio_device_contains: String::new(),
             audio_gain: 1.0,
@@ -251,6 +253,10 @@ impl AppConfig {
         anyhow::ensure!(
             !self.toggle_delivery_hotkey.trim().is_empty(),
             "toggle_delivery_hotkey must not be empty"
+        );
+        anyhow::ensure!(
+            !self.cancel_hotkey.trim().is_empty(),
+            "cancel_hotkey must not be empty"
         );
         anyhow::ensure!(
             self.audio_gain > 0.0 && self.audio_gain <= 10.0,
@@ -333,6 +339,27 @@ impl AppConfig {
             let value: Self = serde_json::from_str(&raw)
                 .with_context(|| format!("parsing {}", path.display()))?;
             value.validate()?;
+            return Ok(value);
+        }
+        if schema_version == Some(2) {
+            let mut value: Self = serde_json::from_str(&raw)
+                .with_context(|| format!("parsing schema-2 {}", path.display()))?;
+            value.schema_version = CONFIG_SCHEMA_VERSION;
+            value.cancel_hotkey = "CapsLock+A".to_owned();
+            if value
+                .toggle_delivery_hotkey
+                .eq_ignore_ascii_case("CapsLock+A")
+            {
+                value.toggle_delivery_hotkey = "CapsLock+D".to_owned();
+            }
+            value.validate()?;
+            let backup = path.with_extension("json.schema2.bak");
+            if !backup.exists() {
+                fs::copy(path, &backup).with_context(|| {
+                    format!("backing up schema-2 config to {}", backup.display())
+                })?;
+            }
+            value.save_to(path)?;
             return Ok(value);
         }
         let migrated = Self::migrate_legacy(&raw)?;
@@ -599,7 +626,8 @@ mod tests {
         let config = AppConfig::default();
         config.validate().unwrap();
         assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlV);
-        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+A");
+        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
+        assert_eq!(config.cancel_hotkey, "CapsLock+A");
         assert!(!config.remove_punctuation);
         assert!(!config.lowercase_output);
         assert_eq!(config.inference_device, InferenceDevice::Auto);
@@ -623,11 +651,35 @@ mod tests {
         let path = temp.path().join("config.json");
         fs::write(&path, r#"{"idle_timeout_secs":45,"typing_interval_ms":12,"typing_chunk_chars":4,"audio_gain":1.5,"audio_device_contains":"Mic","parakeet_runtime_dir":"runtime","parakeet_model_path":"models\\old.gguf","start_with_windows":true,"hotkey_enabled":true,"record_hotkey":"capslock+s","capslock_always_off":true,"log_level":"debug"}"#).unwrap();
         let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.schema_version, 2);
+        assert_eq!(config.schema_version, 3);
         assert_eq!(config.idle_worker_timeout_secs, 45);
         assert_eq!(config.record_hotkey, "CapsLock+S");
+        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
+        assert_eq!(config.cancel_hotkey, "CapsLock+A");
         assert_eq!(config.capslock_behavior, CapsLockBehavior::AlwaysOff);
         assert!(path.with_extension("json.schema1.bak").exists());
+    }
+
+    #[test]
+    fn schema2_migrates_cancel_hotkey_and_moves_default_toggle() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(&path, r#"{"schema_version":2,"hotkey_enabled":true,"record_hotkey":"CapsLock+S","toggle_delivery_hotkey":"CapsLock+A","capslock_behavior":"preserve_tap","audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"start_with_windows":false,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"runtime","model_dir":"models","selected_model_filename":"model.gguf"}"#).unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.schema_version, 3);
+        assert_eq!(config.cancel_hotkey, "CapsLock+A");
+        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
+        assert!(path.with_extension("json.schema2.bak").exists());
+    }
+
+    #[test]
+    fn schema2_preserves_custom_toggle_hotkey() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(&path, r#"{"schema_version":2,"hotkey_enabled":true,"record_hotkey":"CapsLock+S","toggle_delivery_hotkey":"LCtrl+T","capslock_behavior":"preserve_tap","audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"start_with_windows":false,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"runtime","model_dir":"models","selected_model_filename":"model.gguf"}"#).unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.cancel_hotkey, "CapsLock+A");
+        assert_eq!(config.toggle_delivery_hotkey, "LCtrl+T");
     }
 
     #[test]

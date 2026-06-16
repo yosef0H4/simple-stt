@@ -33,8 +33,10 @@ class SimpleSttShell {
         this.ipc := IpcClient(this.ctlExe, this.supervisor.stateFile, this.supervisor.token, ObjBindMethod(this, "HandleServiceEvent"), this.logger)
         this.supervisor.AttachIpc(this.ipc)
         this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"))
-        this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger)
-        this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger)
+        this.capsController := CapsLockTapController(this.logger)
+        this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger, this.capsController)
+        this.cancelHotkey := HotkeyManager(ObjBindMethod(this, "CancelAll"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.settings := SettingsGui(this)
         this.tray := TrayController(this)
         this.modeTooltipTimer := ObjBindMethod(this, "HideModeTooltip")
@@ -47,7 +49,8 @@ class SimpleSttShell {
         try {
             capsMode := this.config.Get("capslock_behavior", "preserve_tap")
             this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), capsMode)
-            this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+A"), true, capsMode)
+            this.cancelHotkey.Configure(this.config.Get("cancel_hotkey", "CapsLock+A"), true, capsMode)
+            this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+D"), true, capsMode)
         } catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
             MsgBox(err.Message, "SimpleStt hotkey error", "Iconx")
@@ -177,6 +180,24 @@ class SimpleSttShell {
     NoopHotkeyUp() {
     }
 
+    CancelAll(*) {
+        hadActive := this.activeRecordingSession || this.sessions.Count || this.pendingStarts.Count || this.pendingStops.Count || this.typist.active || this.typist.queue.Length
+        if this.typist.active || this.typist.queue.Length
+            this.typist.Cancel("text delivery cancelled by global cancel", false)
+        if this.activeRecordingSession
+            this.logger.Write("warning", "recording cancelled by global cancel", this.activeRecordingSession)
+        this.activeRecordingSession := 0
+        this.sessions := Map()
+        this.pendingStarts := Map()
+        this.pendingStops := Map()
+        if this.ipc.ready
+            this.ipc.CallService("cancel")
+        if hadActive
+            this.Notice("Cancelled", "warning")
+        else
+            this.logger.Write("info", "global cancel pressed with no active shell work")
+    }
+
     ToggleDeliveryModeHotkey() {
         current := this.config.Get("text_delivery_mode", "paste_ctrl_v")
         next := current = "type" ? "paste_ctrl_v" : "type"
@@ -298,6 +319,7 @@ class SimpleSttShell {
         this.logger.Write("info", "shell stop reason=" . reason . " code=" . code)
         this.typist.Cancel("shell exiting", false)
         this.hotkeys.DisableBindings()
+        this.cancelHotkey.DisableBindings()
         this.deliveryToggleHotkey.DisableBindings()
         SetTimer(this.modeTooltipTimer, 0)
         ToolTip()

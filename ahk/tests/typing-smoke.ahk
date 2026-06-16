@@ -35,5 +35,13 @@ typistInstance.Cancel("test cleanup", false, true)
 if typistInstance.queue.Length != 0
     Fail("typist queue was not cleared by Cancel()")
 
+typistInstance.Begin(3, -1, "Cancel me", 3, 25, true)
+typistInstance.Begin(4, -1, "Queued cancel", 3, 25, true)
+typistInstance.Cancel("global cancel smoke", false, true)
+if typistInstance.active
+    Fail("typist should be inactive after explicit cancel")
+if typistInstance.queue.Length != 0
+    Fail("typist explicit cancel did not clear queue")
+
 SimpleSttConsoleLine("PASS: typist queue/cancel headless smoke")
 ExitApp(0)

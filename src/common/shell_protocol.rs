@@ -39,6 +39,7 @@ pub enum ShellCommand {
     Ping,
     StartRecording { session_id: u64 },
     StopRecording { session_id: u64 },
+    Cancel,
     PollEvents { after_seq: u64 },
     ReloadConfig,
     UnloadModel,

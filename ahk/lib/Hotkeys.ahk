@@ -107,81 +107,42 @@ class HotkeySpec {
     }
 }
 
-class HotkeyManager {
-    __New(onDown, onUp, logger) {
-        this.onDown := onDown
-        this.onUp := onUp
+class CapsLockTapController {
+    __New(logger) {
         this.logger := logger
-        this.spec := ""
-        this.enabled := false
-        this.recording := false
+        this.count := 0
+        this.installed := false
         this.capsPending := false
         this.capsConsumed := false
         this.capslockBehavior := "preserve_tap"
-        this.downCallback := ObjBindMethod(this, "HandleDown")
-        this.upCallback := ObjBindMethod(this, "HandleUp")
         this.capsDownCallback := ObjBindMethod(this, "HandleCapsDown")
         this.capsUpCallback := ObjBindMethod(this, "HandleCapsUp")
     }
 
-    Configure(label, enabled, capslockBehavior) {
-        this.DisableBindings()
-        this.spec := HotkeySpec.Parse(label)
+    Register(capslockBehavior) {
         this.capslockBehavior := capslockBehavior
-        this.enabled := enabled
-        if enabled
-            this.EnableBindings()
-        this.logger.Write("info", "hotkey configured label=" . this.spec["label"] . " enabled=" . SimpleSttBoolText(enabled))
-    }
-
-    EnableBindings() {
-        Hotkey(this.spec["down"], this.downCallback, "On")
-        Hotkey(this.spec["up"], this.upCallback, "On")
-        if this.spec["uses_capslock"] {
+        this.count += 1
+        if !this.installed {
             Hotkey("*CapsLock", this.capsDownCallback, "On")
             Hotkey("*CapsLock up", this.capsUpCallback, "On")
+            this.installed := true
         }
     }
 
-    DisableBindings() {
-        if this.recording {
-            this.recording := false
-            try this.onUp.Call()
-        }
-        if !IsObject(this.spec)
-            return
-        for binding in [this.spec["down"], this.spec["up"]]
-            try Hotkey(binding, "Off")
-        if this.spec["uses_capslock"] {
+    Unregister() {
+        if this.count > 0
+            this.count -= 1
+        if this.count = 0 && this.installed {
             try Hotkey("*CapsLock", "Off")
             try Hotkey("*CapsLock up", "Off")
+            this.installed := false
+            this.capsPending := false
+            this.capsConsumed := false
         }
-        this.recording := false
     }
 
-    SetEnabled(enabled) {
-        if this.enabled = enabled
-            return
-        this.DisableBindings()
-        this.enabled := enabled
-        if enabled
-            this.EnableBindings()
-    }
-
-    HandleDown(*) {
-        if !this.enabled || this.recording || !HotkeySpec.RequiredModifiersDown(this.spec)
-            return
-        this.recording := true
-        if this.spec["uses_capslock"]
-            this.capsConsumed := true
-        this.onDown.Call()
-    }
-
-    HandleUp(*) {
-        if !this.recording
-            return
-        this.recording := false
-        this.onUp.Call()
+    Consume() {
+        this.capsConsumed := true
     }
 
     HandleCapsDown(*) {
@@ -203,6 +164,83 @@ class HotkeyManager {
         this.capsPending := false
         this.capsConsumed := false
     }
+}
+
+class HotkeyManager {
+    __New(onDown, onUp, logger, capsController := "") {
+        this.onDown := onDown
+        this.onUp := onUp
+        this.logger := logger
+        this.capsController := IsObject(capsController) ? capsController : CapsLockTapController(logger)
+        this.spec := ""
+        this.enabled := false
+        this.recording := false
+        this.capslockBehavior := "preserve_tap"
+        this.capsRegistered := false
+        this.downCallback := ObjBindMethod(this, "HandleDown")
+        this.upCallback := ObjBindMethod(this, "HandleUp")
+    }
+
+    Configure(label, enabled, capslockBehavior) {
+        this.DisableBindings()
+        this.spec := HotkeySpec.Parse(label)
+        this.capslockBehavior := capslockBehavior
+        this.enabled := enabled
+        if enabled
+            this.EnableBindings()
+        this.logger.Write("info", "hotkey configured label=" . this.spec["label"] . " enabled=" . SimpleSttBoolText(enabled))
+    }
+
+    EnableBindings() {
+        Hotkey(this.spec["down"], this.downCallback, "On")
+        Hotkey(this.spec["up"], this.upCallback, "On")
+        if this.spec["uses_capslock"] {
+            this.capsController.Register(this.capslockBehavior)
+            this.capsRegistered := true
+        }
+    }
+
+    DisableBindings() {
+        if this.recording {
+            this.recording := false
+            try this.onUp.Call()
+        }
+        if !IsObject(this.spec)
+            return
+        for binding in [this.spec["down"], this.spec["up"]]
+            try Hotkey(binding, "Off")
+        if this.capsRegistered {
+            this.capsController.Unregister()
+            this.capsRegistered := false
+        }
+        this.recording := false
+    }
+
+    SetEnabled(enabled) {
+        if this.enabled = enabled
+            return
+        this.DisableBindings()
+        this.enabled := enabled
+        if enabled
+            this.EnableBindings()
+    }
+
+    HandleDown(*) {
+        if !this.enabled || this.recording || !HotkeySpec.RequiredModifiersDown(this.spec)
+            return
+        this.recording := true
+        if this.spec["uses_capslock"]
+            this.capsController.Consume()
+        this.onDown.Call()
+    }
+
+    HandleUp(*) {
+        if !this.recording
+            return
+        this.recording := false
+        this.onUp.Call()
+    }
+
 }
 
 class HotkeyRecorder {

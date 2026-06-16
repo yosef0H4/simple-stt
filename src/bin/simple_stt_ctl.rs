@@ -41,6 +41,7 @@ enum CommandKind {
         #[arg(long)]
         session_id: u64,
     },
+    Cancel,
     PollEvents {
         #[arg(long, default_value_t = 0)]
         after_seq: u64,
@@ -195,6 +196,7 @@ fn translate(command: CommandKind) -> ShellCommand {
         CommandKind::Ping => ShellCommand::Ping,
         CommandKind::StartRecording { session_id } => ShellCommand::StartRecording { session_id },
         CommandKind::StopRecording { session_id } => ShellCommand::StopRecording { session_id },
+        CommandKind::Cancel => ShellCommand::Cancel,
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
         CommandKind::ReloadConfig => ShellCommand::ReloadConfig,
         CommandKind::UnloadModel => ShellCommand::UnloadModel,
@@ -233,6 +235,9 @@ fn config_show() -> Result<ShellResponse> {
         "toggle_delivery_hotkey".into(),
         config.toggle_delivery_hotkey.clone(),
     );
+    response
+        .values
+        .insert("cancel_hotkey".into(), config.cancel_hotkey.clone());
     response.values.insert(
         "capslock_behavior".into(),
         match config.capslock_behavior {
@@ -423,6 +428,7 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
     let target = match key {
         "record_hotkey" => &mut config.record_hotkey,
         "toggle_delivery_hotkey" => &mut config.toggle_delivery_hotkey,
+        "cancel_hotkey" => &mut config.cancel_hotkey,
         "audio_device_contains" => &mut config.audio_device_contains,
         "parakeet_runtime_dir" => &mut config.parakeet_runtime_dir,
         "model_dir" => &mut config.model_dir,
@@ -603,12 +609,13 @@ mod tests {
         let mut config = AppConfig::default();
         apply_config_text(
             &mut config,
-            "hotkey_enabled\t0\nrecord_hotkey\tCapsLock+Q\naudio_gain\t2.5\ntext_delivery_mode\tpaste_ctrl_shift_v\ninference_device\tnvidia_gpu\n",
+            "hotkey_enabled\t0\nrecord_hotkey\tCapsLock+Q\ncancel_hotkey\tCapsLock+A\naudio_gain\t2.5\ntext_delivery_mode\tpaste_ctrl_shift_v\ninference_device\tnvidia_gpu\n",
         )
         .unwrap();
 
         assert!(!config.hotkey_enabled);
         assert_eq!(config.record_hotkey, "CapsLock+Q");
+        assert_eq!(config.cancel_hotkey, "CapsLock+A");
         assert_eq!(config.audio_gain, 2.5);
         assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlShiftV);
         assert_eq!(config.inference_device, InferenceDevice::NvidiaGpu);
