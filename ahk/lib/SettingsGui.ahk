@@ -139,7 +139,7 @@ class SettingsGui {
         this.controls["model_list"].OnEvent("Change", ObjBindMethod(this, "ChooseCatalogModel"))
         this.AddButton("download_model", "Download model", "DownloadModel", false, 2)
         this.AddButton("test_model", "Run model test", "TestModel", false, 2)
-        this.Hint("model_hint", 2, "Installed models are for loading now. The download catalog stays separate and highlights the recommendation for the selected device.")
+        this.Hint("model_hint", 2, "Recommended: NVIDIA GPU -> tdt_ctc-110m-f16.gguf. CPU/no GPU -> tdt_ctc-110m-q4_k.gguf.")
 
         ; ---- page 3: Output ----
         this.Panel("delivery_box", 3)

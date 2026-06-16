@@ -27,10 +27,38 @@ docs/memory-cleanup-validation.md
 On a Windows development machine:
 
 ```powershell
-.\scripts\check-prereqs.ps1 -RequireRuntime
-.\scripts\build-release.ps1
+.\scripts\bootstrap-dev.ps1
 .\scripts\run-dev.ps1 -SkipBuild
 ```
+
+`bootstrap-dev.ps1` checks or installs Rust, Python, and AutoHotkey v2 when `winget` is available, downloads the prebuilt Parakeet Windows CUDA runtime into the ignored `external\parakeet-runtime\parakeet-windows-cuda\` folder, builds the Rust binaries, and runs source validation. Use `.\scripts\bootstrap-dev.cmd` from Command Prompt.
+
+## Requirements
+
+Manual development setup requires:
+
+```text
+Windows 10/11
+Rust stable toolchain with Cargo
+Python 3.10 or newer
+AutoHotkey v2
+Parakeet Windows runtime at external\parakeet-runtime\parakeet-windows-cuda\
+```
+
+The runtime folder must contain at least:
+
+```text
+external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll
+external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
+```
+
+You can use the prebuilt CUDA runtime from:
+
+```text
+https://github.com/yosef0H4/parakeet-windows-cuda-build/releases/download/v0.0.1-sm86/parakeet-windows-cuda-sm86.zip
+```
+
+Packaging `artifacts\dist\simple-stt-setup.exe` also requires AutoHotkey's Ahk2Exe compiler and Inno Setup 6. NVIDIA GPU/CUDA hardware is recommended for the default `tdt_ctc-110m-f16.gguf`; CPU users should choose `tdt_ctc-110m-q4_k.gguf` from Settings.
 
 ## Shell-owned behavior
 
@@ -202,6 +230,10 @@ The retired monolith is no longer checked into the working tree. Use git history
 ## Install-relative paths
 
 Relative runtime/model directories resolve from the checkout root for Cargo `target\debug` / `target\release` binaries and from the executable directory for packaged binaries. Persisted config, logs, state, and cached catalog data are isolated per runtime root so portable, installed, and checkout/dev builds do not accidentally share the wrong model or runtime location. `build-distribution.cmd` and `scripts\build-distribution.ps1` stage `fixtures\parakeet-smoke.wav` for model testing.
+
+The source repository intentionally does not vendor Parakeet runtime binaries, GGUF model files, AutoHotkey installs, or unrelated external reference projects. Place a compatible Parakeet runtime under `external\parakeet-runtime\parakeet-windows-cuda\` for local development or packaging, and review upstream licenses before publishing any binary package that includes runtime/model artifacts.
+
+The default `build-distribution.cmd` installer includes the Parakeet runtime DLLs but does not embed a GGUF model. It offers a default-checked installer task to download the recommended model from Hugging Face; if that fails, installation continues and users can download a model later from Settings. Use `build-distribution.cmd -IncludeModel` only for an explicit offline/private bundle.
 
 ## License
 

@@ -1,5 +1,6 @@
 param(
     [switch]$SkipTests,
+    [switch]$IncludeModel,
     [string]$Ahk2Exe,
     [string]$AhkBase,
     [string]$Iscc
@@ -15,6 +16,27 @@ $ParakeetDest = Join-Path $Runtime 'external\parakeet-runtime\parakeet-windows-c
 
 function Require-File([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Required file is missing: $Path" }
+}
+function Get-Sha256([string]$Path) {
+    $Stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $Sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            (($Sha.ComputeHash($Stream) | ForEach-Object { $_.ToString('x2') }) -join '').ToUpperInvariant()
+        } finally {
+            $Sha.Dispose()
+        }
+    } finally {
+        $Stream.Dispose()
+    }
+}
+function Copy-DirectoryExcludingModels([string]$Source, [string]$Destination) {
+    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    Get-ChildItem -LiteralPath $Source -Force | Where-Object { $_.Name -ne 'models' } | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path (Join-Path $Destination 'models') -Force | Out-Null
 }
 function Resolve-Tool([string]$Provided, [string[]]$Candidates, [string]$Label) {
     if ($Provided) { Require-File $Provided; return $Provided }
@@ -39,7 +61,9 @@ $Iscc = Resolve-Tool $Iscc @(
 Require-File (Join-Path $Root 'ahk\simple-stt.ahk')
 Require-File (Join-Path $Root 'fixtures\parakeet-smoke.wav')
 Require-File (Join-Path $ParakeetSource 'bin\parakeet.dll')
-Require-File (Join-Path $ParakeetSource 'models\tdt_ctc-110m-f16.gguf')
+if ($IncludeModel) {
+    Require-File (Join-Path $ParakeetSource 'models\tdt_ctc-110m-f16.gguf')
+}
 
 $BuildRelease = Join-Path $PSScriptRoot 'build-release.ps1'
 if ($SkipTests) {
@@ -69,32 +93,40 @@ Set-Content -LiteralPath (Join-Path $Portable 'simple-stt.cmd') -Encoding ASCII 
 New-Item -ItemType Directory -Path (Join-Path $Runtime 'fixtures') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'fixtures\parakeet-smoke.wav') -Destination (Join-Path $Runtime 'fixtures') -Force
 New-Item -ItemType Directory -Path (Split-Path -Parent $ParakeetDest) -Force | Out-Null
-Copy-Item -LiteralPath $ParakeetSource -Destination $ParakeetDest -Recurse -Force
+if ($IncludeModel) {
+    Copy-Item -LiteralPath $ParakeetSource -Destination $ParakeetDest -Recurse -Force
+} else {
+    Copy-DirectoryExcludingModels $ParakeetSource $ParakeetDest
+}
 $Required = @(
     'runtime\simple-stt.exe',
     'runtime\simple-stt-capture.exe',
     'runtime\simple-stt-infer.exe',
     'runtime\simple-stt-ctl.exe',
     'runtime\fixtures\parakeet-smoke.wav',
-    'runtime\external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll',
-    'runtime\external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf'
+    'runtime\external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll'
 )
+if ($IncludeModel) {
+    $Required += 'runtime\external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf'
+}
 foreach ($RelativePath in $Required) { Require-File (Join-Path $Portable $RelativePath) }
 
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
 $Setup = Join-Path $Dist 'simple-stt-setup.exe'
 $Zip = Join-Path $Dist 'simple-stt-portable.zip'
+$InnoScript = Join-Path $Artifacts 'simple-stt.iss'
+Copy-Item -LiteralPath (Join-Path $Root 'resources\simple-stt.iss') -Destination $InnoScript -Force
 foreach ($Output in @($Setup, $Zip)) {
     if (Test-Path -LiteralPath $Output) { Remove-Item -LiteralPath $Output -Force }
 }
-& $Iscc (Join-Path $Artifacts 'simple-stt.iss')
+& $Iscc $InnoScript
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 Require-File $Setup
 Get-ChildItem -LiteralPath $Portable | Compress-Archive -DestinationPath $Zip -CompressionLevel Optimal
 Require-File $Zip
 Write-Host ''
 Write-Host 'Distribution build complete:'
-Get-FileHash -Algorithm SHA256 $Setup, $Zip | ForEach-Object {
-    Write-Host ('  ' + $_.Path)
-    Write-Host ('  SHA256 ' + $_.Hash)
+foreach ($Output in @($Setup, $Zip)) {
+    Write-Host ('  ' + $Output)
+    Write-Host ('  SHA256 ' + (Get-Sha256 $Output))
 }

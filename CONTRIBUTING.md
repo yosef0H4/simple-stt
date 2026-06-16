@@ -2,6 +2,15 @@
 
 Read `AGENTS.md`, `docs/architecture.md`, `docs/configuration.md`, and `docs/testing.md` first.
 
+Bootstrap a fresh Windows clone:
+
+```powershell
+.\scripts\bootstrap-dev.ps1
+.\scripts\run-dev.ps1 -SkipBuild
+```
+
+The bootstrap script installs or checks the developer tools, downloads the ignored Parakeet runtime/model payload, builds release binaries, and runs source validation. Use `-FullValidation` when you want the AutoHotkey runtime smoke suite too.
+
 Keep the ownership boundaries strict:
 
 ```text

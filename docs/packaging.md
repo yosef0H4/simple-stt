@@ -10,12 +10,20 @@ build-distribution.cmd
 
 This is the supported release command. It runs Rust tests, builds the release binaries, compiles the AutoHotkey shell, stages a self-contained portable layout, creates the installer, creates the ZIP archive, and prints SHA-256 hashes.
 
+The default public installer includes the Parakeet runtime DLLs but does not embed a GGUF speech model. It shows a default-checked task to download the recommended `tdt_ctc-110m-f16.gguf` model from Hugging Face during install. If that download fails because the user is offline or the link is unavailable, installation still succeeds and the user can download an approved model later from Settings.
+
 The implementation lives in `scripts\build-distribution.ps1`. `build-distribution.cmd` is the convenience wrapper and `scripts\package-release.ps1` is now a compatibility wrapper that forwards to the distribution builder.
 
 For a faster local packaging pass after tests have already passed:
 
 ```cmd
 build-distribution.cmd -SkipTests
+```
+
+For an explicit offline/private bundle that includes the default model:
+
+```cmd
+build-distribution.cmd -IncludeModel
 ```
 
 The native PowerShell entry point is:
@@ -55,7 +63,7 @@ simple-stt-portable\
         fixtures\parakeet-smoke.wav
         external\parakeet-runtime\parakeet-windows-cuda\
             bin\parakeet.dll
-            models\tdt_ctc-110m-f16.gguf
+            models\                    empty in the installer payload; optional install task can download a model
 ```
 
 ## Prerequisites
@@ -67,9 +75,18 @@ Rust stable toolchain with Cargo
 AutoHotkey v2 compiler (Ahk2Exe.exe)
 Inno Setup 6 compiler (ISCC.exe)
 external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll
-external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
 fixtures\parakeet-smoke.wav
 ```
+
+The source repository intentionally does not track `external\parakeet-runtime\`, `external\parakeet.cpp\`, `external\AutoHotkey\`, or unrelated local reference checkouts. Developers who do not want to build the Parakeet runtime can place a compatible prebuilt runtime under `external\parakeet-runtime\parakeet-windows-cuda\` before running the distribution builder.
+
+`-IncludeModel` additionally requires:
+
+```text
+external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
+```
+
+Before publishing a public installer or ZIP that includes `parakeet.dll` or GGUF model files, review the upstream runtime and model licenses and include the required notices/attribution. For source-only GitHub publishing, keep those runtime/model files out of git.
 
 The script auto-detects common Ahk2Exe and Inno Setup install locations. Override them when needed:
 
@@ -79,7 +96,15 @@ build-distribution.cmd -Ahk2Exe "C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.ex
 
 ## Development run
 
-For an editable source run with AutoHotkey installed:
+For a fresh Windows clone, bootstrap the developer environment first:
+
+```powershell
+.\scripts\bootstrap-dev.ps1
+```
+
+The bootstrap script checks or installs Rust, Python, and AutoHotkey v2 when `winget` is available, downloads the prebuilt Parakeet Windows CUDA runtime into `external\parakeet-runtime\parakeet-windows-cuda\`, builds release binaries, and runs source validation. Use `-SkipToolInstall` to only check tools, `-SkipRuntime` when the runtime is already staged manually, `-SkipTests` for a faster build-only pass, and `-FullValidation` to include the AutoHotkey runtime smoke suite.
+
+For an editable source run after bootstrap:
 
 ```powershell
 .\scripts\run-dev.ps1

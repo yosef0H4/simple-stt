@@ -13,9 +13,11 @@ Read first:
   docs\memory-cleanup-validation.md
 
 Windows development:
-  .\scripts\check-prereqs.ps1 -RequireRuntime
-  .\scripts\build-release.ps1
+  .\scripts\bootstrap-dev.ps1
   .\scripts\run-dev.ps1 -SkipBuild
+
+Command Prompt:
+  scripts\bootstrap-dev.cmd
 
 One-command distribution build:
   build-distribution.cmd
