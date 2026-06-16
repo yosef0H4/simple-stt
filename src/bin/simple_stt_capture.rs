@@ -459,7 +459,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             {
                 response.values.insert(
                     format!("installed_model.{index:03}"),
-                    format!("{}|{}|{}|{}", model.file, model.size_mb, model.recommended, model.quant),
+                    format!(
+                        "{}|{}|{}|{}",
+                        model.file, model.size_mb, model.recommended, model.quant
+                    ),
                 );
             }
             for (index, model) in simple_stt::models::downloadable_models(config)
@@ -468,7 +471,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             {
                 response.values.insert(
                     format!("catalog_model.{index:03}"),
-                    format!("{}|{}|{}|{}", model.file, model.size_mb, model.recommended, model.quant),
+                    format!(
+                        "{}|{}|{}|{}",
+                        model.file, model.size_mb, model.recommended, model.quant
+                    ),
                 );
             }
             response
@@ -542,7 +548,8 @@ fn handle_background(
                 }
                 Err(error) => {
                     tracing::error!(session_id, %error, "speech engine failed");
-                    overlay.notify_error("🎙 Speech engine failed — see log", Duration::from_secs(3));
+                    overlay
+                        .notify_error("🎙 Speech engine failed — see log", Duration::from_secs(3));
                     restore_overlay_work_state(overlay, active_recording, has_pending_transcript);
                     events.push(notice_event_for_session(
                         NoticeLevel::Error,
@@ -694,7 +701,7 @@ fn worker_config(config: &AppConfig) -> Result<WorkerConfig> {
         model_path: config.selected_model_path(),
         log_path: AppConfig::infer_log_path(),
         log_level: config.log_level.clone(),
-        inference_device: config.inference_device.clone(),
+        inference_device: config.inference_device,
         idle_timeout: Duration::from_secs(config.idle_worker_timeout_secs),
         shutdown_grace: Duration::from_millis(config.worker_shutdown_grace_ms),
     })

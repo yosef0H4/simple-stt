@@ -368,88 +368,145 @@ fn config_show() -> Result<ShellResponse> {
 fn config_save(input: &Path) -> Result<ShellResponse> {
     let raw = fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
     let mut config = AppConfig::load()?;
+    apply_config_text(&mut config, &raw)?;
+    config.save()?;
+    config_show()
+}
+
+fn apply_config_text(config: &mut AppConfig, raw: &str) -> Result<()> {
     for line in raw.lines() {
         if line.trim().is_empty() {
             continue;
         }
-        let (encoded_key, encoded_value) = line
-            .split_once('\t')
-            .context("config-save input must contain tab-separated key/value lines")?;
-        let key = unescape_field(encoded_key);
-        let key = key
-            .trim_start_matches(char::from_u32(65279).unwrap())
-            .to_owned();
-        let value = unescape_field(encoded_value);
-        match key.as_str() {
-            "hotkey_enabled" => config.hotkey_enabled = parse_bool(&value)?,
-            "record_hotkey" => config.record_hotkey = value.to_owned(),
-            "toggle_delivery_hotkey" => config.toggle_delivery_hotkey = value.to_owned(),
-            "capslock_behavior" => {
-                config.capslock_behavior = match value.as_str() {
-                    "preserve_tap" => CapsLockBehavior::PreserveTap,
-                    "always_off" => CapsLockBehavior::AlwaysOff,
-                    _ => anyhow::bail!("invalid capslock_behavior: {value}"),
-                }
-            }
-            "audio_device_contains" => config.audio_device_contains = value.to_owned(),
-            "audio_gain" => config.audio_gain = value.parse()?,
-            "typing_chunk_chars" => config.typing_chunk_chars = value.parse()?,
-            "typing_interval_ms" => config.typing_interval_ms = value.parse()?,
-            "trailing_space" => config.trailing_space = parse_bool(&value)?,
-            "text_delivery_mode" => {
-                config.text_delivery_mode = match value.as_str() {
-                    "type" => TextDeliveryMode::Type,
-                    "paste_ctrl_v" => TextDeliveryMode::PasteCtrlV,
-                    "paste_ctrl_shift_v" => TextDeliveryMode::PasteCtrlShiftV,
-                    _ => anyhow::bail!("invalid text_delivery_mode: {value}"),
-                }
-            }
-            "remove_punctuation" => config.remove_punctuation = parse_bool(&value)?,
-            "lowercase_output" => config.lowercase_output = parse_bool(&value)?,
-            "idle_worker_timeout_secs" => config.idle_worker_timeout_secs = value.parse()?,
-            "worker_shutdown_grace_ms" => config.worker_shutdown_grace_ms = value.parse()?,
-            "start_with_windows" => config.start_with_windows = parse_bool(&value)?,
-            "log_level" => {
-                config.log_level = match value.as_str() {
-                    "minimal" => LogLevel::Minimal,
-                    "normal" => LogLevel::Normal,
-                    "debug" => LogLevel::Debug,
-                    "extreme" => LogLevel::Extreme,
-                    _ => anyhow::bail!("invalid log_level: {value}"),
-                }
-            }
-            "diagnostic_overlay" => config.diagnostic_overlay = parse_bool(&value)?,
-            "log_transcripts" => config.log_transcripts = parse_bool(&value)?,
-            "inference_device" => {
-                config.inference_device = match value.as_str() {
-                    "cpu" => InferenceDevice::Cpu,
-                    "nvidia_gpu" => InferenceDevice::NvidiaGpu,
-                    "auto" => InferenceDevice::Auto,
-                    _ => anyhow::bail!("invalid inference_device: {value}"),
-                }
-            }
-            "ui_theme" => {
-                config.ui_theme = match value.as_str() {
-                    "light" => UiTheme::Light,
-                    "dark" => UiTheme::Dark,
-                    "auto" => UiTheme::Auto,
-                    _ => anyhow::bail!("invalid ui_theme: {value}"),
-                }
-            }
-            "parakeet_runtime_dir" => config.parakeet_runtime_dir = value.to_owned(),
-            "model_dir" => config.model_dir = value.to_owned(),
-            "selected_model_filename" => config.selected_model_filename = value.to_owned(),
-            _ => anyhow::bail!("unknown config key: {key}"),
-        }
+        let (key, value) = decode_config_line(line)?;
+        apply_config_field(config, &key, &value)?;
     }
-    config.save()?;
-    config_show()
+    Ok(())
 }
+
+fn decode_config_line(line: &str) -> Result<(String, String)> {
+    let (encoded_key, encoded_value) = line
+        .split_once('\t')
+        .context("config-save input must contain tab-separated key/value lines")?;
+    let key = unescape_field(encoded_key)
+        .trim_start_matches(char::from_u32(65279).unwrap())
+        .to_owned();
+    Ok((key, unescape_field(encoded_value)))
+}
+
+fn apply_config_field(config: &mut AppConfig, key: &str, value: &str) -> Result<()> {
+    if apply_bool_config(config, key, value)? || apply_string_config(config, key, value) {
+        return Ok(());
+    }
+    if apply_numeric_config(config, key, value)? || apply_enum_config(config, key, value)? {
+        return Ok(());
+    }
+    anyhow::bail!("unknown config key: {key}");
+}
+
+fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
+    let target = match key {
+        "hotkey_enabled" => &mut config.hotkey_enabled,
+        "trailing_space" => &mut config.trailing_space,
+        "remove_punctuation" => &mut config.remove_punctuation,
+        "lowercase_output" => &mut config.lowercase_output,
+        "start_with_windows" => &mut config.start_with_windows,
+        "diagnostic_overlay" => &mut config.diagnostic_overlay,
+        "log_transcripts" => &mut config.log_transcripts,
+        _ => return Ok(false),
+    };
+    *target = parse_bool(value)?;
+    Ok(true)
+}
+
+fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
+    let target = match key {
+        "record_hotkey" => &mut config.record_hotkey,
+        "toggle_delivery_hotkey" => &mut config.toggle_delivery_hotkey,
+        "audio_device_contains" => &mut config.audio_device_contains,
+        "parakeet_runtime_dir" => &mut config.parakeet_runtime_dir,
+        "model_dir" => &mut config.model_dir,
+        "selected_model_filename" => &mut config.selected_model_filename,
+        _ => return false,
+    };
+    *target = value.to_owned();
+    true
+}
+
+fn apply_numeric_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
+    match key {
+        "audio_gain" => config.audio_gain = value.parse()?,
+        "typing_chunk_chars" => config.typing_chunk_chars = value.parse()?,
+        "typing_interval_ms" => config.typing_interval_ms = value.parse()?,
+        "idle_worker_timeout_secs" => config.idle_worker_timeout_secs = value.parse()?,
+        "worker_shutdown_grace_ms" => config.worker_shutdown_grace_ms = value.parse()?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
+    match key {
+        "capslock_behavior" => config.capslock_behavior = parse_capslock_behavior(value)?,
+        "text_delivery_mode" => config.text_delivery_mode = parse_text_delivery_mode(value)?,
+        "log_level" => config.log_level = parse_log_level(value)?,
+        "inference_device" => config.inference_device = parse_inference_device(value)?,
+        "ui_theme" => config.ui_theme = parse_ui_theme(value)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
 fn parse_bool(value: &str) -> Result<bool> {
     match value {
         "true" | "1" => Ok(true),
         "false" | "0" => Ok(false),
         _ => anyhow::bail!("invalid boolean: {value}"),
+    }
+}
+
+fn parse_capslock_behavior(value: &str) -> Result<CapsLockBehavior> {
+    match value {
+        "preserve_tap" => Ok(CapsLockBehavior::PreserveTap),
+        "always_off" => Ok(CapsLockBehavior::AlwaysOff),
+        _ => anyhow::bail!("invalid capslock_behavior: {value}"),
+    }
+}
+
+fn parse_text_delivery_mode(value: &str) -> Result<TextDeliveryMode> {
+    match value {
+        "type" => Ok(TextDeliveryMode::Type),
+        "paste_ctrl_v" => Ok(TextDeliveryMode::PasteCtrlV),
+        "paste_ctrl_shift_v" => Ok(TextDeliveryMode::PasteCtrlShiftV),
+        _ => anyhow::bail!("invalid text_delivery_mode: {value}"),
+    }
+}
+
+fn parse_log_level(value: &str) -> Result<LogLevel> {
+    match value {
+        "minimal" => Ok(LogLevel::Minimal),
+        "normal" => Ok(LogLevel::Normal),
+        "debug" => Ok(LogLevel::Debug),
+        "extreme" => Ok(LogLevel::Extreme),
+        _ => anyhow::bail!("invalid log_level: {value}"),
+    }
+}
+
+fn parse_inference_device(value: &str) -> Result<InferenceDevice> {
+    match value {
+        "cpu" => Ok(InferenceDevice::Cpu),
+        "nvidia_gpu" => Ok(InferenceDevice::NvidiaGpu),
+        "auto" => Ok(InferenceDevice::Auto),
+        _ => anyhow::bail!("invalid inference_device: {value}"),
+    }
+}
+
+fn parse_ui_theme(value: &str) -> Result<UiTheme> {
+    match value {
+        "light" => Ok(UiTheme::Light),
+        "dark" => Ok(UiTheme::Dark),
+        "auto" => Ok(UiTheme::Auto),
+        _ => anyhow::bail!("invalid ui_theme: {value}"),
     }
 }
 
@@ -528,4 +585,46 @@ fn write_atomic(path: &Path, body: &str) -> Result<()> {
     file.flush()?;
     file.sync_all()?;
     replace_file_atomic(&temp, path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_config_line_strips_initial_bom() {
+        let (key, value) = decode_config_line("\u{feff}hotkey_enabled\tfalse").unwrap();
+        assert_eq!(key, "hotkey_enabled");
+        assert_eq!(value, "false");
+    }
+
+    #[test]
+    fn apply_config_text_updates_supported_field_types() {
+        let mut config = AppConfig::default();
+        apply_config_text(
+            &mut config,
+            "hotkey_enabled\t0\nrecord_hotkey\tCapsLock+Q\naudio_gain\t2.5\ntext_delivery_mode\tpaste_ctrl_shift_v\ninference_device\tnvidia_gpu\n",
+        )
+        .unwrap();
+
+        assert!(!config.hotkey_enabled);
+        assert_eq!(config.record_hotkey, "CapsLock+Q");
+        assert_eq!(config.audio_gain, 2.5);
+        assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlShiftV);
+        assert_eq!(config.inference_device, InferenceDevice::NvidiaGpu);
+    }
+
+    #[test]
+    fn apply_config_text_rejects_unknown_key() {
+        let mut config = AppConfig::default();
+        let error = apply_config_text(&mut config, "stale_setting\ttrue").unwrap_err();
+        assert!(format!("{error:#}").contains("unknown config key: stale_setting"));
+    }
+
+    #[test]
+    fn apply_config_text_rejects_invalid_enum_value() {
+        let mut config = AppConfig::default();
+        let error = apply_config_text(&mut config, "ui_theme\tneon").unwrap_err();
+        assert!(format!("{error:#}").contains("invalid ui_theme: neon"));
+    }
 }

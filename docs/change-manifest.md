@@ -93,7 +93,7 @@ build.rs
 
 ## Removed from the active graph
 
-The retired monolithic Rust source, Slint UI, Rust tray/hook/text-injection/startup code, screenshot utility, old unload integration test, duplicated `rust/` tree, old root tooltip helper, source zip, old resources, and old uppercase docs were removed from the working tree. Git history remains the reference if any of that material needs to be recovered.
+The retired monolithic Rust source, Slint UI, Rust tray/hook/text-injection/startup code, one-off patch helpers, screenshot utility, old unload integration test, duplicated `rust/` tree, old root tooltip helper, source zip, old resources, and old uppercase docs were removed from the working tree. Git history remains the reference if any of that material needs to be recovered.
 
 The stale pre-overhaul `Cargo.lock` was removed. A Windows release build should generate a fresh lockfile from the new dependency graph and commit/review it before release.
 

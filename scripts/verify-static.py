@@ -80,10 +80,21 @@ need("Cargo.toml", '"Win32_System_Threading"')
 lib = forbid("src/lib.rs", "pub mod parakeet_native;", "pub mod protocol;")
 if (root / "src/main.rs").exists():
     errors.append("legacy src/main.rs is still active")
+if (root / "ui/settings.slint").exists():
+    errors.append("inactive Slint settings UI must not be kept in the active tree")
+for stale_script in [
+    "scripts/apply_perf_patch.py",
+    "scripts/apply_remaining_patch.py",
+    "scripts/fix_models_cache.py",
+    "scripts/patch_refresh_models.py",
+    "scripts/patch_settings_gui.py",
+]:
+    if (root / stale_script).exists():
+        errors.append(f"stale one-off patch helper remains in active tree: {stale_script}")
 for binary in ["simple_stt_capture", "simple_stt_infer", "simple_stt_ctl"]:
     if f"src/bin/{binary}.rs" not in required_files:
         errors.append(f"required split binary not registered in verifier: {binary}")
-checks.append("active Cargo graph has split binaries and no Slint frontend dependency")
+checks.append("active Cargo graph has split binaries and no Slint frontend or stale patch helpers")
 
 # Windows visual styles require an embedded Common Controls v6 manifest.
 need("Cargo.toml", 'build = "build.rs"', 'embed-resource = "3"')

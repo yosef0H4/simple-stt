@@ -195,55 +195,56 @@ mod platform {
             gain,
             OUTPUT_FRAME_SAMPLES,
         )));
+        let stream_context = InputStreamContext {
+            assembler,
+            tx,
+            latest_level,
+            recording_active,
+            event_tx,
+        };
         let stream = match sample_format {
-            SampleFormat::F32 => build_stream::<f32>(
-                &device,
-                &config,
-                Arc::clone(&assembler),
-                tx.clone(),
-                latest_level.clone(),
-                recording_active.clone(),
-                event_tx.clone(),
-                |v| v,
-            )?,
-            SampleFormat::I16 => build_stream::<i16>(
-                &device,
-                &config,
-                Arc::clone(&assembler),
-                tx.clone(),
-                latest_level.clone(),
-                recording_active.clone(),
-                event_tx.clone(),
-                |v| v as f32 / 32768.0,
-            )?,
-            SampleFormat::U16 => build_stream::<u16>(
-                &device,
-                &config,
-                assembler,
-                tx,
-                latest_level,
-                recording_active,
-                event_tx,
-                |v| (v as f32 - 32768.0) / 32768.0,
-            )?,
+            SampleFormat::F32 => {
+                build_stream::<f32>(&device, &config, stream_context.clone(), |v| v)?
+            }
+            SampleFormat::I16 => {
+                build_stream::<i16>(&device, &config, stream_context.clone(), |v| {
+                    v as f32 / 32768.0
+                })?
+            }
+            SampleFormat::U16 => build_stream::<u16>(&device, &config, stream_context, |v| {
+                (v as f32 - 32768.0) / 32768.0
+            })?,
             other => return Err(anyhow!("unsupported microphone sample format: {other:?}")),
         };
         stream.play().context("starting microphone stream")?;
         Ok(CaptureHandle { _stream: stream })
     }
-    fn build_stream<T>(
-        device: &cpal::Device,
-        config: &StreamConfig,
+
+    #[derive(Clone)]
+    struct InputStreamContext {
         assembler: Arc<Mutex<FrameAssembler>>,
         tx: Sender<Vec<i16>>,
         latest_level: Option<Arc<AtomicU32>>,
         recording_active: Option<Arc<AtomicBool>>,
         event_tx: Option<Sender<AudioEvent>>,
+    }
+
+    fn build_stream<T>(
+        device: &cpal::Device,
+        config: &StreamConfig,
+        context: InputStreamContext,
         convert: impl Fn(T) -> f32 + Send + Sync + Copy + 'static,
     ) -> Result<Stream>
     where
         T: cpal::SizedSample + Copy,
     {
+        let InputStreamContext {
+            assembler,
+            tx,
+            latest_level,
+            recording_active,
+            event_tx,
+        } = context;
         let mut converted = Vec::new();
         let mut was_recording = false;
         Ok(device.build_input_stream(

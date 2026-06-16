@@ -21,6 +21,7 @@ parakeet-windows-cuda-sm86.zip
 # Generated diagnostics and packages
 artifacts/*
 !artifacts/.gitkeep
+lcov.info
 
 # Editors
 .vscode/
