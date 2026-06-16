@@ -56,7 +56,7 @@ class IpcClient {
         command := SimpleSttQuote(this.ctlExe) . " --state-file " . SimpleSttQuote(this.stateFile) . " --token " . SimpleSttQuote(this.token) . " --output " . SimpleSttQuote(output) . " " . arguments
         try {
             Run(command, A_ScriptDir, "Hide", &pid)
-            this.jobs[pid] := Map("path", output, "callback", callback, "kind", kind, "started", A_TickCount)
+            this.jobs[pid] := Map("path", output, "callback", callback, "kind", kind, "started", A_TickCount, "missing_since", 0)
             SetTimer(this.pollJobsTimer, -1)
             return pid
         } catch Error as err {
@@ -77,6 +77,14 @@ class IpcClient {
             elapsed := A_TickCount - job["started"]
             if !responseReady && ProcessExist(pid) && elapsed < 35000
                 continue
+            if !responseReady && !ProcessExist(pid) && elapsed < 35000 {
+                if !job["missing_since"] {
+                    job["missing_since"] := A_TickCount
+                    continue
+                }
+                if A_TickCount - job["missing_since"] < 250
+                    continue
+            }
             if !responseReady && elapsed >= 35000 {
                 if ProcessExist(pid)
                     try ProcessClose(pid)

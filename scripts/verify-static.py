@@ -126,7 +126,7 @@ typist = need("ahk/lib/Typist.ahk", "SendText(", "ClipboardAll()", 'A_Clipboard 
 checks.append("AHK owns tray, GUI, hotkeys, full-format clipboard-preserving paste modes, and foreground-safe Unicode typing")
 
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
-ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])')
+ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])', '"missing_since"', "A_TickCount - job[\"missing_since\"] < 250")
 supervisor_ahk = need("ahk/lib/ProcessSupervisor.ahk", "Run(command", "ProcessWaitClose", "ProcessClose", "SimpleSttRandomToken", "ResetServiceSession", "readyProbeInFlight", "this.startTimer")
 need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "ToggleDeliveryModeHotkey", "deliveryToggleHotkey")
 if "RunWait(command" in ipc_ahk:

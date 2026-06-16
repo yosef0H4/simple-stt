@@ -79,6 +79,7 @@ class SimpleSttShell {
         if !response["ok"] {
             this.logger.Write("error", "recording start rejected: " . response["message"], session)
             this.Notice("Audio service rejected recording — see log", "error")
+            this.ipc.CallService("stop-recording --session-id " . session)
             if this.activeRecordingSession = session
                 this.activeRecordingSession := 0
             if this.sessions.Has(session)

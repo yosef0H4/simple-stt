@@ -20,6 +20,7 @@ for %%F in (
   ahk\tests\typing-smoke.ahk
   ahk\tests\text-transform-smoke.ahk
   ahk\tests\tabprotocol-retry-smoke.ahk
+  ahk\tests\ipcclient-missing-response-smoke.ahk
   ahk\tests\full-smoke.ahk
 ) do (
   echo INFO: validate %%F
@@ -33,6 +34,7 @@ echo INFO: running AHK smoke tests
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\typing-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\text-transform-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\tabprotocol-retry-smoke.ahk" || exit /b 1
+"%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\ipcclient-missing-response-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\ipc-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\full-smoke.ahk" || exit /b 1
 
