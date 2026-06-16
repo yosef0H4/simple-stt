@@ -1,7 +1,7 @@
 [Setup]
 AppId={{D638F724-8CC9-4D12-9E63-BEC9FA0D29E4}
 AppName=simple-stt
-AppVersion=0.2.1
+AppVersion=0.2.2
 AppPublisher=simple-stt
 DefaultDirName={localappdata}\Programs\simple-stt
 DefaultGroupName=simple-stt
