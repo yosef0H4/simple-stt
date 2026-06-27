@@ -36,7 +36,7 @@ Official sources:
 | `A_TrayMenu` | Built-in tray menu object. | The shell deletes default entries and creates the complete Simple STT tray menu. |
 | `Menu` objects | v2 object API for menu manipulation. | Used through `A_TrayMenu.Add()`, `.Delete()`, and `.Default`. |
 | `TraySetIcon()` | Sets the tray icon. | Shell owns the icon. A stock shell icon is used until a product icon is packaged. |
-| `TrayTip()` | Displays tray notification balloons/toasts. v2 parameter order is text, title, options. | Used for concise service and cancellation notices. |
+| `TrayTip()` | Displays tray notification balloons/toasts. v2 parameter order is text, title, options. | Researched but no longer used; shell notices stay in logs or the Rust overlay instead of Windows notification toasts. |
 | `Gui()` | Constructs a GUI object. Controls and callbacks use object APIs in v2. | Settings are entirely implemented in `ahk/lib/SettingsGui.ahk`. |
 | GUI controls and events | Controls expose properties such as `.Value`/`.Text`; callbacks are registered with `OnEvent`. | GUI buttons dispatch only quick local work or asynchronous helper commands. |
 | `SetTimer()` | Repeated or negative one-shot timers schedule callbacks. | Drives helper completion polling, service event polling, service supervision, and paced transcript chunks. |

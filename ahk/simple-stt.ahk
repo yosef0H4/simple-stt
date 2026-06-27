@@ -168,9 +168,7 @@ class SimpleSttShell {
     }
 
     Notice(text, level := "info") {
-        option := level = "error" ? 3 : level = "warning" ? 2 : 1
         this.logger.Write(level, text)
-        TrayTip("🎙 " . text, "SimpleStt", option)
     }
 
     OpenSettings(*) {

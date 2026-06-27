@@ -40,7 +40,6 @@ class ProcessSupervisor {
         catch Error as err {
             this.pid := 0
             this.logger.Write("error", "capture-service launch failed: " . err.Message)
-            TrayTip("🎙 Audio service failed to start — retrying…", "SimpleStt", 3)
             SetTimer(this.startTimer, -2000)
             return
         }
@@ -48,7 +47,6 @@ class ProcessSupervisor {
         this.logger.Write("info", "capture-service start pid=" . pid)
         SetTimer(this.monitorTimer, 1000)
         SetTimer(this.readyTimer, 250)
-        TrayTip("🎙 Audio service starting…", "SimpleStt", 1)
     }
 
     ProbeReady(*) {
@@ -68,7 +66,6 @@ class ProcessSupervisor {
         SetTimer(this.ipc.pollEventsTimer, -1)
         SetTimer(this.readyTimer, 0)
         this.logger.Write("info", "capture-service ready pid=" . this.pid)
-        TrayTip("🎙 Audio service ready", "SimpleStt", 1)
     }
 
     Monitor(*) {
@@ -85,7 +82,6 @@ class ProcessSupervisor {
             return
         }
         this.logger.Write("error", "capture-service stopped unexpectedly pid=" . oldPid)
-        TrayTip("🎙 Audio service stopped — restarting…", "SimpleStt", 2)
         if IsObject(this.onRestart)
             this.onRestart.Call()
         SetTimer(this.startTimer, -300)
