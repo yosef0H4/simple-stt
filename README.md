@@ -2,6 +2,12 @@
 
 Simple STT is a Windows-only local voice typing app. Press a hotkey, speak, and it types or pastes the transcript into the app you were already using.
 
+## Showcase
+
+![Simple STT voice typing showcase](gifs/showcase%2C%20with%20actual%20real%20time%20speed.webp)
+
+![Simple STT settings showcase](gifs/gui%20showcase.webp)
+
 ## Using the app
 
 1. Install or unzip Simple STT.
