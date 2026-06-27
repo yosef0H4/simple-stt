@@ -8,6 +8,23 @@ Simple STT is a Windows-only local voice typing app. Press a hotkey, speak, and 
 
 ![Simple STT settings showcase](gifs/gui%20showcase.webp)
 
+## Install
+
+Download the latest version from the releases page:
+
+[Download Simple STT](https://github.com/yosef0H4/simple-stt/releases/latest)
+
+There are two downloads:
+
+```text
+simple-stt-setup.exe      recommended installer
+simple-stt-portable.zip   portable copy
+```
+
+The setup installer is recommended for most users. It can install the app shortcuts and download the recommended speech model during installation.
+
+The portable zip does not include a speech model by default. After launching it, open Settings from the tray icon and download a model there.
+
 ## Using the app
 
 1. Install or unzip Simple STT.
