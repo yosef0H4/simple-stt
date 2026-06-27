@@ -1,7 +1,6 @@
 param(
     [switch]$SkipTests,
     [switch]$IncludeModel,
-    [string]$Ahk2Exe,
     [string]$AhkBase,
     [string]$Iscc
 )
@@ -43,10 +42,6 @@ function Resolve-Tool([string]$Provided, [string[]]$Candidates, [string]$Label) 
     foreach ($Candidate in $Candidates) { if (Test-Path -LiteralPath $Candidate -PathType Leaf) { return $Candidate } }
     throw "$Label was not found. Pass its path explicitly."
 }
-$Ahk2Exe = Resolve-Tool $Ahk2Exe @(
-    "$env:ProgramFiles\AutoHotkey\Compiler\Ahk2Exe.exe",
-    "$env:LOCALAPPDATA\Programs\AutoHotkey\Compiler\Ahk2Exe.exe"
-) 'Ahk2Exe'
 $AhkBase = Resolve-Tool $AhkBase @(
     "$env:ProgramFiles\AutoHotkey\v2\AutoHotkey64.exe",
     "$env:ProgramFiles\AutoHotkey\v2\AutoHotkey.exe",
@@ -74,14 +69,9 @@ if ($SkipTests) {
 
 if (Test-Path -LiteralPath $Portable) { Remove-Item -LiteralPath $Portable -Recurse -Force }
 New-Item -ItemType Directory -Path $Runtime -Force | Out-Null
-$Shell = Join-Path $Runtime 'simple-stt.exe'
-$SourceScript = Join-Path $Root 'ahk\simple-stt.ahk'
-$CompileArgs = @('/in', "`"$SourceScript`"", '/out', "`"$Shell`"", '/base', "`"$AhkBase`"", '/silent', 'verbose')
-$Icon = Join-Path $Root 'icons\simple-stt.ico'
-if (Test-Path -LiteralPath $Icon) { $CompileArgs += @('/icon', "`"$Icon`"") }
-$CompileArgumentLine = $CompileArgs -join ' '
-$CompileProcess = Start-Process -FilePath $Ahk2Exe -ArgumentList $CompileArgumentLine -Wait -PassThru
-if ($CompileProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $Shell)) { throw "Ahk2Exe failed with exit code $($CompileProcess.ExitCode); expected output: $Shell" }
+Copy-Item -LiteralPath (Join-Path $Root 'ahk\simple-stt.ahk') -Destination $Runtime -Force
+Copy-Item -LiteralPath (Join-Path $Root 'ahk\lib') -Destination (Join-Path $Runtime 'lib') -Recurse -Force
+Copy-Item -LiteralPath $AhkBase -Destination (Join-Path $Runtime 'AutoHotkey64.exe') -Force
 
 foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe')) {
     Copy-Item -LiteralPath (Join-Path $Root "target\release\$Name") -Destination $Runtime -Force
@@ -89,7 +79,7 @@ foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-
 Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $Portable -Force
 Copy-Item -LiteralPath (Join-Path $Root 'THIRD_PARTY_NOTICES.md') -Destination $Portable -Force
 Copy-Item -LiteralPath (Join-Path $Root 'START_HERE.txt') -Destination $Portable -Force
-Set-Content -LiteralPath (Join-Path $Portable 'simple-stt.cmd') -Encoding ASCII -Value '@echo off','start "" "%~dp0runtime\simple-stt.exe"'
+Set-Content -LiteralPath (Join-Path $Portable 'simple-stt.cmd') -Encoding ASCII -Value '@echo off','start "" "%~dp0runtime\AutoHotkey64.exe" "%~dp0runtime\simple-stt.ahk"'
 New-Item -ItemType Directory -Path (Join-Path $Runtime 'fixtures') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'fixtures\parakeet-smoke.wav') -Destination (Join-Path $Runtime 'fixtures') -Force
 New-Item -ItemType Directory -Path (Split-Path -Parent $ParakeetDest) -Force | Out-Null
@@ -99,7 +89,8 @@ if ($IncludeModel) {
     Copy-DirectoryExcludingModels $ParakeetSource $ParakeetDest
 }
 $Required = @(
-    'runtime\simple-stt.exe',
+    'runtime\simple-stt.ahk',
+    'runtime\AutoHotkey64.exe',
     'runtime\simple-stt-capture.exe',
     'runtime\simple-stt-infer.exe',
     'runtime\simple-stt-ctl.exe',

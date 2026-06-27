@@ -3,7 +3,7 @@
 Simple STT is a Windows-only local dictation application redesigned around a thin AutoHotkey v2 desktop shell, a persistent lightweight Rust audio service, and a disposable Rust Parakeet inference worker.
 
 ```text
-simple-stt.ahk or simple-stt.exe
+simple-stt.ahk through bundled AutoHotkey64.exe
   └── simple-stt-capture.exe      persistent CPAL capture + fast overlay
         └── simple-stt-infer.exe  disposable Parakeet DLL/model process
 
@@ -58,7 +58,7 @@ You can use the prebuilt CUDA runtime from:
 https://github.com/yosef0H4/parakeet-windows-cuda-build/releases/download/v0.0.1-sm86/parakeet-windows-cuda-sm86.zip
 ```
 
-Packaging `artifacts\dist\simple-stt-setup.exe` also requires AutoHotkey's Ahk2Exe compiler and Inno Setup 6. NVIDIA GPU/CUDA hardware is recommended for the default `tdt_ctc-110m-f16.gguf`; CPU users should choose `tdt_ctc-110m-q4_k.gguf` from Settings.
+Packaging `artifacts\dist\simple-stt-setup.exe` also requires AutoHotkey v2 and Inno Setup 6. NVIDIA GPU/CUDA hardware is recommended for the default `tdt_ctc-110m-f16.gguf`; CPU users should choose `tdt_ctc-110m-q4_k.gguf` from Settings.
 
 ## Shell-owned behavior
 

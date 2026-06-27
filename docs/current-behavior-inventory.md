@@ -107,7 +107,7 @@ The new service preserves those capabilities. Checksums remain a known limitatio
 
 ## Old startup and logs
 
-`src/startup.rs` modified a per-user Windows Run registry value. The new shell uses an `A_Startup` shortcut that launches `simple-stt.ahk` in development or `simple-stt.exe` when compiled.
+`src/startup.rs` modified a per-user Windows Run registry value. The new shell uses an `A_Startup` shortcut that launches `simple-stt.ahk` through AutoHotkey v2 in development and through the bundled `AutoHotkey64.exe` in distribution.
 
 The old logger wrote one `latest.log`. The new architecture writes append-style component logs:
 

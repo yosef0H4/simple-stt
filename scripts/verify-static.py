@@ -161,7 +161,7 @@ checks.append("control IPC is loopback-only and versioned; raw PCM stays on fram
 # Canonical schema-v2 config, partial downloads, and process-exit diagnostics are present.
 need("src/config.rs", "MoveFileExW", "MOVEFILE_REPLACE_EXISTING", "schema1_is_migrated_and_backed_up", "runtime_root", "current_exe")
 need("src/models.rs", 'https://', 'gguf.partial.', "replace_file_atomic", "validate_model_filename", 'join("fixtures")')
-need("scripts/build-distribution.ps1", "fixtures\\parakeet-smoke.wav")
+need("scripts/build-distribution.ps1", "fixtures\\parakeet-smoke.wav", "AutoHotkey64.exe", "runtime\\simple-stt.ahk")
 need("scripts/build-release.ps1", "--bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl")
 need("scripts/memory-cleanup-validation.ps1", "Get-Process", "nvidia-smi", "unload-model")
 checks.append("schema migration, install-relative paths, atomic writes, HTTPS partial downloads, and diagnostics are present")

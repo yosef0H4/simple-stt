@@ -8,7 +8,7 @@ From the repository root, run:
 build-distribution.cmd
 ```
 
-This is the supported release command. It runs Rust tests, builds the release binaries, compiles the AutoHotkey shell, stages a self-contained portable layout, creates the installer, creates the ZIP archive, and prints SHA-256 hashes.
+This is the supported release command. It runs Rust tests, builds the release binaries, stages the AutoHotkey shell script with a bundled AutoHotkey v2 runtime, creates the installer, creates the ZIP archive, and prints SHA-256 hashes.
 
 The default public installer includes the Parakeet runtime DLLs but does not embed a GGUF speech model. It shows a default-checked task to download the recommended `tdt_ctc-110m-f16.gguf` model from Hugging Face during install. If that download fails because the user is offline or the link is unavailable, installation still succeeds and the user can download an approved model later from Settings.
 
@@ -56,7 +56,9 @@ simple-stt-portable\
     START_HERE.txt
     THIRD_PARTY_NOTICES.md
     runtime\
-        simple-stt.exe                      compiled AutoHotkey shell
+        AutoHotkey64.exe                    bundled AutoHotkey v2 runtime
+        simple-stt.ahk                      readable AutoHotkey shell entry point
+        lib\                                shell support scripts
         simple-stt-capture.exe
         simple-stt-infer.exe
         simple-stt-ctl.exe
@@ -72,7 +74,7 @@ The distribution builder expects these tools and files on the Windows developer 
 
 ```text
 Rust stable toolchain with Cargo
-AutoHotkey v2 compiler (Ahk2Exe.exe)
+AutoHotkey v2 runtime (AutoHotkey64.exe)
 Inno Setup 6 compiler (ISCC.exe)
 external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll
 fixtures\parakeet-smoke.wav
@@ -88,10 +90,10 @@ external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf
 
 Before publishing a public installer or ZIP that includes `parakeet.dll` or GGUF model files, review the upstream runtime and model licenses and include the required notices/attribution. For source-only GitHub publishing, keep those runtime/model files out of git.
 
-The script auto-detects common Ahk2Exe and Inno Setup install locations. Override them when needed:
+The script auto-detects common AutoHotkey v2 and Inno Setup install locations. Override them when needed:
 
 ```cmd
-build-distribution.cmd -Ahk2Exe "C:\Program Files\AutoHotkey\Compiler\Ahk2Exe.exe" -Iscc "C:\Users\you\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
+build-distribution.cmd -AhkBase "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" -Iscc "C:\Users\you\AppData\Local\Programs\Inno Setup 6\ISCC.exe"
 ```
 
 ## Development run

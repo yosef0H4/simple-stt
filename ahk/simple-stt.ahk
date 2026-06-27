@@ -304,7 +304,12 @@ class SimpleSttShell {
         shortcut := A_Startup . "\SimpleStt.lnk"
         enabled := this.config.Bool("start_with_windows")
         if enabled {
-            try FileCreateShortcut(A_ScriptFullPath, shortcut, A_ScriptDir)
+            try {
+                if A_IsCompiled
+                    FileCreateShortcut(A_ScriptFullPath, shortcut, A_ScriptDir)
+                else
+                    FileCreateShortcut(A_AhkPath, shortcut, A_ScriptDir, SimpleSttQuote(A_ScriptFullPath))
+            }
             catch Error as err
                 this.logger.Write("warning", "startup shortcut create failed: " . err.Message)
         } else if FileExist(shortcut) {

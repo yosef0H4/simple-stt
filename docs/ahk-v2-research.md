@@ -1,6 +1,6 @@
 # AutoHotkey v2 research for the Simple STT shell
 
-Research date: 2026-06-07. This document is documentation-first. All API claims below were checked against the official AutoHotkey v2 documentation or the official Ahk2Exe repository. Community snippets were not used as implementation authorities.
+Research date: 2026-06-07. This document is documentation-first. All API claims below were checked against the official AutoHotkey v2 documentation. Community snippets were not used as implementation authorities.
 
 ## Entry-point policy
 
@@ -51,7 +51,7 @@ Official sources:
 | `FileOpen()` and file objects | v2 uses file objects for reads, writes, and flushes. Pipe names can be opened as paths, but a direct pipe client would still add Win32 edge cases on the UI side. | Shell uses small UTF-8 response files written by disposable helpers. Rust owns socket and stream handling. |
 | `DllCall()` | Calls native functions with explicit types. The DLL/function separator is a single backslash. | Used only for `SystemFunction036` random token generation in the shell. Avoided for direct IPC. |
 | `Persistent()` | Keeps the script alive after its startup thread completes; v2 also automatically persists scripts with hotkeys, timers, or a GUI. | The shell calls `Persistent` explicitly after initialization for clarity. |
-| `FileCreateShortcut()` and `A_Startup` | A shortcut in the Startup folder is the documented simple login-start option. | `ApplyStartupRegistration()` creates or deletes `A_Startup\Simple STT.lnk`, targeting the script in development and the compiled shell in distribution. |
+| `FileCreateShortcut()` and `A_Startup` | A shortcut in the Startup folder is the documented simple login-start option. | `ApplyStartupRegistration()` creates or deletes `A_Startup\Simple STT.lnk`, targeting the script in development and the bundled AutoHotkey runtime plus script in distribution. |
 | String escaping | AutoHotkey uses the backtick as its escape character; a backslash is an ordinary literal character. | Path strings use one backslash. The helper tab codec explicitly maps one backslash to two for transport. |
 | `InputHook()` | v2 replacement for older input command patterns. | Hotkey recorder captures a final non-modifier key while sampling physical modifiers. |
 
@@ -101,16 +101,13 @@ Source: <https://www.autohotkey.com/docs/v2/lib/Send.htm>
 
 A direct AHK named-pipe implementation was prototyped on paper but rejected: opening and reading a pipe from the shell would either block a callback or require more native API plumbing. AHK callbacks stay short. The chosen shell IPC launches `simple-stt-ctl.exe` with `Run()`, records its PID, and polls process completion with `SetTimer()`. The helper handles JSON, the loopback socket, and UTF-8 response-file writes.
 
-## Ahk2Exe and directives
+## Distribution runtime
 
-Ahk2Exe is the official script-to-EXE converter and supports v2+ scripts. Development can run `ahk/simple-stt.ahk` with AutoHotkey v2 installed. Distribution compiles it to `simple-stt.exe`; end users do not need a separate AHK installation when the compiled shell is packaged.
-
-Compiler directives are comments beginning with `;@Ahk2Exe-...`. The first packaging pass uses command-line `/in`, `/out`, and optional `/icon` arguments rather than embedding many directives. A future branded package may add metadata directives once the icon and versioning assets are final.
+Development can run `ahk/simple-stt.ahk` with AutoHotkey v2 installed. Distribution packages the readable AHK scripts together with `AutoHotkey64.exe` and launches the script explicitly. End users do not need a separate AHK installation, and the release avoids an opaque compiled AHK blob.
 
 Official sources:
 
-- <https://github.com/AutoHotkey/Ahk2Exe>
-- <https://www.autohotkey.com/docs/v2/misc/Ahk2ExeDirectives.htm>
+- <https://www.autohotkey.com/docs/v2/Program.htm>
 
 ## Startup registration decision
 
@@ -119,4 +116,4 @@ Two common per-user Windows options were considered:
 1. HKCU `Software\\Microsoft\\Windows\\CurrentVersion\\Run`
 2. a shortcut in `A_Startup`
 
-The shell chooses a per-user `A_Startup\\Simple STT.lnk` shortcut through `FileCreateShortcut()`. This visibly targets the AHK shell or compiled shell and avoids carrying forward the old monolith registry registration code. Packaging must launch the compiled `simple-stt.exe`, not a Rust executable.
+The shell chooses a per-user `A_Startup\\Simple STT.lnk` shortcut through `FileCreateShortcut()`. This visibly targets the AHK shell in development or the bundled `AutoHotkey64.exe` plus script path in distribution and avoids carrying forward the old monolith registry registration code. Packaging must launch the AHK shell, not a Rust executable.

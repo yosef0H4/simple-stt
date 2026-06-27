@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 const MIN_RECORDING_SAMPLES: usize = 1_600; // 100 ms at 16 kHz.
 const EVENT_HISTORY_LIMIT: usize = 512;
+const MODEL_MISSING_NOTICE: &str = "Model missing — download in Settings";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -275,7 +276,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let mut event = ServiceEvent::simple("recording_started");
             event.session_id = Some(session_id);
             events.push(event);
-            if nonzero_pid(worker_pid).is_none() {
+            if nonzero_pid(worker_pid).is_none() && selected_model_available(config) {
                 warming.insert(session_id);
                 overlay.notify_info("🎙 Loading speech model…", None);
                 let mut loading = ServiceEvent::simple("model_loading");
@@ -339,6 +340,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     session_id,
                 ));
                 return ShellResponse::ok("recording rejected as too short");
+            }
+            if !selected_model_available(config) {
+                notify_missing_model(overlay, events, Some(session_id));
+                restore_overlay_work_state(overlay, false, !transcribing.is_empty());
+                return ShellResponse::ok("transcription skipped because speech model is missing");
             }
             transcribing.insert(session_id);
             overlay.set_primary(OverlayPrimary::Transcribing);
@@ -459,6 +465,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             ShellResponse::ok("speech-model worker shutdown requested")
         }
         ShellCommand::TestModel => {
+            if !selected_model_available(config) {
+                notify_missing_model(overlay, events, None);
+                return ShellResponse::ok("model test skipped because speech model is missing");
+            }
             let audio = simple_stt::models::smoke_audio_path();
             if let Err(error) = simple_stt::models::ensure_smoke_audio(&audio) {
                 return ShellResponse::error(error.to_string());
@@ -814,6 +824,27 @@ fn notice_event_for_session(level: NoticeLevel, text: &str, session_id: u64) -> 
     let mut event = notice_event(level, text);
     event.session_id = Some(session_id);
     event
+}
+fn selected_model_available(config: &AppConfig) -> bool {
+    config.selected_model_path().is_file()
+}
+fn notify_missing_model(
+    overlay: &OverlayHandle,
+    events: &mut EventBuffer,
+    session_id: Option<u64>,
+) {
+    overlay.notify_warning(
+        format!("🎙 {MODEL_MISSING_NOTICE}"),
+        Duration::from_secs(4),
+    );
+    match session_id {
+        Some(session_id) => events.push(notice_event_for_session(
+            NoticeLevel::Warning,
+            MODEL_MISSING_NOTICE,
+            session_id,
+        )),
+        None => events.push(notice_event(NoticeLevel::Warning, MODEL_MISSING_NOTICE)),
+    }
 }
 
 fn worker_config(config: &AppConfig) -> Result<WorkerConfig> {
