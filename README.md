@@ -1,6 +1,48 @@
 # Simple STT
 
-Simple STT is a Windows-only local dictation application redesigned around a thin AutoHotkey v2 desktop shell, a persistent lightweight Rust audio service, and a disposable Rust Parakeet inference worker.
+Simple STT is a Windows-only local voice typing app. Press a hotkey, speak, and it types or pastes the transcript into the app you were already using.
+
+## Using the app
+
+1. Install or unzip Simple STT.
+2. Launch `simple-stt.cmd`.
+3. Hold the record shortcut, speak, then release it.
+4. The transcript is inserted into the app that was active when you started recording.
+
+Default shortcuts:
+
+```text
+CapsLock+S  record while held
+CapsLock+A  cancel current recording/transcription/typing
+CapsLock+D  switch typing/paste delivery mode
+```
+
+Open the tray icon menu to change settings, choose a microphone, download or select a speech model, change shortcuts, switch CPU/GPU mode, reload the app, or quit.
+
+If the speech model is missing, open Settings and download one from the model section. The portable build may not include a model by default.
+
+The app is meant to stay running in the background. It loads the speech engine when needed and unloads the heavy part after it has been idle for a while.
+
+Fair warning: this app is vibe-coded and still has rough edges. I keep fighting machine-specific bugs, but I have not found a Windows voice typing setup I like better yet.
+
+## For developers
+
+The useful part of this project is the design as much as the app. It is a bunch of practical Windows tricks that can be copied, improved, or rebuilt.
+
+Problems I had with other voice typing apps, and how this one tries to solve them:
+
+| Problem | Simple STT approach |
+| --- | --- |
+| Global hotkeys and text delivery on Windows are unreliable, especially with unusual shortcuts like Caps Lock as a modifier. | Use AutoHotkey for the Windows-facing shell: hotkeys, GUI, target tracking, typing, and paste delivery. |
+| Some apps still use Whisper, which is not always the best fit for quick voice typing. | Use Parakeet, which has been faster, lighter, and often more accurate for this use case in my experience. |
+| Many apps load the model only after recording ends, so you wait after speaking. | Start warming the selected model as soon as recording begins, so it is often ready by the time you release the hotkey. |
+| Unloading only the model often still leaves heavy runtime memory behind. | Put Parakeet and the model in a disposable inference process that can fully exit after the idle timeout. |
+| Compiled AutoHotkey apps can upset antivirus tools. | Ship the `.ahk` scripts with a bundled AutoHotkey binary and launch through `simple-stt.cmd`. It is less tidy, but easier to inspect and less likely to look like a packed script executable. |
+| Desktop GUI and hotkey regressions are annoying to test manually. | Use AutoHotkey to smoke-test the AutoHotkey shell, settings GUI, hotkeys, and delivery paths. |
+
+Loaded memory use is still not tiny, roughly hundreds of MB depending on CPU/GPU mode, but the idle state is the part that matters most for an always-running background tool.
+
+### Architecture
 
 ```text
 simple-stt.cmd
@@ -13,7 +55,7 @@ simple-stt-ctl.exe                 disposable AHK control helper
 
 The key memory-cleanup guarantee is process exit: `simple-stt-infer.exe` is the only active component allowed to load `parakeet.dll` or a GGUF model. Repeated dictations reuse a warm worker until the configured idle timeout. Cleanup terminates that worker so Windows can reclaim its process RAM and VRAM allocations.
 
-## Start here
+### Start here
 
 Read:
 
@@ -34,7 +76,7 @@ On a Windows development machine:
 
 `bootstrap-dev.ps1` checks or installs Rust, Python, and AutoHotkey v2 when `winget` is available, downloads the prebuilt Parakeet Windows CUDA runtime into the ignored `external\parakeet-runtime\parakeet-windows-cuda\` folder, builds the Rust binaries, and runs source validation. Use `.\scripts\bootstrap-dev.cmd` from Command Prompt.
 
-## Requirements
+### Requirements
 
 Manual development setup requires:
 
@@ -61,7 +103,7 @@ https://github.com/yosef0H4/parakeet-windows-cuda-build/releases/download/v0.0.1
 
 Packaging `artifacts\dist\simple-stt-setup.exe` also requires AutoHotkey v2 and Inno Setup 6. NVIDIA GPU/CUDA hardware is recommended for the default `tdt_ctc-110m-f16.gguf`; CPU users should choose `tdt_ctc-110m-q4_k.gguf` from Settings.
 
-## Shell-owned behavior
+### Shell-owned behavior
 
 The AutoHotkey v2 shell owns the tray icon/menu, settings GUI, runtime hold-to-record hotkeys, hotkey recorder, Caps Lock tap behavior, start-with-Windows shortcut, foreground target tracking, transcript transforms, Unicode `SendText()` chunking, clipboard-preserving paste delivery, log opening, user notices, app reload, and exact-PID capture-service supervision.
 
@@ -77,7 +119,7 @@ paste_ctrl_shift_v
 
 The shell does not parse JSON, move PCM, read a long pipe, load the model, or perform a blocking socket operation from a callback. It starts disposable `simple-stt-ctl.exe` commands and polls completion with `SetTimer()`.
 
-## Rust-owned behavior
+### Rust-owned behavior
 
 `simple-stt-capture.exe` keeps CPAL audio warm, applies gain, downmixes, linearly resamples to 16 kHz mono PCM16, computes overlay levels, buffers only active recordings, owns the rapid Win32 overlay, publishes local control events, and supervises the worker.
 
@@ -85,9 +127,9 @@ When recording begins, `simple-stt-capture.exe` starts warming the speech model 
 
 `simple-stt-infer.exe` dynamically loads Parakeet, loads the selected GGUF lazily, handles framed PCM/WAV requests, returns transcripts, and exits after graceful shutdown or its idle backstop. Settings exposes an inference-device dropdown: `nvidia_gpu` uses the bundled CUDA backend and `cpu` forces CPU inference without VRAM use. The settings UI also separates installed-model selection from the downloadable catalog, uses a microphone dropdown instead of a free-text box, and shows absolute runtime/model paths.
 
-## Testing
+### Testing
 
-### Run the complete Windows validation suite
+#### Run the complete Windows validation suite
 
 From Command Prompt or PowerShell:
 
@@ -106,7 +148,7 @@ scripts\test-ahk-full.cmd
 
 The full suite builds current release binaries before running the AutoHotkey smoke tests, so stale `target\release` executables cannot hide source changes.
 
-### What the complete suite covers
+#### What the complete suite covers
 
 The combined suite verifies:
 
@@ -135,7 +177,7 @@ The end-to-end smoke uses an isolated temporary config and state directory. It d
 
 The paste smoke intentionally sends only `hello world` into controlled temporary edit boxes. It also places a custom non-text object format on the clipboard before pasting and asserts that the object format is restored afterward.
 
-### Run the settings GUI preview harness
+#### Run the settings GUI preview harness
 
 When editing `ahk/lib/SettingsGui.ahk`, validate with the console-first preview harness after each small batch so AHK syntax/runtime errors surface on stderr instead of as modal GUI popups:
 
@@ -157,7 +199,7 @@ artifacts\gui-loop\final-general.png
 
 A passing run reports `RESULT: PASS` and `screenshots: 13`. The preview loop safely exercises every settings button callback, save/reload flow, mock IPC path, and screenshot capture path without opening the real app or relying on live services.
 
-### Run only the AutoHotkey validation and runtime smoke suite
+#### Run only the AutoHotkey validation and runtime smoke suite
 
 ```bat
 scripts\test-ahk-full.cmd
@@ -181,7 +223,7 @@ The runner looks for AutoHotkey v2 at:
 
 Load-time AHK failures are written to stderr instead of GUI dialogs.
 
-### Run source-only checks
+#### Run source-only checks
 
 ```powershell
 .\scripts\test-static.ps1
@@ -196,7 +238,7 @@ python tools\ipc-poc\test_poc.py
 
 These checks do not require the speech model. They verify source invariants and the loopback IPC proof of concept.
 
-### Run Rust tests only
+#### Run Rust tests only
 
 ```powershell
 cargo test --all-targets
@@ -204,7 +246,7 @@ cargo test --all-targets
 
 This includes deterministic worker lifecycle integration tests using the test-only `simple_stt_mock_infer` child process. The mock worker is never included in release packaging.
 
-### Manual release checks still required
+#### Manual release checks still required
 
 Automation is intentionally strong, but it does not replace a final desktop pass. Before publishing a release, manually verify:
 
@@ -224,11 +266,7 @@ packaging with build-distribution.cmd
 
 See `docs/testing.md` and `docs/memory-cleanup-validation.md` for the detailed matrix.
 
-## Legacy source
-
-The retired monolith is no longer checked into the working tree. Use git history if you need to inspect the old structure.
-
-## Install-relative paths
+### Install-relative paths
 
 Relative runtime/model directories resolve from the checkout root for Cargo `target\debug` / `target\release` binaries and from the executable directory for packaged binaries. Persisted config, logs, state, and cached catalog data are isolated per runtime root so portable, installed, and checkout/dev builds do not accidentally share the wrong model or runtime location. `build-distribution.cmd` and `scripts\build-distribution.ps1` stage `fixtures\parakeet-smoke.wav` for model testing.
 
@@ -238,4 +276,6 @@ The default `build-distribution.cmd` installer includes the Parakeet runtime DLL
 
 ## License
 
-GPL-2.0-only. See `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+Simple STT is licensed under GPL-2.0-only. Some of the Rust tooltip implementation was directly referenced from AutoHotkey source code, so the project uses a compatible GPL license.
+
+See `LICENSE` and `THIRD_PARTY_NOTICES.md`.
