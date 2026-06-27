@@ -307,8 +307,13 @@ class SimpleSttShell {
             try {
                 if A_IsCompiled
                     FileCreateShortcut(A_ScriptFullPath, shortcut, A_ScriptDir)
-                else
-                    FileCreateShortcut(A_AhkPath, shortcut, A_ScriptDir, SimpleSttQuote(A_ScriptFullPath))
+                else {
+                    packagedLauncher := A_ScriptDir . "\..\simple-stt.cmd"
+                    if FileExist(packagedLauncher)
+                        FileCreateShortcut(packagedLauncher, shortcut, A_ScriptDir . "\..")
+                    else
+                        FileCreateShortcut(A_AhkPath, shortcut, A_ScriptDir, SimpleSttQuote(A_ScriptFullPath))
+                }
             }
             catch Error as err
                 this.logger.Write("warning", "startup shortcut create failed: " . err.Message)

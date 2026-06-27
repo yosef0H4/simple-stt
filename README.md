@@ -3,7 +3,8 @@
 Simple STT is a Windows-only local dictation application redesigned around a thin AutoHotkey v2 desktop shell, a persistent lightweight Rust audio service, and a disposable Rust Parakeet inference worker.
 
 ```text
-simple-stt.ahk through bundled AutoHotkey64.exe
+simple-stt.cmd
+  └── bundled AutoHotkey64.exe runs simple-stt.ahk
   └── simple-stt-capture.exe      persistent CPAL capture + fast overlay
         └── simple-stt-infer.exe  disposable Parakeet DLL/model process
 

@@ -68,6 +68,8 @@ simple-stt-portable\
             models\                    empty in the installer payload; optional install task can download a model
 ```
 
+Installer-created Start Menu, Desktop, and Startup shortcuts target `simple-stt.cmd`; the command file launches the bundled AutoHotkey runtime with `runtime\simple-stt.ahk`.
+
 ## Prerequisites
 
 The distribution builder expects these tools and files on the Windows developer machine:

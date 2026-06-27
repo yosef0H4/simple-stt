@@ -3,7 +3,8 @@
 ## Process boundaries
 
 ```text
-simple-stt.ahk through AutoHotkey64.exe
+simple-stt.cmd
+    launches bundled AutoHotkey64.exe with simple-stt.ahk
     thin AutoHotkey v2 desktop shell
     ├── tray icon and stateful menu
     ├── settings GUI and hotkey recorder
@@ -135,7 +136,7 @@ Routine unload stays in logs unless diagnostic overlay is enabled.
 
 ## Install-relative runtime paths
 
-Relative runtime and model directories resolve against the runtime root. Checkout builds under `target\debug` or `target\release` walk back to the repository root. Packaged shell scripts staged beside `AutoHotkey64.exe` resolve relative paths against that installed runtime directory. The bundled smoke fixture is `fixtures\parakeet-smoke.wav`.
+Relative runtime and model directories resolve against the runtime root. Checkout builds under `target\debug` or `target\release` walk back to the repository root. Packaged shortcuts target `simple-stt.cmd`, which launches `runtime\AutoHotkey64.exe` with `runtime\simple-stt.ahk`; the shell then resolves relative paths against the installed runtime directory. The bundled smoke fixture is `fixtures\parakeet-smoke.wav`.
 
 ## Helper subprocess completion
 
