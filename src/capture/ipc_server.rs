@@ -2,7 +2,7 @@ use crate::common::shell_protocol::{
     ClientMessage, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
 use anyhow::{Context, Result};
-use crossbeam_channel::{bounded, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
@@ -12,6 +12,10 @@ use std::time::Duration;
 pub struct ControlRequest {
     pub command: ShellCommand,
     pub reply: Sender<ShellResponse>,
+    /// Signals that the IPC thread finished attempting to flush the response.
+    /// The capture loop waits for this only during shutdown so the process does
+    /// not exit before the final acknowledgement reaches the client.
+    pub response_written: Receiver<()>,
 }
 
 pub struct IpcServer {
@@ -104,22 +108,26 @@ fn handle_client(
             _ => anyhow::bail!("expected a command after handshake"),
         };
         let (reply_tx, reply_rx) = bounded(1);
+        let (response_written_tx, response_written_rx) = bounded(1);
         control_tx
             .send(ControlRequest {
                 command,
                 reply: reply_tx,
+                response_written: response_written_rx,
             })
             .context("forwarding command to capture loop")?;
         let response = reply_rx
             .recv_timeout(Duration::from_secs(30))
             .context("waiting for capture-loop response")?;
-        write_json_line(
+        let write_result = write_json_line(
             &mut stream,
             &ServerMessage::Response {
                 request_id,
                 response,
             },
-        )?;
+        );
+        let _ = response_written_tx.send(());
+        write_result?;
     }
 }
 

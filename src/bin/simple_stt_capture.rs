@@ -199,6 +199,7 @@ fn main() -> Result<()> {
                 });
             },
             recv(control_rx) -> message => if let Ok(request) = message {
+                let response_written = request.response_written;
                 let response = handle_control(request.command, ControlContext {
                     config: &mut config,
                     worker: &worker,
@@ -214,6 +215,9 @@ fn main() -> Result<()> {
                     shutting_down: &mut shutting_down,
                 });
                 let _ = request.reply.send(response);
+                if shutting_down {
+                    let _ = response_written.recv_timeout(Duration::from_secs(5));
+                }
             },
             recv(timer) -> _ => {
                 if nonzero_pid(&worker_pid).is_some()

@@ -4,12 +4,17 @@
 //! the screen with `grim` at each step so the map/unmap/remap behaviour can be
 //! inspected. Run inside a Wayland session: `cargo run --bin overlay-e2e`.
 
+#[cfg(target_os = "linux")]
 use std::process::Command;
+#[cfg(target_os = "linux")]
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 use simple_stt::capture::overlay::OverlayHandle;
 
+#[cfg(target_os = "linux")]
 fn shot(name: &str) {
     let _ = std::fs::create_dir_all("/tmp/overlay_e2e");
     let path = format!("/tmp/overlay_e2e/{name}.png");
@@ -26,10 +31,12 @@ fn shot(name: &str) {
     println!("  shot {name} -> {path} (status={status:?}, written={ok})");
 }
 
+#[cfg(target_os = "linux")]
 fn sleep(ms: u64) {
     std::thread::sleep(Duration::from_millis(ms));
 }
 
+#[cfg(target_os = "linux")]
 fn main() {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
@@ -71,4 +78,9 @@ fn main() {
     overlay.hide();
     sleep(300);
     println!("done");
+}
+
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    println!("overlay-e2e is a Linux Wayland-only helper; skipping on this platform");
 }

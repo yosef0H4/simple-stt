@@ -1,4 +1,6 @@
-use anyhow::{Context, Result};
+#[cfg(not(windows))]
+use anyhow::Context;
+use anyhow::Result;
 use std::time::Duration;
 
 /// Force-terminates one known child PID and waits for the operating system to
