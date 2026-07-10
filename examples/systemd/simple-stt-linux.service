@@ -1,0 +1,12 @@
+[Unit]
+Description=Simple STT Linux capture daemon
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/path/to/simple-stt/linux/simple-stt-linux daemon
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 3;
+pub const CONFIG_SCHEMA_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
 #[serde(rename_all = "snake_case")]
@@ -163,10 +163,15 @@ impl UiTheme {
 #[serde(default)]
 pub struct AppConfig {
     pub schema_version: u32,
+    #[serde(skip_serializing_if = "skip_linux_bool_field")]
     pub hotkey_enabled: bool,
+    #[serde(skip_serializing_if = "skip_linux_string_field")]
     pub record_hotkey: String,
+    #[serde(skip_serializing_if = "skip_linux_string_field")]
     pub toggle_delivery_hotkey: String,
+    #[serde(skip_serializing_if = "skip_linux_string_field")]
     pub cancel_hotkey: String,
+    #[serde(skip_serializing_if = "skip_linux_capslock_field")]
     pub capslock_behavior: CapsLockBehavior,
     pub audio_device_contains: String,
     pub audio_gain: f32,
@@ -178,6 +183,7 @@ pub struct AppConfig {
     pub lowercase_output: bool,
     pub idle_worker_timeout_secs: u64,
     pub worker_shutdown_grace_ms: u64,
+    #[serde(skip_serializing_if = "skip_linux_bool_field")]
     pub start_with_windows: bool,
     pub log_level: LogLevel,
     pub diagnostic_overlay: bool,
@@ -214,8 +220,8 @@ impl Default for AppConfig {
             log_transcripts: false,
             inference_device: InferenceDevice::Auto,
             ui_theme: UiTheme::Auto,
-            parakeet_runtime_dir: r"external\parakeet-runtime\parakeet-windows-cuda".to_owned(),
-            model_dir: r"external\parakeet-runtime\parakeet-windows-cuda\models".to_owned(),
+            parakeet_runtime_dir: default_parakeet_runtime_dir(),
+            model_dir: default_model_dir(),
             selected_model_filename: "tdt_ctc-110m-f16.gguf".to_owned(),
         }
     }
@@ -236,6 +242,73 @@ struct LegacyConfig {
     record_hotkey: Option<String>,
     capslock_always_off: Option<bool>,
     log_level: Option<LogLevel>,
+}
+
+fn skip_linux_bool_field(_: &bool) -> bool {
+    cfg!(target_os = "linux")
+}
+
+fn skip_linux_string_field(_: &String) -> bool {
+    cfg!(target_os = "linux")
+}
+
+fn skip_linux_capslock_field(_: &CapsLockBehavior) -> bool {
+    cfg!(target_os = "linux")
+}
+
+fn default_parakeet_runtime_dir() -> String {
+    #[cfg(windows)]
+    {
+        r"external\parakeet-runtime\parakeet-windows-cuda".to_owned()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "external/parakeet-runtime/parakeet-linux".to_owned()
+    }
+    #[cfg(all(not(windows), not(target_os = "linux")))]
+    {
+        "external/parakeet-runtime/parakeet-native".to_owned()
+    }
+}
+
+fn default_model_dir() -> String {
+    #[cfg(windows)]
+    {
+        r"external\parakeet-runtime\parakeet-windows-cuda\models".to_owned()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        "external/parakeet-runtime/models".to_owned()
+    }
+    #[cfg(all(not(windows), not(target_os = "linux")))]
+    {
+        "external/parakeet-runtime/models".to_owned()
+    }
+}
+
+pub fn parakeet_native_library_candidates(runtime: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(windows)]
+    {
+        candidates.push(runtime.join("bin").join("parakeet.dll"));
+        candidates.push(runtime.join("parakeet.dll"));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        candidates.push(runtime.join("bin").join("libparakeet.so"));
+        candidates.push(runtime.join("lib").join("libparakeet.so"));
+        candidates.push(runtime.join("libparakeet.so"));
+        candidates.push(runtime.join("bin").join("parakeet.so"));
+        candidates.push(runtime.join("lib").join("parakeet.so"));
+        candidates.push(runtime.join("parakeet.so"));
+    }
+    #[cfg(target_os = "macos")]
+    {
+        candidates.push(runtime.join("bin").join("libparakeet.dylib"));
+        candidates.push(runtime.join("lib").join("libparakeet.dylib"));
+        candidates.push(runtime.join("libparakeet.dylib"));
+    }
+    candidates
 }
 
 impl AppConfig {
@@ -341,6 +414,29 @@ impl AppConfig {
             value.validate()?;
             return Ok(value);
         }
+        if schema_version == Some(3) {
+            let mut value: Self = serde_json::from_str(&raw)
+                .with_context(|| format!("parsing schema-3 {}", path.display()))?;
+            value.schema_version = CONFIG_SCHEMA_VERSION;
+            #[cfg(target_os = "linux")]
+            {
+                if value.parakeet_runtime_dir.contains("parakeet-windows-cuda") {
+                    value.parakeet_runtime_dir = default_parakeet_runtime_dir();
+                }
+                if value.model_dir.contains("parakeet-windows-cuda") {
+                    value.model_dir = default_model_dir();
+                }
+            }
+            value.validate()?;
+            let backup = path.with_extension("json.schema3.bak");
+            if !backup.exists() {
+                fs::copy(path, &backup).with_context(|| {
+                    format!("backing up schema-3 config to {}", backup.display())
+                })?;
+            }
+            value.save_to(path)?;
+            return Ok(value);
+        }
         if schema_version == Some(2) {
             let mut value: Self = serde_json::from_str(&raw)
                 .with_context(|| format!("parsing schema-2 {}", path.display()))?;
@@ -351,6 +447,15 @@ impl AppConfig {
                 .eq_ignore_ascii_case("CapsLock+A")
             {
                 value.toggle_delivery_hotkey = "CapsLock+D".to_owned();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                if value.parakeet_runtime_dir.contains("parakeet-windows-cuda") {
+                    value.parakeet_runtime_dir = default_parakeet_runtime_dir();
+                }
+                if value.model_dir.contains("parakeet-windows-cuda") {
+                    value.model_dir = default_model_dir();
+                }
             }
             value.validate()?;
             let backup = path.with_extension("json.schema2.bak");
@@ -395,12 +500,9 @@ impl AppConfig {
             value.parakeet_runtime_dir = v;
         }
         if let Some(v) = old.parakeet_model_path {
-            let path = PathBuf::from(v);
-            if let Some(parent) = path.parent() {
-                value.model_dir = parent.to_string_lossy().into_owned();
-            }
-            if let Some(file) = path.file_name() {
-                value.selected_model_filename = file.to_string_lossy().into_owned();
+            if let Some((model_dir, filename)) = split_legacy_model_path(&v) {
+                value.model_dir = model_dir;
+                value.selected_model_filename = filename;
             }
         }
         if let Some(v) = old.start_with_windows {
@@ -462,9 +564,15 @@ impl AppConfig {
     }
     pub fn validate_parakeet_files(&self) -> Result<()> {
         let runtime = self.parakeet_runtime_dir_path();
-        let dll = runtime.join("bin").join("parakeet.dll");
+        let library = parakeet_native_library_candidates(&runtime)
+            .into_iter()
+            .find(|path| path.exists());
+        anyhow::ensure!(
+            library.is_some(),
+            "Parakeet native library is missing under {}",
+            runtime.display()
+        );
         let model = self.selected_model_path();
-        anyhow::ensure!(dll.exists(), "Parakeet DLL is missing: {}", dll.display());
         anyhow::ensure!(
             model.exists(),
             "Parakeet GGUF model is missing: {}",
@@ -543,6 +651,28 @@ fn normalize_legacy_hotkey(value: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("+")
+}
+
+fn split_legacy_model_path(value: &str) -> Option<(String, String)> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let split_at = trimmed
+        .char_indices()
+        .filter_map(|(idx, ch)| (ch == '/' || ch == '\\').then_some(idx))
+        .next_back();
+    match split_at {
+        Some(idx) => {
+            let filename = trimmed[idx + 1..].trim();
+            if filename.is_empty() {
+                None
+            } else {
+                Some((trimmed[..idx].to_owned(), filename.to_owned()))
+            }
+        }
+        None => Some((default_model_dir(), trimmed.to_owned())),
+    }
 }
 
 /// Returns the runtime installation root for resolving relative configured paths.
@@ -634,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn schema2_round_trip() {
+    fn schema4_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
         let config = AppConfig {
@@ -645,13 +775,32 @@ mod tests {
         assert_eq!(AppConfig::load_from(&path).unwrap(), config);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn schema4_linux_config_may_omit_hotkey_fields() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            r#"{"schema_version":4,"audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"external/parakeet-runtime/parakeet-linux","model_dir":"external/parakeet-runtime/models","selected_model_filename":"tdt_ctc-110m-f16.gguf"}"#,
+        )
+        .unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert_eq!(config.record_hotkey, "CapsLock+S");
+        assert_eq!(config.cancel_hotkey, "CapsLock+A");
+        assert_eq!(
+            config.parakeet_runtime_dir,
+            "external/parakeet-runtime/parakeet-linux"
+        );
+    }
+
     #[test]
     fn schema1_is_migrated_and_backed_up() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
         fs::write(&path, r#"{"idle_timeout_secs":45,"typing_interval_ms":12,"typing_chunk_chars":4,"audio_gain":1.5,"audio_device_contains":"Mic","parakeet_runtime_dir":"runtime","parakeet_model_path":"models\\old.gguf","start_with_windows":true,"hotkey_enabled":true,"record_hotkey":"capslock+s","capslock_always_off":true,"log_level":"debug"}"#).unwrap();
         let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.schema_version, 3);
+        assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
         assert_eq!(config.idle_worker_timeout_secs, 45);
         assert_eq!(config.record_hotkey, "CapsLock+S");
         assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
@@ -661,12 +810,24 @@ mod tests {
     }
 
     #[test]
+    fn legacy_model_path_split_accepts_windows_and_plain_names() {
+        assert_eq!(
+            split_legacy_model_path(r"models\old.gguf"),
+            Some(("models".to_owned(), "old.gguf".to_owned()))
+        );
+        assert_eq!(
+            split_legacy_model_path("old.gguf"),
+            Some((default_model_dir(), "old.gguf".to_owned()))
+        );
+    }
+
+    #[test]
     fn schema2_migrates_cancel_hotkey_and_moves_default_toggle() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
         fs::write(&path, r#"{"schema_version":2,"hotkey_enabled":true,"record_hotkey":"CapsLock+S","toggle_delivery_hotkey":"CapsLock+A","capslock_behavior":"preserve_tap","audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"start_with_windows":false,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"runtime","model_dir":"models","selected_model_filename":"model.gguf"}"#).unwrap();
         let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.schema_version, 3);
+        assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
         assert_eq!(config.cancel_hotkey, "CapsLock+A");
         assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
         assert!(path.with_extension("json.schema2.bak").exists());

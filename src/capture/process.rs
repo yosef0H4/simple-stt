@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::time::Duration;
 
 /// Force-terminates one known child PID and waits for the operating system to

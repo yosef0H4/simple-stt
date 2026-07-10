@@ -261,6 +261,7 @@ impl WorkerSupervisor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        add_native_library_search_env(&mut command, &self.config.runtime_dir);
         let effective_device = self.config.inference_device.effective();
         tracing::info!(
             configured_device = self.config.inference_device.as_str(),
@@ -387,6 +388,38 @@ pub fn shutdown_shared(
             let _ = done_rx.recv_timeout(SHARED_SHUTDOWN_RECOVERY);
             Ok(())
         }
+    }
+}
+
+fn add_native_library_search_env(command: &mut Command, runtime_dir: &Path) {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let mut search_dirs = vec![
+            runtime_dir.join("bin"),
+            runtime_dir.join("lib"),
+            runtime_dir.to_path_buf(),
+        ];
+        search_dirs.retain(|path| path.exists());
+        if search_dirs.is_empty() {
+            return;
+        }
+        let key = if cfg!(target_os = "macos") {
+            "DYLD_LIBRARY_PATH"
+        } else {
+            "LD_LIBRARY_PATH"
+        };
+        let mut values = search_dirs
+            .into_iter()
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        if let Some(existing) = std::env::var_os(key) {
+            values.push(existing.to_string_lossy().into_owned());
+        }
+        command.env(key, values.join(":"));
+    }
+    #[cfg(windows)]
+    {
+        let _ = (command, runtime_dir);
     }
 }
 

@@ -96,6 +96,16 @@ struct ControlContext<'a> {
     shutting_down: &'a mut bool,
 }
 
+struct BackgroundContext<'a> {
+    overlay: &'a OverlayHandle,
+    events: &'a mut EventBuffer,
+    log_transcripts: bool,
+    active_recording: bool,
+    transcribing: &'a mut HashSet<u64>,
+    warming: &'a mut HashSet<u64>,
+    cancel_generation: &'a AtomicU64,
+}
+
 #[derive(Debug, Default)]
 struct EventBuffer {
     next_seq: u64,
@@ -177,7 +187,17 @@ fn main() -> Result<()> {
                 overlay.notify_error("🎙 Audio service error — see log", Duration::from_secs(3));
                 events.push(notice_event(NoticeLevel::Error, "Audio service error — see log"));
             },
-            recv(background_rx) -> message => if let Ok(result) = message { handle_background(result, &overlay, &mut events, config.log_transcripts, active.is_some(), &mut transcribing, &mut warming, &cancel_generation); },
+            recv(background_rx) -> message => if let Ok(result) = message {
+                handle_background(result, &mut BackgroundContext {
+                    overlay: &overlay,
+                    events: &mut events,
+                    log_transcripts: config.log_transcripts,
+                    active_recording: active.is_some(),
+                    transcribing: &mut transcribing,
+                    warming: &mut warming,
+                    cancel_generation: &cancel_generation,
+                });
+            },
             recv(control_rx) -> message => if let Ok(request) = message {
                 let response = handle_control(request.command, ControlContext {
                     config: &mut config,
@@ -587,23 +607,14 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
     }
 }
 
-fn handle_background(
-    result: BackgroundResult,
-    overlay: &OverlayHandle,
-    events: &mut EventBuffer,
-    log_transcripts: bool,
-    active_recording: bool,
-    transcribing: &mut HashSet<u64>,
-    warming: &mut HashSet<u64>,
-    cancel_generation: &AtomicU64,
-) {
+fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'_>) {
     match result {
         BackgroundResult::Transcript {
             generation,
             session_id,
             result,
         } => {
-            if cancel_generation.load(Ordering::SeqCst) != generation {
+            if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
                     session_id,
                     generation,
@@ -611,25 +622,31 @@ fn handle_background(
                 );
                 return;
             }
-            transcribing.remove(&session_id);
-            let has_pending_transcript = !transcribing.is_empty();
+            context.transcribing.remove(&session_id);
+            let has_pending_transcript = !context.transcribing.is_empty();
             match result {
                 Ok(text) if text.trim().is_empty() => {
-                    overlay.notify_warning("🎙 No speech detected", Duration::from_secs(2));
-                    restore_overlay_work_state(overlay, active_recording, has_pending_transcript);
-                    events.push(notice_event_for_session(
+                    context
+                        .overlay
+                        .notify_warning("🎙 No speech detected", Duration::from_secs(2));
+                    restore_overlay_work_state(
+                        context.overlay,
+                        context.active_recording,
+                        has_pending_transcript,
+                    );
+                    context.events.push(notice_event_for_session(
                         NoticeLevel::Warning,
                         "No speech detected",
                         session_id,
                     ));
                 }
                 Ok(text) => {
-                    if log_transcripts {
+                    if context.log_transcripts {
                         tracing::debug!(session_id, transcript = %text, "diagnostic transcript logging enabled");
                     }
                     restore_overlay_after_success(
-                        overlay,
-                        active_recording,
+                        context.overlay,
+                        context.active_recording,
                         has_pending_transcript,
                     );
                     let mut event = ServiceEvent::simple("transcript");
@@ -640,14 +657,19 @@ fn handle_background(
                         transcript_chars = event.text.chars().count(),
                         "transcript ready"
                     );
-                    events.push(event);
+                    context.events.push(event);
                 }
                 Err(error) => {
                     tracing::error!(session_id, %error, "speech engine failed");
-                    overlay
+                    context
+                        .overlay
                         .notify_error("🎙 Speech engine failed — see log", Duration::from_secs(3));
-                    restore_overlay_work_state(overlay, active_recording, has_pending_transcript);
-                    events.push(notice_event_for_session(
+                    restore_overlay_work_state(
+                        context.overlay,
+                        context.active_recording,
+                        has_pending_transcript,
+                    );
+                    context.events.push(notice_event_for_session(
                         NoticeLevel::Error,
                         "Speech engine failed — see log",
                         session_id,
@@ -657,7 +679,9 @@ fn handle_background(
         }
         BackgroundResult::ModelUnloaded { result } => match result {
             Ok(()) => {
-                overlay.notify_info("🎙 Speech model unloaded", Some(Duration::from_secs(2)));
+                context
+                    .overlay
+                    .notify_info("🎙 Speech model unloaded", Some(Duration::from_secs(2)));
             }
             Err(error) => tracing::warn!(%error, "worker shutdown failed"),
         },
@@ -665,7 +689,7 @@ fn handle_background(
             Ok(()) => tracing::info!("disposable inference-worker configuration applied"),
             Err(error) => {
                 tracing::error!(%error, "applying inference-worker configuration failed");
-                events.push(notice_event(
+                context.events.push(notice_event(
                     NoticeLevel::Error,
                     "Speech-worker settings failed — see log",
                 ));
@@ -675,7 +699,7 @@ fn handle_background(
             generation,
             session_id,
         } => {
-            if cancel_generation.load(Ordering::SeqCst) != generation {
+            if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
                     generation,
                     "discarding stale model-loaded event after cancellation"
@@ -683,8 +707,10 @@ fn handle_background(
                 return;
             }
             tracing::info!("speech model loaded; priming inference engine");
-            overlay.notify_info("🎙 Speech model loaded - warming up...", None);
-            events.push(ServiceEvent::simple("model_loaded"));
+            context
+                .overlay
+                .notify_info("🎙 Speech model loaded - warming up...", None);
+            context.events.push(ServiceEvent::simple("model_loaded"));
             let _ = session_id;
         }
         BackgroundResult::ModelWarmed {
@@ -693,9 +719,9 @@ fn handle_background(
             result,
         } => {
             if let Some(session_id) = session_id {
-                warming.remove(&session_id);
+                context.warming.remove(&session_id);
             }
-            if cancel_generation.load(Ordering::SeqCst) != generation {
+            if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
                     generation,
                     "discarding stale model-warmed event after cancellation"
@@ -705,12 +731,14 @@ fn handle_background(
             match result {
                 Ok(()) => {
                     tracing::info!("speech model warmed while recording");
-                    overlay.notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
-                    events.push(ServiceEvent::simple("model_ready"));
+                    context
+                        .overlay
+                        .notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
+                    context.events.push(ServiceEvent::simple("model_ready"));
                 }
                 Err(error) => {
                     tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
-                    overlay.notify_warning(
+                    context.overlay.notify_warning(
                         "🎙 Speech model load failed — transcription will retry",
                         Duration::from_secs(3),
                     );
@@ -718,7 +746,7 @@ fn handle_background(
             }
         }
         BackgroundResult::ModelTested { generation, result } => {
-            if cancel_generation.load(Ordering::SeqCst) != generation {
+            if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
                     generation,
                     "discarding stale model-test event after cancellation"
@@ -727,15 +755,19 @@ fn handle_background(
             }
             match result {
                 Ok(text) => {
-                    overlay.notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));
+                    context
+                        .overlay
+                        .notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));
                     let mut event = ServiceEvent::simple("model_test_complete");
                     event.text = format!("Model test passed ({} characters)", text.chars().count());
-                    events.push(event);
+                    context.events.push(event);
                 }
                 Err(error) => {
                     tracing::error!(%error, "model test failed");
-                    overlay.notify_error("🎙 Model test failed — see log", Duration::from_secs(3));
-                    events.push(notice_event(
+                    context
+                        .overlay
+                        .notify_error("🎙 Model test failed — see log", Duration::from_secs(3));
+                    context.events.push(notice_event(
                         NoticeLevel::Error,
                         "Model test failed — see log",
                     ));
@@ -755,7 +787,7 @@ fn handle_background(
             if let Some(total) = total {
                 event.values.insert("total".into(), total.to_string());
             }
-            events.push(event);
+            context.events.push(event);
         }
         BackgroundResult::DownloadFinished { filename, result } => match result {
             Ok(path) => {
@@ -764,11 +796,11 @@ fn handle_background(
                 event
                     .values
                     .insert("path".into(), path.display().to_string());
-                events.push(event);
+                context.events.push(event);
             }
             Err(error) => {
                 tracing::error!(%error, "model download failed");
-                events.push(notice_event(
+                context.events.push(notice_event(
                     NoticeLevel::Error,
                     "Model download failed — see log",
                 ));
@@ -833,10 +865,7 @@ fn notify_missing_model(
     events: &mut EventBuffer,
     session_id: Option<u64>,
 ) {
-    overlay.notify_warning(
-        format!("🎙 {MODEL_MISSING_NOTICE}"),
-        Duration::from_secs(4),
-    );
+    overlay.notify_warning(format!("🎙 {MODEL_MISSING_NOTICE}"), Duration::from_secs(4));
     match session_id {
         Some(session_id) => events.push(notice_event_for_session(
             NoticeLevel::Warning,

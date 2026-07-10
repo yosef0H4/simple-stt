@@ -106,19 +106,27 @@ checks.append("Windows binaries embed a Common Controls v6 manifest for modern t
 # Capture is lightweight and must never load Parakeet.
 active_capture = "\n".join(p.read_text(encoding="utf-8") for p in (root / "src/capture").glob("*.rs"))
 capture_bin = text("src/bin/simple_stt_capture.rs")
-for needle in ["libloading", "ParakeetNative", "Library::new", "parakeet_capi_"]:
+for needle in ["ParakeetNative", "parakeet_capi_"]:
     if needle in active_capture or needle in capture_bin:
         errors.append(f"capture service imports native Parakeet loader token {needle!r}")
 all_active_rs = {p.relative_to(root).as_posix(): p.read_text(encoding="utf-8") for p in (root / "src").rglob("*.rs")}
-loader_paths = [path for path, body in all_active_rs.items() if "use libloading::Library" in body]
-if loader_paths != ["src/infer/parakeet_native.rs"]:
-    errors.append(f"libloading import must exist only in src/infer/parakeet_native.rs, got {loader_paths}")
+loader_paths = [
+    path
+    for path, body in all_active_rs.items()
+    if "use libloading::Library" in body or "libloading::Library" in body
+]
+allowed_loader_paths = {"src/infer/parakeet_native.rs", "src/capture/overlay_font.rs"}
+if set(loader_paths) != allowed_loader_paths:
+    errors.append(
+        "libloading imports must be limited to the Parakeet infer loader and Linux font helper, "
+        f"got {loader_paths}"
+    )
 need("src/bin/simple_stt_infer.rs", "ParakeetNative", "worker idle timeout reached; exiting process", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck", "model warm-up begin", "model warm-up end")
 need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()>", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
 need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion", "cancel_generation", "ShellCommand::Cancel", "discarding stale transcript after cancellation", "had_warming", "had_transcribing")
 need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "inference_device: InferenceDevice", "PARAKEET_DEVICE", "InferenceDevice::Cpu", "InferenceDevice::NvidiaGpu", "InferenceDevice::Auto")
-need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 3", "cancel_hotkey", 'toggle_delivery_hotkey: "CapsLock+D"', 'cancel_hotkey: "CapsLock+A"', "schema2_migrates_cancel_hotkey_and_moves_default_toggle", "pub enum InferenceDevice", "NvidiaGpu", "Auto", "auto_inference_device", "inference_device: InferenceDevice")
+need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 4", "cancel_hotkey", 'toggle_delivery_hotkey: "CapsLock+D"', 'cancel_hotkey: "CapsLock+A"', "schema2_migrates_cancel_hotkey_and_moves_default_toggle", "pub enum InferenceDevice", "NvidiaGpu", "Auto", "auto_inference_device", "inference_device: InferenceDevice")
 need("ahk/lib/SettingsGui.ahk", '["auto", "nvidia_gpu", "cpu"]', 'toggle_delivery_hotkey', 'cancel_hotkey', 'config.Set("inference_device"')
 need("src/logging.rs", "component={component} pid={}", "prefix_lines", "component_prefix_survives_split_writes_and_multiline_events")
 need("src/capture/inference_supervisor.rs", '.arg("--log-level")', '.arg("--inference-device")')

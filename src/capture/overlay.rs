@@ -1,19 +1,28 @@
+#[path = "overlay_model.rs"]
+pub mod overlay_model;
+
+#[cfg(target_os = "linux")]
+#[path = "overlay_font.rs"]
+pub mod overlay_font;
+
+#[cfg(target_os = "linux")]
+#[path = "overlay_render.rs"]
+pub mod overlay_render;
+
 #[cfg(windows)]
 #[path = "overlay_windows.rs"]
 mod platform;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+#[path = "overlay_linux.rs"]
+mod platform;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
+    use super::overlay_model::OverlayPrimary;
     use anyhow::Result;
     use std::sync::{atomic::AtomicU32, Arc};
     use std::time::Duration;
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum OverlayPrimary {
-        Hidden,
-        Recording,
-        Transcribing,
-        Typing,
-    }
     #[derive(Debug, Clone)]
     pub struct OverlayHandle {
         level: Arc<AtomicU32>,
@@ -36,4 +45,8 @@ mod platform {
         pub fn hide(&self) {}
     }
 }
-pub use platform::{OverlayHandle, OverlayPrimary};
+pub use overlay_model::{
+    ascii_visualizer, empty_visualizer_levels, linux_overlay_lines, render_overlay_text,
+    set_visualizer_level, NoticeLevel, OverlayPrimary,
+};
+pub use platform::OverlayHandle;

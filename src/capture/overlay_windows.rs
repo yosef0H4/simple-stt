@@ -1,3 +1,7 @@
+use crate::capture::overlay::overlay_model::{
+    empty_visualizer_levels, render_overlay_text, set_visualizer_level, NoticeLevel,
+    OverlayPrimary, VisualizerLevels,
+};
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::mem::zeroed;
@@ -22,26 +26,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     PeekMessageW, SendMessageW, TranslateMessage, MSG, PM_REMOVE, WS_EX_TOPMOST, WS_POPUP,
 };
 
-const BAR_COUNT: usize = 10;
 const CURSOR_OFFSET: i32 = 16;
 const NOTICE_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const RECORDING_POLL_INTERVAL: Duration = Duration::from_millis(2);
 const MAX_TOOLTIP_WIDTH: i32 = 420;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OverlayPrimary {
-    Hidden,
-    Recording,
-    Transcribing,
-    Typing,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum NoticeLevel {
-    Info,
-    Warning,
-    Error,
-}
 
 #[derive(Debug, Clone)]
 pub struct OverlayHandle {
@@ -205,7 +193,7 @@ struct TooltipState {
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
-    animation_phase: usize,
+    visualizer_levels: VisualizerLevels,
     last_text: String,
     text_buf: Vec<u16>,
 }
@@ -223,7 +211,7 @@ impl TooltipState {
             notice: None,
             target_level: 0.0,
             display_level: 0.0,
-            animation_phase: 0,
+            visualizer_levels: empty_visualizer_levels(),
             last_text: String::new(),
             text_buf: Vec::new(),
         }
@@ -234,7 +222,7 @@ impl TooltipState {
         self.primary = OverlayPrimary::Recording;
         self.target_level = 0.0;
         self.display_level = 0.0;
-        self.animation_phase = 0;
+        self.visualizer_levels = empty_visualizer_levels();
     }
 
     fn set_primary(&mut self, primary: OverlayPrimary) {
@@ -242,6 +230,7 @@ impl TooltipState {
         if primary != OverlayPrimary::Recording {
             self.target_level = 0.0;
             self.display_level = 0.0;
+            self.visualizer_levels = empty_visualizer_levels();
         }
     }
 
@@ -307,6 +296,7 @@ impl TooltipState {
         self.notice = None;
         self.target_level = 0.0;
         self.display_level = 0.0;
+        self.visualizer_levels = empty_visualizer_levels();
         self.destroy_tooltip();
     }
 
@@ -327,7 +317,7 @@ impl TooltipState {
 
         if self.primary == OverlayPrimary::Recording {
             self.display_level = self.display_level * 0.10 + self.target_level * 0.90;
-            self.animation_phase = self.animation_phase.wrapping_add(1);
+            set_visualizer_level(&mut self.visualizer_levels, self.display_level);
         }
         let text = self.render_text();
         if text != self.last_text {
@@ -375,21 +365,11 @@ impl TooltipState {
     }
 
     fn render_text(&self) -> String {
-        let primary = match self.primary {
-            OverlayPrimary::Hidden => None,
-            OverlayPrimary::Recording => Some(format!(
-                "🎙 {}",
-                ascii_visualizer(self.display_level, self.animation_phase)
-            )),
-            OverlayPrimary::Transcribing => Some("🎙 Transcribing...".to_owned()),
-            OverlayPrimary::Typing => Some("🎙 Typing...".to_owned()),
-        };
-        match (primary, self.notice.as_ref()) {
-            (Some(primary), Some(notice)) => format!("{primary}\r\n{}", notice.text),
-            (Some(primary), None) => primary,
-            (None, Some(notice)) => notice.text.clone(),
-            (None, None) => String::new(),
-        }
+        render_overlay_text(
+            self.primary,
+            self.notice.as_ref().map(|notice| notice.text.as_str()),
+            &self.visualizer_levels,
+        )
     }
 
     fn ensure_tooltip(&mut self) -> Result<()> {
@@ -539,21 +519,6 @@ impl Drop for TooltipState {
     }
 }
 
-fn ascii_visualizer(level: f32, _phase: usize) -> String {
-    const GLYPHS: &[char] = &['▁', '▂', '▃', '▄', '▅', '▆', '▇'];
-    let level = level.clamp(0.0, 1.0);
-    let center = (BAR_COUNT as f32 - 1.0) * 0.5;
-    let mut line = String::with_capacity(BAR_COUNT * 3);
-    for idx in 0..BAR_COUNT {
-        let distance = (idx as f32 - center).abs() / center.max(1.0);
-        let envelope = (1.0 - distance * 0.88).max(0.12);
-        let strength = (level * envelope + 0.04).clamp(0.0, 1.0);
-        let glyph = GLYPHS[(strength * (GLYPHS.len() - 1) as f32).round() as usize];
-        line.push(glyph);
-    }
-    line
-}
-
 fn monitor_work_area(point: POINT) -> RECT {
     unsafe {
         let monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
@@ -588,16 +553,20 @@ fn tooltip_info_size() -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn recording_waveform_is_prefix_free_unicode_and_stationary() {
-        let first = ascii_visualizer(0.4, 0);
-        let next_phase = ascii_visualizer(0.4, 1);
-        let louder = ascii_visualizer(0.8, 0);
+        let mut levels = crate::capture::overlay::overlay_model::empty_visualizer_levels();
+        crate::capture::overlay::overlay_model::set_visualizer_level(&mut levels, 0.4);
+        let first = crate::capture::overlay::overlay_model::ascii_visualizer(&levels);
+        let same = crate::capture::overlay::overlay_model::ascii_visualizer(&levels);
+        crate::capture::overlay::overlay_model::set_visualizer_level(&mut levels, 0.8);
+        let louder = crate::capture::overlay::overlay_model::ascii_visualizer(&levels);
         assert!(!first.to_ascii_lowercase().contains("rec"));
-        assert_eq!(first.chars().count(), BAR_COUNT);
-        assert_eq!(first, next_phase);
+        assert_eq!(
+            first.chars().count(),
+            crate::capture::overlay::overlay_model::BAR_COUNT
+        );
+        assert_eq!(first, same);
         assert_ne!(first, louder);
         assert!(first.chars().all(|glyph| "▁▂▃▄▅▆▇".contains(glyph)));
     }

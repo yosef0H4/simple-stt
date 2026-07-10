@@ -302,3 +302,10 @@ The default `build-distribution.cmd` installer includes the Parakeet runtime DLL
 Simple STT is licensed under GPL-2.0-only. Some of the Rust tooltip implementation was directly referenced from AutoHotkey source code, so the project uses a compatible GPL license.
 
 See `LICENSE` and `THIRD_PARTY_NOTICES.md`.
+
+## Linux / Wayland minimal mode
+
+This overhaul includes a Linux shell that avoids AutoHotkey and does not store
+hotkey strings in the JSON config. Build the Rust binaries, start
+`target/release/simple-stt-linux daemon`, then bind `target/release/simple-stt-linux toggle` in
+your desktop's keyboard shortcut settings. See `docs/linux-wayland.md`.

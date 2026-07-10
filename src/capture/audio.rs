@@ -122,6 +122,34 @@ impl FrameAssembler {
 }
 
 pub fn rms_level(frame: &[i16]) -> f32 {
+    visualizer_level_from_rms(raw_rms(frame))
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AudioLevelMeter;
+impl AudioLevelMeter {
+    pub fn new() -> Self {
+        Self
+    }
+    pub fn reset(&mut self) {}
+    pub fn update(&mut self, rms: f32) -> AudioLevelReading {
+        let dbfs = rms_dbfs(rms);
+        AudioLevelReading {
+            rms,
+            dbfs,
+            level: visualizer_level_from_rms(rms),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AudioLevelReading {
+    pub rms: f32,
+    pub dbfs: f32,
+    pub level: f32,
+}
+
+pub fn raw_rms(frame: &[i16]) -> f32 {
     if frame.is_empty() {
         return 0.0;
     }
@@ -133,10 +161,23 @@ pub fn rms_level(frame: &[i16]) -> f32 {
         })
         .sum::<f32>()
         / frame.len() as f32;
-    (mean_square.sqrt() * 22.0).powf(0.62).clamp(0.0, 1.0)
+    mean_square.sqrt()
 }
 
-#[cfg(windows)]
+pub fn rms_dbfs(rms: f32) -> f32 {
+    if rms <= 0.000_001 {
+        -120.0
+    } else {
+        20.0 * rms.log10()
+    }
+}
+
+pub fn visualizer_level_from_rms(rms: f32) -> f32 {
+    let dbfs = rms_dbfs(rms);
+    ((dbfs + 55.0) / 37.0).clamp(0.0, 1.0).powf(1.25)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
 mod platform {
     use super::*;
     use anyhow::{anyhow, Context};
@@ -247,6 +288,9 @@ mod platform {
         } = context;
         let mut converted = Vec::new();
         let mut was_recording = false;
+        let mut level_meter = AudioLevelMeter::new();
+        let debug_levels = std::env::var_os("SIMPLE_STT_AUDIO_LEVEL_DEBUG").is_some();
+        let mut debug_frame_index: u64 = 0;
         Ok(device.build_input_stream(
             config,
             move |data: &[T], _| {
@@ -261,13 +305,36 @@ mod platform {
                 let mut assembler = assembler.lock().unwrap();
                 if !was_recording {
                     assembler.reset();
+                    level_meter.reset();
                     was_recording = true;
                 }
                 converted.clear();
                 converted.extend(data.iter().copied().map(convert));
                 for frame in assembler.push(&converted) {
+                    let raw_rms = raw_rms(&frame);
+                    let reading = level_meter.update(raw_rms);
                     if let Some(level) = &latest_level {
-                        level.store(rms_level(&frame).to_bits(), Ordering::Relaxed);
+                        level.store(reading.level.to_bits(), Ordering::Relaxed);
+                    }
+                    if debug_levels {
+                        debug_frame_index = debug_frame_index.wrapping_add(1);
+                        if debug_frame_index.is_multiple_of(5) {
+                            eprintln!(
+                                "audio_level raw_rms={:.6} dbfs={:.1} mapped={:.3} bars={}",
+                                reading.rms,
+                                reading.dbfs,
+                                reading.level,
+                                crate::capture::overlay::ascii_visualizer(&{
+                                    let mut levels =
+                                        crate::capture::overlay::empty_visualizer_levels();
+                                    crate::capture::overlay::set_visualizer_level(
+                                        &mut levels,
+                                        reading.level,
+                                    );
+                                    levels
+                                })
+                            );
+                        }
                     }
                     let _ = tx.try_send(frame);
                 }
@@ -283,13 +350,13 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use super::*;
     use anyhow::bail;
     pub struct CaptureHandle;
     pub fn list_input_devices() -> Result<Vec<String>> {
-        bail!("microphone capture is Windows-only")
+        bail!("microphone capture is not implemented for this platform")
     }
     pub fn start_capture(
         _: &str,
@@ -299,7 +366,7 @@ mod platform {
         _: Option<Arc<AtomicBool>>,
         _: Option<Sender<AudioEvent>>,
     ) -> Result<CaptureHandle> {
-        bail!("microphone capture is Windows-only")
+        bail!("microphone capture is not implemented for this platform")
     }
 }
 pub use platform::{list_input_devices, start_capture, CaptureHandle};
@@ -330,5 +397,28 @@ mod tests {
     #[test]
     fn empty_rms_is_zero() {
         assert_eq!(rms_level(&[]), 0.0);
+    }
+
+    #[test]
+    fn visualizer_level_uses_dbfs_noise_floor() {
+        assert_eq!(visualizer_level_from_rms(0.0001), 0.0);
+        let speech = visualizer_level_from_rms(0.03);
+        assert!(speech > 0.4 && speech < 1.0, "{speech}");
+        assert_eq!(visualizer_level_from_rms(1.0), 1.0);
+    }
+
+    #[test]
+    fn loudness_meter_tracks_absolute_level() {
+        let mut meter = AudioLevelMeter::new();
+        let quiet = meter.update(0.001);
+        let speech = meter.update(0.16);
+        assert!(
+            quiet.level < speech.level,
+            "louder audio should produce a higher level: quiet={quiet:?} speech={speech:?}"
+        );
+        assert!(
+            (speech.level - visualizer_level_from_rms(0.16)).abs() < f32::EPSILON,
+            "meter should use direct loudness mapping: {speech:?}"
+        );
     }
 }
