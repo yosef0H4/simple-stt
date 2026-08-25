@@ -51,6 +51,7 @@ simple-stt-infer.exe
 | Final typing | AHK shell | `SendText()` chunks; target HWND checked before every chunk. |
 | Service PID supervision | AHK shell | PID from `Run()`; graceful request then `ProcessWaitClose()` and exact-PID `ProcessClose()` fallback. |
 | Audio capture | capture service | CPAL stream stays warm while shell runs. |
+| Microphone preference | capture service | Empty preference follows the system default; a stable device ID is pinned and falls back temporarily. On Windows, Core Audio endpoint notifications trigger bounded readiness retries. The device is also resolved at recording start as a safety net, and switching never interrupts an active dictation. |
 | PCM buffer | capture service | Allocated/grown only for active recording. |
 | Rapid recording visualizer | capture service | Rust Win32 overlay. |
 | Parakeet DLL and model | infer worker | Isolated; capture service cannot import loader. |

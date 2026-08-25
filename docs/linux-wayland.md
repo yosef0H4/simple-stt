@@ -14,6 +14,12 @@ AutoHotkey shell with a Rust Linux shell.
   GGUF model. The capture daemon records audio and supervises the worker. When
   the worker idles out, process exit releases RAM/VRAM.
 - **Linux audio via CPAL.** The microphone capture path now builds on Linux too.
+- **Persistent microphone preference.** An empty `audio_device_contains` follows
+  ALSA's `default` capture PCM. A saved CPAL/ALSA device ID is preferred when
+  present, falls back to `default` while absent, and is restored on the next
+  recording request after it becomes available.
+  Linux device labels include the ALSA PCM name so duplicate hardware/plugin
+  entries remain distinguishable.
 - **OpenWhispr-style paste helper.** `resources/linux-fast-paste.c` is adapted
   from OpenWhispr and supports terminal-aware paste, Shift+Insert, XTest,
   optional uinput, and optional RemoteDesktop portal paste.
@@ -82,6 +88,12 @@ The default Linux config points there. You can also use absolute paths in
 
 Notice that there is no Linux hotkey field in the example. Desktop settings own
 that.
+
+CPAL uses ALSA as this build's Linux host. On PipeWire or PulseAudio desktops,
+ensure the ALSA `default`, `pipewire`, or `pulse` PCM is configured and usable.
+Prefer symbolic card PCM IDs (for example `plughw:CARD=Snowball,DEV=0`) over
+numeric card-order IDs such as `plughw:CARD=1,DEV=0`, because numeric ALSA card
+ordering can change after reconnects or reboots.
 
 ## Start the daemon
 

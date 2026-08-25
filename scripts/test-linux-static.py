@@ -24,11 +24,18 @@ def need(path: str, *needles: str) -> str:
 
 
 need("Cargo.toml", 'cpal = "0.17"', 'libloading = "0.8"')
-need("src/capture/audio.rs", 'cfg(any(windows, target_os = "linux"))', 'cpal::default_host')
+need(
+    "src/capture/audio.rs",
+    'cfg(any(windows, target_os = "linux"))',
+    'cpal::default_host',
+    'choose_input_device_id',
+    '.filter(|device| device.id().is_ok_and',
+    'cfg(target_os = "linux")',
+)
 need("src/infer/parakeet_native.rs", 'libparakeet.so', 'parakeet.so', 'parakeet_capi_load')
 need("src/capture/inference_supervisor.rs", 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'add_native_library_search_env')
 need("src/config.rs", 'CONFIG_SCHEMA_VERSION: u32 = 4', 'skip_linux_string_field', 'parakeet-linux', 'parakeet_native_library_candidates')
-need("src/capture/process.rs", 'use anyhow::{Context, Result};', 'kill')
+need("src/capture/process.rs", 'use anyhow::Context;', 'use anyhow::Result;', 'kill')
 need("Cargo.toml", 'name = "simple-stt-linux"', 'path = "src/bin/simple_stt_linux.rs"')
 linux_shell = need(
     "src/bin/simple_stt_linux.rs",

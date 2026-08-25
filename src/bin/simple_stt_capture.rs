@@ -22,6 +22,13 @@ use std::time::{Duration, Instant};
 const MIN_RECORDING_SAMPLES: usize = 1_600; // 100 ms at 16 kHz.
 const EVENT_HISTORY_LIMIT: usize = 512;
 const MODEL_MISSING_NOTICE: &str = "Model missing — download in Settings";
+const DEVICE_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_millis(100),
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -88,6 +95,10 @@ struct ControlContext<'a> {
     background_tx: &'a Sender<BackgroundResult>,
     overlay: &'a OverlayHandle,
     recording_active: &'a Arc<AtomicBool>,
+    capture: &'a mut Option<audio::CaptureHandle>,
+    capture_gain: &'a mut f32,
+    frame_tx: &'a Sender<Vec<i16>>,
+    audio_event_tx: &'a Sender<AudioEvent>,
     cancel_generation: &'a Arc<AtomicU64>,
     events: &'a mut EventBuffer,
     active: &'a mut Option<Recording>,
@@ -151,15 +162,29 @@ fn main() -> Result<()> {
     let cancel_generation = Arc::new(AtomicU64::new(0));
     let (frame_tx, frame_rx) = bounded::<Vec<i16>>(4096);
     let (audio_event_tx, audio_event_rx) = unbounded::<AudioEvent>();
-    let _capture = audio::start_capture(
+    let _device_notifications = audio::watch_device_changes(audio_event_tx.clone())
+        .map_err(|error| {
+            tracing::warn!(%error, "Windows audio endpoint notifications unavailable; recording-start recovery remains active");
+            error
+        })
+        .ok();
+    let mut capture = audio::start_capture(
         &config.audio_device_contains,
         config.audio_gain,
-        frame_tx,
+        frame_tx.clone(),
         Some(overlay.level_cell()),
         Some(Arc::clone(&recording_active)),
-        Some(audio_event_tx),
+        Some(audio_event_tx.clone()),
     )
-    .context("starting CPAL microphone capture")?;
+    .map_err(|error| {
+        tracing::warn!(%error, "no microphone available at capture-service startup; will retry when recording starts");
+        error
+    })
+    .ok();
+    if let Some(handle) = &capture {
+        log_audio_selection(handle.selection());
+    }
+    let mut capture_gain = config.audio_gain;
 
     let supervisor = WorkerSupervisor::new(worker_config(&config)?);
     let worker_pid = supervisor.pid_tracker();
@@ -178,14 +203,32 @@ fn main() -> Result<()> {
     let mut warming = HashSet::<u64>::new();
     let mut shutting_down = false;
     let idle_check_running = Arc::new(AtomicBool::new(false));
+    let mut preferred_detected_notice_sent = false;
+    let mut device_recovery: Option<DeviceRecovery> = None;
 
     while !shutting_down {
         select! {
             recv(frame_rx) -> message => if let (Some(recording), Ok(frame)) = (&mut active, message) { recording.samples.extend_from_slice(&frame); },
-            recv(audio_event_rx) -> message => if let Ok(AudioEvent::StreamError(error)) = message {
-                tracing::error!(%error, "audio service stream failure");
-                overlay.notify_error("🎙 Audio service error — see log", Duration::from_secs(3));
-                events.push(notice_event(NoticeLevel::Error, "Audio service error — see log"));
+            recv(audio_event_rx) -> message => if let Ok(audio_event) = message {
+                match audio_event {
+                    AudioEvent::StreamError { generation, error } => {
+                        if audio_error_is_current(capture.as_ref().map(|handle| handle.generation()), generation) {
+                            tracing::error!(%error, generation, "audio service stream failure");
+                            capture = None;
+                            device_recovery = Some(DeviceRecovery::new(Instant::now()));
+                            overlay.notify_warning("🎙 Microphone disconnected — reconnecting…", Duration::from_secs(3));
+                            events.push(notice_event(NoticeLevel::Warning, "Microphone disconnected — reconnecting…"));
+                        } else {
+                            tracing::debug!(%error, generation, "ignoring stale audio-stream error");
+                        }
+                    }
+                    AudioEvent::DeviceTopologyChanged => {
+                        tracing::debug!("audio endpoint topology changed");
+                        if device_recovery.is_none() {
+                            device_recovery = Some(DeviceRecovery::new(Instant::now()));
+                        }
+                    }
+                }
             },
             recv(background_rx) -> message => if let Ok(result) = message {
                 handle_background(result, &mut BackgroundContext {
@@ -207,6 +250,10 @@ fn main() -> Result<()> {
                     background_tx: &background_tx,
                     overlay: &overlay,
                     recording_active: &recording_active,
+                    capture: &mut capture,
+                    capture_gain: &mut capture_gain,
+                    frame_tx: &frame_tx,
+                    audio_event_tx: &audio_event_tx,
                     cancel_generation: &cancel_generation,
                     events: &mut events,
                     active: &mut active,
@@ -220,6 +267,68 @@ fn main() -> Result<()> {
                 }
             },
             recv(timer) -> _ => {
+                if active.is_none() {
+                    preferred_detected_notice_sent = false;
+                }
+                if device_recovery.as_ref().is_some_and(|retry| Instant::now() >= retry.next_attempt) {
+                    let now = Instant::now();
+                    let recovered = if active.is_some() {
+                        if config.audio_device_contains.trim().is_empty() {
+                            true
+                        } else {
+                            audio::resolve_input_device(&config.audio_device_contains).is_ok_and(|desired| {
+                                let preferred_ready = !desired.using_default_fallback;
+                                if preferred_ready && !preferred_detected_notice_sent {
+                                    preferred_detected_notice_sent = true;
+                                    overlay.notify_info(
+                                        "🎙 Preferred microphone ready — release and record again",
+                                        Some(Duration::from_secs(4)),
+                                    );
+                                    events.push(notice_event(
+                                        NoticeLevel::Info,
+                                        "Preferred microphone ready — release and record again",
+                                    ));
+                                }
+                                preferred_ready
+                            })
+                        }
+                    } else {
+                        match refresh_audio_capture(
+                            &config,
+                            &mut capture,
+                            &mut capture_gain,
+                            &frame_tx,
+                            &audio_event_tx,
+                            &overlay,
+                            &recording_active,
+                        ) {
+                            Ok(preferred_restored) => {
+                                if preferred_restored {
+                                    overlay.notify_info(
+                                        "🎙 Preferred microphone ready",
+                                        Some(Duration::from_secs(3)),
+                                    );
+                                    events.push(notice_event(
+                                        NoticeLevel::Info,
+                                        "Preferred microphone ready",
+                                    ));
+                                }
+                                config.audio_device_contains.trim().is_empty()
+                                    || capture.as_ref().is_some_and(|handle| !handle.selection().using_default_fallback)
+                            }
+                            Err(error) => {
+                                tracing::debug!(%error, "microphone not ready after endpoint change");
+                                false
+                            }
+                        }
+                    };
+                    if recovered {
+                        device_recovery = None;
+                    } else if !device_recovery.as_mut().is_some_and(|retry| retry.retry(now)) {
+                        tracing::debug!("preferred microphone did not become ready during bounded endpoint-change retries");
+                        device_recovery = None;
+                    }
+                }
                 if nonzero_pid(&worker_pid).is_some()
                     && !idle_check_running.swap(true, Ordering::SeqCst)
                 {
@@ -260,6 +369,85 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct DeviceRecovery {
+    attempt: usize,
+    next_attempt: Instant,
+}
+
+impl DeviceRecovery {
+    fn new(now: Instant) -> Self {
+        Self {
+            attempt: 0,
+            next_attempt: now + DEVICE_RETRY_DELAYS[0],
+        }
+    }
+
+    fn retry(&mut self, now: Instant) -> bool {
+        self.attempt += 1;
+        let Some(delay) = DEVICE_RETRY_DELAYS.get(self.attempt) else {
+            return false;
+        };
+        self.next_attempt = now + *delay;
+        true
+    }
+}
+
+fn log_audio_selection(selection: &audio::InputDeviceSelection) {
+    if selection.using_default_fallback {
+        tracing::warn!(
+            device_id = %selection.id,
+            device = %selection.label,
+            "preferred microphone unavailable; using Windows default temporarily"
+        );
+    } else {
+        tracing::info!(
+            device_id = %selection.id,
+            device = %selection.label,
+            "microphone capture active"
+        );
+    }
+}
+
+fn refresh_audio_capture(
+    config: &AppConfig,
+    capture: &mut Option<audio::CaptureHandle>,
+    capture_gain: &mut f32,
+    frame_tx: &Sender<Vec<i16>>,
+    audio_event_tx: &Sender<AudioEvent>,
+    overlay: &OverlayHandle,
+    recording_active: &Arc<AtomicBool>,
+) -> Result<bool> {
+    let was_using_fallback = capture
+        .as_ref()
+        .is_some_and(|handle| handle.selection().using_default_fallback);
+    let desired = audio::resolve_input_device(&config.audio_device_contains)?;
+    let device_changed = capture
+        .as_ref()
+        .is_none_or(|handle| handle.selection().id != desired.id);
+    let gain_changed = (*capture_gain - config.audio_gain).abs() > f32::EPSILON;
+    if !device_changed && !gain_changed {
+        return Ok(false);
+    }
+    let next_capture = audio::start_capture(
+        &config.audio_device_contains,
+        config.audio_gain,
+        frame_tx.clone(),
+        Some(overlay.level_cell()),
+        Some(Arc::clone(recording_active)),
+        Some(audio_event_tx.clone()),
+    )?;
+    let preferred_restored = was_using_fallback && !next_capture.selection().using_default_fallback;
+    log_audio_selection(next_capture.selection());
+    *capture = Some(next_capture);
+    *capture_gain = config.audio_gain;
+    Ok(preferred_restored)
+}
+
+fn audio_error_is_current(active_generation: Option<u64>, error_generation: u64) -> bool {
+    active_generation == Some(error_generation)
+}
+
 fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellResponse {
     let ControlContext {
         config,
@@ -268,6 +456,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         background_tx,
         overlay,
         recording_active,
+        capture,
+        capture_gain,
+        frame_tx,
+        audio_event_tx,
         cancel_generation,
         events,
         active,
@@ -290,6 +482,23 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             if active.is_some() {
                 return ShellResponse::error("a recording is already active");
             }
+            let preferred_restored = match refresh_audio_capture(
+                config,
+                capture,
+                capture_gain,
+                frame_tx,
+                audio_event_tx,
+                overlay,
+                recording_active,
+            ) {
+                Ok(preferred_restored) => preferred_restored,
+                Err(error) => {
+                    tracing::error!(%error, "microphone unavailable when recording was requested");
+                    overlay.notify_error("🎙 No microphone available", Duration::from_secs(3));
+                    events.push(notice_event(NoticeLevel::Error, "No microphone available"));
+                    return ShellResponse::error(error.to_string());
+                }
+            };
             recording_active.store(true, Ordering::Relaxed);
             *active = Some(Recording {
                 session_id,
@@ -297,6 +506,16 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 started: Instant::now(),
             });
             overlay.start_recording(0);
+            if preferred_restored {
+                overlay.notify_info(
+                    "🎙 Preferred microphone restored — recording with it now",
+                    Some(Duration::from_secs(3)),
+                );
+                events.push(notice_event(
+                    NoticeLevel::Info,
+                    "Preferred microphone restored — recording with it now",
+                ));
+            }
             let mut event = ServiceEvent::simple("recording_started");
             event.session_id = Some(session_id);
             events.push(event);
@@ -442,7 +661,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         }
         ShellCommand::ReloadConfig => match AppConfig::load() {
             Ok(next) => {
-                let restart_audio = next.audio_device_contains != config.audio_device_contains
+                let audio_changed = next.audio_device_contains != config.audio_device_contains
                     || (next.audio_gain - config.audio_gain).abs() > f32::EPSILON
                     || next.log_level != config.log_level;
                 match worker_config(&next) {
@@ -462,13 +681,13 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                             let _ = tx.send(BackgroundResult::WorkerConfigReplaced { result });
                         });
                         tracing::info!(
-                            restart_audio,
+                            audio_changed,
                             "configuration reload accepted; worker changes queued"
                         );
                         let mut response = ShellResponse::ok("configuration reload queued");
                         response
                             .values
-                            .insert("restart_audio_service".into(), restart_audio.to_string());
+                            .insert("restart_audio_service".into(), "false".into());
                         response
                     }
                     Err(error) => ShellResponse::error(error.to_string()),
@@ -547,7 +766,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             Ok(devices) => {
                 let mut response = ShellResponse::ok("microphone devices");
                 for (index, device) in devices.into_iter().enumerate() {
-                    response.values.insert(format!("input.{index:03}"), device);
+                    response
+                        .values
+                        .insert(format!("input.{index:03}.label"), device.label);
+                    response
+                        .values
+                        .insert(format!("input.{index:03}.id"), device.id);
                 }
                 response
             }
@@ -951,5 +1175,25 @@ mod tests {
             overlay_primary_for_work(false, false),
             OverlayPrimary::Hidden
         );
+    }
+
+    #[test]
+    fn stale_audio_error_does_not_invalidate_replacement_stream() {
+        assert!(audio_error_is_current(Some(7), 7));
+        assert!(!audio_error_is_current(Some(8), 7));
+        assert!(!audio_error_is_current(None, 7));
+    }
+
+    #[test]
+    fn endpoint_recovery_retries_are_bounded() {
+        let start = Instant::now();
+        let mut recovery = DeviceRecovery::new(start);
+        assert_eq!(recovery.next_attempt, start + DEVICE_RETRY_DELAYS[0]);
+        for (attempt, delay) in DEVICE_RETRY_DELAYS.iter().enumerate().skip(1) {
+            let now = start + Duration::from_secs(attempt as u64);
+            assert!(recovery.retry(now));
+            assert_eq!(recovery.next_attempt, now + *delay);
+        }
+        assert!(!recovery.retry(start + Duration::from_secs(10)));
     }
 }

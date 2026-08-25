@@ -2,7 +2,8 @@ param(
     [switch]$SkipTests,
     [switch]$IncludeModel,
     [string]$AhkBase,
-    [string]$Iscc
+    [string]$Iscc,
+    [string]$CargoTargetDir
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
@@ -12,6 +13,13 @@ $Dist = Join-Path $Artifacts 'dist'
 $Runtime = Join-Path $Portable 'runtime'
 $ParakeetSource = Join-Path $Root 'external\parakeet-runtime\parakeet-windows-cuda'
 $ParakeetDest = Join-Path $Runtime 'external\parakeet-runtime\parakeet-windows-cuda'
+$ResolvedTargetDir = if ($CargoTargetDir) {
+    [System.IO.Path]::GetFullPath($CargoTargetDir)
+} elseif ($env:CARGO_TARGET_DIR) {
+    [System.IO.Path]::GetFullPath($env:CARGO_TARGET_DIR)
+} else {
+    Join-Path $Root 'target'
+}
 
 function Require-File([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Required file is missing: $Path" }
@@ -62,9 +70,9 @@ if ($IncludeModel) {
 
 $BuildRelease = Join-Path $PSScriptRoot 'build-release.ps1'
 if ($SkipTests) {
-    & $BuildRelease -SkipTests
+    & $BuildRelease -SkipTests -CargoTargetDir $ResolvedTargetDir
 } else {
-    & $BuildRelease
+    & $BuildRelease -CargoTargetDir $ResolvedTargetDir
 }
 
 if (Test-Path -LiteralPath $Portable) { Remove-Item -LiteralPath $Portable -Recurse -Force }
@@ -74,7 +82,7 @@ Copy-Item -LiteralPath (Join-Path $Root 'ahk\lib') -Destination (Join-Path $Runt
 Copy-Item -LiteralPath $AhkBase -Destination (Join-Path $Runtime 'AutoHotkey64.exe') -Force
 
 foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe')) {
-    Copy-Item -LiteralPath (Join-Path $Root "target\release\$Name") -Destination $Runtime -Force
+    Copy-Item -LiteralPath (Join-Path $ResolvedTargetDir "release\$Name") -Destination $Runtime -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $Portable -Force
 Copy-Item -LiteralPath (Join-Path $Root 'THIRD_PARTY_NOTICES.md') -Destination $Portable -Force

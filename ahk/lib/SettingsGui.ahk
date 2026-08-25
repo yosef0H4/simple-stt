@@ -24,6 +24,7 @@ class SettingsGui {
         this.buttonCallbacks := Map()
         this.installedModelChoices := Map()
         this.catalogModelChoices := Map()
+        this.inputDeviceChoices := Map()
         this.recorder := HotkeyRecorder(app.logger)
         this.minWidth := 900
         this.minHeight := 740
@@ -123,12 +124,12 @@ class SettingsGui {
         this.Panel("audio_box", 2)
         this.PTitle("audio_box_title", 2, "🎙  Microphone")
         this.Field("audio_device_contains_label", 2, "Microphone")
-        this.MkDrop("audio_device_contains", 2, ["Default microphone"])
+        this.MkDrop("audio_device_contains", 2, ["Follow Windows default"])
         this.controls["audio_device_contains"].OnEvent("Change", ObjBindMethod(this, "ChooseInput"))
         this.AddButton("list_microphones", "Refresh devices", "ListInputs", false, 2)
         this.Field("audio_gain_label", 2, "Input gain")
         this.MkEdit("audio_gain", 2)
-        this.Hint("audio_hint", 2, "Pick a device directly. Use 1.0 for normal volume unless recordings are consistently quiet or loud.")
+        this.Hint("audio_hint", 2, "A chosen microphone is retried when recording starts; Windows default is used while it is unavailable. Use 1.0 for normal volume.")
 
         this.Panel("model_box", 2)
         this.PTitle("model_box_title", 2, "🧠  Speech model")
@@ -662,7 +663,7 @@ class SettingsGui {
         for key in ["hotkey_enabled", "trailing_space", "remove_punctuation", "lowercase_output", "start_with_windows", "diagnostic_overlay", "log_transcripts"]
             config.Set(key, SimpleSttBoolText(this.controls[key].Value))
         selectedInput := this.controls["audio_device_contains"].Text
-        config.Set("audio_device_contains", selectedInput = "Default microphone" ? "" : selectedInput)
+        config.Set("audio_device_contains", selectedInput = "Follow Windows default" ? "" : this.inputDeviceChoices.Get(selectedInput, selectedInput))
         installedValue := this.controls["selected_model_filename"].Text
         if installedValue != "" && installedValue != "No installed models found" && this.installedModelChoices.Has(installedValue)
             config.Set("selected_model_filename", this.installedModelChoices[installedValue])
@@ -751,11 +752,24 @@ class SettingsGui {
             return
         }
         selected := this.app.config.Get("audio_device_contains")
-        values := ["Default microphone"]
+        values := ["Follow Windows default"]
+        labelsByIndex := Map()
+        idsByIndex := Map()
         for key, value in response["values"]
-            if InStr(key, "input.") = 1
-                values.Push(value)
-        this.ResetDropDown("audio_device_contains", values, selected = "" ? "Default microphone" : selected)
+            if RegExMatch(key, "^input\.(\d+)\.(label|id)$", &match) {
+                target := match[2] = "label" ? labelsByIndex : idsByIndex
+                target[match[1]] := value
+            }
+        this.inputDeviceChoices := Map()
+        selectedLabel := selected = "" ? "Follow Windows default" : selected
+        for index, label in labelsByIndex {
+            id := idsByIndex.Get(index, label)
+            values.Push(label)
+            this.inputDeviceChoices[label] := id
+            if selected = id || selected = label
+                selectedLabel := label
+        }
+        this.ResetDropDown("audio_device_contains", values, selectedLabel)
         this.SetStatus("Microphone list refreshed")
     }
 

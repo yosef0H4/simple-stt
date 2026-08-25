@@ -18,8 +18,10 @@ class PreviewIpc {
         this.calls.Push(arguments)
         response := Map("ok", true, "message", "preview", "values", Map())
         if InStr(arguments, "list-inputs") = 1 {
-            response["values"]["input.1"] := "Default USB microphone"
-            response["values"]["input.2"] := "Studio headset microphone"
+            response["values"]["input.1.label"] := "Microphone (Default USB microphone)"
+            response["values"]["input.1.id"] := "wasapi:preview-usb-microphone"
+            response["values"]["input.2.label"] := "Microphone (Studio headset microphone)"
+            response["values"]["input.2.id"] := "wasapi:preview-headset-microphone"
         } else if InStr(arguments, "list-models") = 1 {
             response["values"]["recommended_model"] := "tdt_ctc-110m-f16.gguf"
             response["values"]["installed_model.1"] := "tdt_ctc-110m-f16.gguf|268|true|f16"

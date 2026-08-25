@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossbeam_channel::Sender;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU32},
+    atomic::{AtomicBool, AtomicU32, AtomicU64},
     Arc,
 };
 
@@ -10,7 +10,37 @@ pub const OUTPUT_FRAME_SAMPLES: usize = 320; // 20 ms
 
 #[derive(Debug, Clone)]
 pub enum AudioEvent {
-    StreamError(String),
+    StreamError { generation: u64, error: String },
+    DeviceTopologyChanged,
+}
+
+static NEXT_STREAM_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputDeviceInfo {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InputDeviceSelection {
+    pub id: String,
+    pub label: String,
+    pub using_default_fallback: bool,
+}
+
+pub fn choose_input_device_id(
+    preferred_id: &str,
+    default_id: Option<&str>,
+    available_ids: &[&str],
+) -> Option<(String, bool)> {
+    if preferred_id.is_empty() {
+        return default_id.map(|id| (id.to_owned(), false));
+    }
+    if available_ids.contains(&preferred_id) {
+        return Some((preferred_id.to_owned(), false));
+    }
+    default_id.map(|id| (id.to_owned(), true))
 }
 
 #[derive(Debug, Clone)]
@@ -187,34 +217,101 @@ mod platform {
 
     pub struct CaptureHandle {
         _stream: Stream,
+        selection: InputDeviceSelection,
+        generation: u64,
     }
-    #[allow(deprecated)]
-    pub fn list_input_devices() -> Result<Vec<String>> {
+    impl CaptureHandle {
+        pub fn selection(&self) -> &InputDeviceSelection {
+            &self.selection
+        }
+        pub fn generation(&self) -> u64 {
+            self.generation
+        }
+    }
+    fn device_label(device: &cpal::Device) -> String {
+        let Ok(description) = device.description() else {
+            return "<unknown>".to_owned();
+        };
+        #[cfg(target_os = "linux")]
+        if let Some(driver) = description.driver() {
+            return format!("{} — {driver}", description.name());
+        }
+        description
+            .extended()
+            .first()
+            .cloned()
+            .or_else(|| {
+                description
+                    .driver()
+                    .filter(|driver| *driver != description.name())
+                    .map(|driver| format!("{} ({driver})", description.name()))
+            })
+            .unwrap_or_else(|| description.name().to_owned())
+    }
+
+    pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>> {
         let host = cpal::default_host();
         Ok(host
             .input_devices()
             .context("enumerating input devices")?
-            .map(|device| device.name().unwrap_or_else(|_| "<unknown>".to_owned()))
+            .map(|device| InputDeviceInfo {
+                id: device.id().map(|id| id.to_string()).unwrap_or_default(),
+                label: device_label(&device),
+            })
             .collect())
     }
-    #[allow(deprecated)]
-    fn select_device(device_contains: &str) -> Result<cpal::Device> {
+    fn select_device(device_contains: &str) -> Result<(cpal::Device, InputDeviceSelection)> {
         let host = cpal::default_host();
-        if device_contains.trim().is_empty() {
-            return host
-                .default_input_device()
-                .ok_or_else(|| anyhow!("no default microphone found"));
-        }
-        let needle = device_contains.to_lowercase();
-        host.input_devices()
+        let devices = host
+            .input_devices()
             .context("enumerating microphones")?
-            .find(|device| {
-                device
-                    .name()
-                    .map(|name| name.to_lowercase().contains(&needle))
-                    .unwrap_or(false)
+            .collect::<Vec<_>>();
+        let default_device = host.default_input_device();
+        let default_id = default_device
+            .as_ref()
+            .and_then(|device| device.id().ok())
+            .map(|id| id.to_string());
+        let preferred = if device_contains.trim().is_empty() {
+            String::new()
+        } else if device_contains.parse::<cpal::DeviceId>().is_ok() {
+            device_contains.to_owned()
+        } else {
+            let needle = device_contains.to_lowercase();
+            devices
+                .iter()
+                .find(|device| device_label(device).to_lowercase().contains(&needle))
+                .and_then(|device| device.id().ok())
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| device_contains.to_owned())
+        };
+        let ids = devices
+            .iter()
+            .filter_map(|device| device.id().ok().map(|id| id.to_string()))
+            .collect::<Vec<_>>();
+        let available = ids.iter().map(String::as_str).collect::<Vec<_>>();
+        let (selected_id, using_default_fallback) =
+            choose_input_device_id(&preferred, default_id.as_deref(), &available)
+                .ok_or_else(|| anyhow!("no microphone found"))?;
+        let device = devices
+            .into_iter()
+            .find(|device| device.id().is_ok_and(|id| id.to_string() == selected_id))
+            .or_else(|| {
+                default_device
+                    .filter(|device| device.id().is_ok_and(|id| id.to_string() == selected_id))
             })
-            .ok_or_else(|| anyhow!("no microphone name contains {device_contains:?}"))
+            .ok_or_else(|| anyhow!("resolved microphone disappeared during enumeration"))?;
+        let label = device_label(&device);
+        Ok((
+            device,
+            InputDeviceSelection {
+                id: selected_id,
+                label,
+                using_default_fallback,
+            },
+        ))
+    }
+    pub fn resolve_input_device(device_contains: &str) -> Result<InputDeviceSelection> {
+        select_device(device_contains).map(|(_, selection)| selection)
     }
     pub fn start_capture(
         device_contains: &str,
@@ -224,7 +321,48 @@ mod platform {
         recording_active: Option<Arc<AtomicBool>>,
         event_tx: Option<Sender<AudioEvent>>,
     ) -> Result<CaptureHandle> {
-        let device = select_device(device_contains)?;
+        let (device, selection) = select_device(device_contains)?;
+        let preferred_id = selection.id.clone();
+        let first_attempt = start_capture_device(
+            device,
+            selection,
+            gain,
+            tx.clone(),
+            latest_level.clone(),
+            recording_active.clone(),
+            event_tx.clone(),
+        );
+        if first_attempt.is_ok() || device_contains.trim().is_empty() {
+            return first_attempt;
+        }
+
+        let (default_device, mut fallback) = select_device("")?;
+        if fallback.id == preferred_id {
+            return first_attempt;
+        }
+        fallback.using_default_fallback = true;
+        start_capture_device(
+            default_device,
+            fallback,
+            gain,
+            tx,
+            latest_level,
+            recording_active,
+            event_tx,
+        )
+        .with_context(|| "opening Windows/system default after preferred microphone failed")
+    }
+
+    fn start_capture_device(
+        device: cpal::Device,
+        selection: InputDeviceSelection,
+        gain: f32,
+        tx: Sender<Vec<i16>>,
+        latest_level: Option<Arc<AtomicU32>>,
+        recording_active: Option<Arc<AtomicBool>>,
+        event_tx: Option<Sender<AudioEvent>>,
+    ) -> Result<CaptureHandle> {
+        let generation = NEXT_STREAM_GENERATION.fetch_add(1, Ordering::Relaxed);
         let supported = device
             .default_input_config()
             .context("reading default microphone config")?;
@@ -242,6 +380,7 @@ mod platform {
             latest_level,
             recording_active,
             event_tx,
+            generation,
         };
         let stream = match sample_format {
             SampleFormat::F32 => {
@@ -258,7 +397,11 @@ mod platform {
             other => return Err(anyhow!("unsupported microphone sample format: {other:?}")),
         };
         stream.play().context("starting microphone stream")?;
-        Ok(CaptureHandle { _stream: stream })
+        Ok(CaptureHandle {
+            _stream: stream,
+            selection,
+            generation,
+        })
     }
 
     #[derive(Clone)]
@@ -268,6 +411,7 @@ mod platform {
         latest_level: Option<Arc<AtomicU32>>,
         recording_active: Option<Arc<AtomicBool>>,
         event_tx: Option<Sender<AudioEvent>>,
+        generation: u64,
     }
 
     fn build_stream<T>(
@@ -285,6 +429,7 @@ mod platform {
             latest_level,
             recording_active,
             event_tx,
+            generation,
         } = context;
         let mut converted = Vec::new();
         let mut was_recording = false;
@@ -342,7 +487,10 @@ mod platform {
             move |error| {
                 tracing::error!(%error, "microphone stream error");
                 if let Some(events) = &event_tx {
-                    let _ = events.try_send(AudioEvent::StreamError(error.to_string()));
+                    let _ = events.try_send(AudioEvent::StreamError {
+                        generation,
+                        error: error.to_string(),
+                    });
                 }
             },
             None,
@@ -350,12 +498,163 @@ mod platform {
     }
 }
 
+#[cfg(windows)]
+mod device_notifications {
+    use super::AudioEvent;
+    use anyhow::{anyhow, Result};
+    use crossbeam_channel::{bounded, Sender};
+    use std::thread::{self, JoinHandle};
+    use windows::core::{implement, PCWSTR};
+    use windows::Win32::Foundation::PROPERTYKEY;
+    use windows::Win32::Media::Audio::{
+        eCapture, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
+        IMMNotificationClient_Impl, MMDeviceEnumerator, DEVICE_STATE,
+    };
+    use windows::Win32::System::Com::{
+        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
+    };
+
+    #[implement(IMMNotificationClient)]
+    struct NotificationClient {
+        events: Sender<AudioEvent>,
+    }
+
+    impl NotificationClient {
+        fn changed(&self) {
+            let _ = self.events.try_send(AudioEvent::DeviceTopologyChanged);
+        }
+    }
+
+    impl IMMNotificationClient_Impl for NotificationClient_Impl {
+        fn OnDeviceStateChanged(&self, _: &PCWSTR, _: DEVICE_STATE) -> windows::core::Result<()> {
+            self.changed();
+            Ok(())
+        }
+
+        fn OnDeviceAdded(&self, _: &PCWSTR) -> windows::core::Result<()> {
+            self.changed();
+            Ok(())
+        }
+
+        fn OnDeviceRemoved(&self, _: &PCWSTR) -> windows::core::Result<()> {
+            self.changed();
+            Ok(())
+        }
+
+        fn OnDefaultDeviceChanged(
+            &self,
+            flow: EDataFlow,
+            _: ERole,
+            _: &PCWSTR,
+        ) -> windows::core::Result<()> {
+            if flow == eCapture {
+                self.changed();
+            }
+            Ok(())
+        }
+
+        fn OnPropertyValueChanged(&self, _: &PCWSTR, _: &PROPERTYKEY) -> windows::core::Result<()> {
+            Ok(())
+        }
+    }
+
+    pub struct DeviceNotificationGuard {
+        stop: Option<std::sync::mpsc::Sender<()>>,
+        thread: Option<JoinHandle<()>>,
+    }
+
+    impl Drop for DeviceNotificationGuard {
+        fn drop(&mut self) {
+            if let Some(stop) = self.stop.take() {
+                let _ = stop.send(());
+            }
+            if let Some(thread) = self.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    pub fn watch_device_changes(events: Sender<AudioEvent>) -> Result<DeviceNotificationGuard> {
+        let (ready_tx, ready_rx) = bounded::<Result<(), String>>(1);
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+        let thread = thread::Builder::new()
+            .name("audio-device-notifications".to_owned())
+            .spawn(move || run_notification_thread(events, stop_rx, ready_tx))?;
+
+        match ready_rx.recv() {
+            Ok(Ok(())) => Ok(DeviceNotificationGuard {
+                stop: Some(stop_tx),
+                thread: Some(thread),
+            }),
+            Ok(Err(error)) => {
+                let _ = thread.join();
+                Err(anyhow!(error))
+            }
+            Err(_) => {
+                let _ = thread.join();
+                Err(anyhow!(
+                    "audio device notification thread stopped during startup"
+                ))
+            }
+        }
+    }
+
+    fn run_notification_thread(
+        events: Sender<AudioEvent>,
+        stop: std::sync::mpsc::Receiver<()>,
+        ready: Sender<Result<(), String>>,
+    ) {
+        // The notification watcher owns a dedicated MTA so callback lifetime and COM cleanup
+        // cannot race CPAL's stream threads.
+        if let Err(error) = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() } {
+            let _ = ready.send(Err(error.to_string()));
+            return;
+        }
+        let result = (|| -> windows::core::Result<()> {
+            let enumerator: IMMDeviceEnumerator =
+                unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)? };
+            let client: IMMNotificationClient = NotificationClient { events }.into();
+            unsafe { enumerator.RegisterEndpointNotificationCallback(&client)? };
+            let _ = ready.send(Ok(()));
+            let _ = stop.recv();
+            unsafe { enumerator.UnregisterEndpointNotificationCallback(&client)? };
+            Ok(())
+        })();
+        unsafe { CoUninitialize() };
+        if let Err(error) = result {
+            let _ = ready.try_send(Err(error.to_string()));
+        }
+    }
+}
+
+#[cfg(windows)]
+pub use device_notifications::{watch_device_changes, DeviceNotificationGuard};
+
+#[cfg(not(windows))]
+pub struct DeviceNotificationGuard;
+
+#[cfg(not(windows))]
+pub fn watch_device_changes(_: Sender<AudioEvent>) -> Result<DeviceNotificationGuard> {
+    Ok(DeviceNotificationGuard)
+}
+
 #[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
     use super::*;
     use anyhow::bail;
     pub struct CaptureHandle;
-    pub fn list_input_devices() -> Result<Vec<String>> {
+    impl CaptureHandle {
+        pub fn selection(&self) -> &InputDeviceSelection {
+            unreachable!()
+        }
+        pub fn generation(&self) -> u64 {
+            unreachable!()
+        }
+    }
+    pub fn list_input_devices() -> Result<Vec<InputDeviceInfo>> {
+        bail!("microphone capture is not implemented for this platform")
+    }
+    pub fn resolve_input_device(_: &str) -> Result<InputDeviceSelection> {
         bail!("microphone capture is not implemented for this platform")
     }
     pub fn start_capture(
@@ -369,7 +668,7 @@ mod platform {
         bail!("microphone capture is not implemented for this platform")
     }
 }
-pub use platform::{list_input_devices, start_capture, CaptureHandle};
+pub use platform::{list_input_devices, resolve_input_device, start_capture, CaptureHandle};
 
 #[cfg(test)]
 mod tests {
@@ -419,6 +718,35 @@ mod tests {
         assert!(
             (speech.level - visualizer_level_from_rms(0.16)).abs() < f32::EPSILON,
             "meter should use direct loudness mapping: {speech:?}"
+        );
+    }
+
+    #[test]
+    fn preferred_microphone_falls_back_and_returns() {
+        let available = ["default", "preferred"];
+        assert_eq!(
+            choose_input_device_id("preferred", Some("default"), &available),
+            Some(("preferred".to_owned(), false))
+        );
+        assert_eq!(
+            choose_input_device_id("preferred", Some("default"), &["default"]),
+            Some(("default".to_owned(), true))
+        );
+        assert_eq!(
+            choose_input_device_id("preferred", Some("other"), &["other", "preferred"]),
+            Some(("preferred".to_owned(), false))
+        );
+    }
+
+    #[test]
+    fn automatic_mode_tracks_the_default() {
+        assert_eq!(
+            choose_input_device_id("", Some("first"), &["first", "second"]),
+            Some(("first".to_owned(), false))
+        );
+        assert_eq!(
+            choose_input_device_id("", Some("second"), &["first", "second"]),
+            Some(("second".to_owned(), false))
         );
     }
 }

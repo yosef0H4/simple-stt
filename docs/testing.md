@@ -58,6 +58,7 @@ Included Rust unit coverage:
 
 ```text
 audio mono/downmix/resampling/frame behavior
+preferred microphone fallback/return, Windows endpoint-event retry policy, and default tracking
 shell JSON Unicode and malformed JSON
 escaped helper protocol Unicode/control-character round trip
 worker framed protocol PCM and Unicode transcript framing

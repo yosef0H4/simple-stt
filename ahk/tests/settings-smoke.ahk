@@ -60,7 +60,7 @@ for key in ["hotkey_enabled", "record_hotkey", "cancel_hotkey", "toggle_delivery
 settings.controls["typing_chunk_chars"].Value := "4"
 settings.controls["cancel_hotkey"].Text := "CapsLock+A"
 settings.controls["toggle_delivery_hotkey"].Text := "CapsLock+D"
-settings.controls["audio_device_contains"].Choose("Default microphone")
+settings.controls["audio_device_contains"].Choose("Follow Windows default")
 settings.controls["inference_device"].Choose("cpu")
 settings.controls["text_delivery_mode"].Choose("paste_ctrl_shift_v")
 settings.controls["remove_punctuation"].Value := 1

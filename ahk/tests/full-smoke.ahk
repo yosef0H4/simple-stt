@@ -241,6 +241,15 @@ try {
     StartCapture()
     response := CallCtl("list-inputs")
     Assert(response["ok"], "list-inputs failed: " . response["message"])
+    inputLabels := 0
+    for key, value in response["values"] {
+        if RegExMatch(key, "^input\.(\d+)\.label$", &match) {
+            inputLabels += 1
+            Assert(value != "", "microphone label was empty")
+            Assert(response["values"].Has("input." . match[1] . ".id"), "microphone stable ID was missing")
+        }
+    }
+    Assert(inputLabels > 0, "list-inputs returned no microphones")
     response := CallCtl("list-models")
     Assert(response["ok"], "list-models failed: " . response["message"])
 
