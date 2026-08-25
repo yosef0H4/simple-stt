@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 4;
+pub const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
 #[serde(rename_all = "snake_case")]
@@ -159,101 +159,114 @@ impl UiTheme {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RecordingMode {
+    #[default]
+    Hold,
+    Toggle,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(default)]
 pub struct AppConfig {
     pub schema_version: u32,
-    #[serde(skip_serializing_if = "skip_linux_bool_field")]
-    pub hotkey_enabled: bool,
-    #[serde(skip_serializing_if = "skip_linux_string_field")]
+    pub general: GeneralConfig,
+    pub audio: AudioConfig,
+    pub speech: SpeechConfig,
+    pub output: OutputConfig,
+    pub diagnostics: DiagnosticsConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GeneralConfig {
+    pub enabled: bool,
+    pub recording_mode: RecordingMode,
     pub record_hotkey: String,
-    #[serde(skip_serializing_if = "skip_linux_string_field")]
     pub toggle_delivery_hotkey: String,
-    #[serde(skip_serializing_if = "skip_linux_string_field")]
     pub cancel_hotkey: String,
-    #[serde(skip_serializing_if = "skip_linux_capslock_field")]
     pub capslock_behavior: CapsLockBehavior,
-    pub audio_device_contains: String,
-    pub audio_gain: f32,
-    pub typing_chunk_chars: usize,
-    pub typing_interval_ms: u64,
-    pub trailing_space: bool,
-    pub text_delivery_mode: TextDeliveryMode,
-    pub remove_punctuation: bool,
-    pub lowercase_output: bool,
+    pub start_at_login: bool,
+    pub ui_theme: UiTheme,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AudioConfig {
+    pub preferred_device_id: String,
+    pub gain: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SpeechConfig {
+    pub inference_device: InferenceDevice,
+    pub runtime_dir: String,
+    pub model_dir: String,
+    pub selected_model_filename: String,
     pub idle_worker_timeout_secs: u64,
     pub worker_shutdown_grace_ms: u64,
-    #[serde(skip_serializing_if = "skip_linux_bool_field")]
-    pub start_with_windows: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OutputConfig {
+    pub delivery_mode: TextDeliveryMode,
+    pub paced_typing_enabled: bool,
+    pub typing_speed_wpm: u64,
+    pub trailing_space: bool,
+    pub remove_punctuation: bool,
+    pub lowercase: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DiagnosticsConfig {
     pub log_level: LogLevel,
     pub diagnostic_overlay: bool,
     pub log_transcripts: bool,
-    pub inference_device: InferenceDevice,
-    pub ui_theme: UiTheme,
-    pub parakeet_runtime_dir: String,
-    pub model_dir: String,
-    pub selected_model_filename: String,
 }
 
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             schema_version: CONFIG_SCHEMA_VERSION,
-            hotkey_enabled: true,
-            record_hotkey: "CapsLock+S".to_owned(),
-            toggle_delivery_hotkey: "CapsLock+D".to_owned(),
-            cancel_hotkey: "CapsLock+A".to_owned(),
-            capslock_behavior: CapsLockBehavior::PreserveTap,
-            audio_device_contains: String::new(),
-            audio_gain: 1.0,
-            typing_chunk_chars: 3,
-            typing_interval_ms: 20,
-            trailing_space: true,
-            text_delivery_mode: TextDeliveryMode::PasteCtrlV,
-            remove_punctuation: false,
-            lowercase_output: false,
-            idle_worker_timeout_secs: 180,
-            worker_shutdown_grace_ms: 2_000,
-            start_with_windows: false,
-            log_level: LogLevel::Normal,
-            diagnostic_overlay: false,
-            log_transcripts: false,
-            inference_device: InferenceDevice::Auto,
-            ui_theme: UiTheme::Auto,
-            parakeet_runtime_dir: default_parakeet_runtime_dir(),
-            model_dir: default_model_dir(),
-            selected_model_filename: "tdt_ctc-110m-f16.gguf".to_owned(),
+            general: GeneralConfig {
+                enabled: true,
+                recording_mode: if cfg!(target_os = "linux") {
+                    RecordingMode::Toggle
+                } else {
+                    RecordingMode::Hold
+                },
+                record_hotkey: "CapsLock+S".to_owned(),
+                toggle_delivery_hotkey: "CapsLock+D".to_owned(),
+                cancel_hotkey: "CapsLock+A".to_owned(),
+                capslock_behavior: CapsLockBehavior::PreserveTap,
+                start_at_login: false,
+                ui_theme: UiTheme::Auto,
+            },
+            audio: AudioConfig {
+                preferred_device_id: String::new(),
+                gain: 1.0,
+            },
+            speech: SpeechConfig {
+                inference_device: InferenceDevice::Auto,
+                runtime_dir: default_parakeet_runtime_dir(),
+                model_dir: default_model_dir(),
+                selected_model_filename: "tdt_ctc-110m-f16.gguf".to_owned(),
+                idle_worker_timeout_secs: 180,
+                worker_shutdown_grace_ms: 2_000,
+            },
+            output: OutputConfig {
+                delivery_mode: TextDeliveryMode::PasteCtrlV,
+                paced_typing_enabled: true,
+                typing_speed_wpm: 450,
+                trailing_space: true,
+                remove_punctuation: false,
+                lowercase: false,
+            },
+            diagnostics: DiagnosticsConfig {
+                log_level: LogLevel::Normal,
+                diagnostic_overlay: false,
+                log_transcripts: false,
+            },
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-#[serde(default)]
-struct LegacyConfig {
-    idle_timeout_secs: Option<u64>,
-    typing_interval_ms: Option<u64>,
-    typing_chunk_chars: Option<usize>,
-    audio_gain: Option<f32>,
-    audio_device_contains: Option<String>,
-    parakeet_runtime_dir: Option<String>,
-    parakeet_model_path: Option<String>,
-    start_with_windows: Option<bool>,
-    hotkey_enabled: Option<bool>,
-    record_hotkey: Option<String>,
-    capslock_always_off: Option<bool>,
-    log_level: Option<LogLevel>,
-}
-
-fn skip_linux_bool_field(_: &bool) -> bool {
-    cfg!(target_os = "linux")
-}
-
-fn skip_linux_string_field(_: &String) -> bool {
-    cfg!(target_os = "linux")
-}
-
-fn skip_linux_capslock_field(_: &CapsLockBehavior) -> bool {
-    cfg!(target_os = "linux")
 }
 
 fn default_parakeet_runtime_dir() -> String {
@@ -320,46 +333,42 @@ impl AppConfig {
             CONFIG_SCHEMA_VERSION
         );
         anyhow::ensure!(
-            !self.record_hotkey.trim().is_empty(),
+            !self.general.record_hotkey.trim().is_empty(),
             "record_hotkey must not be empty"
         );
         anyhow::ensure!(
-            !self.toggle_delivery_hotkey.trim().is_empty(),
+            !self.general.toggle_delivery_hotkey.trim().is_empty(),
             "toggle_delivery_hotkey must not be empty"
         );
         anyhow::ensure!(
-            !self.cancel_hotkey.trim().is_empty(),
+            !self.general.cancel_hotkey.trim().is_empty(),
             "cancel_hotkey must not be empty"
         );
         anyhow::ensure!(
-            self.audio_gain > 0.0 && self.audio_gain <= 10.0,
+            self.audio.gain > 0.0 && self.audio.gain <= 10.0,
             "audio_gain must be in (0, 10]"
         );
         anyhow::ensure!(
-            self.typing_chunk_chars > 0 && self.typing_chunk_chars <= 256,
-            "typing_chunk_chars must be in [1, 256]"
+            (50..=450).contains(&self.output.typing_speed_wpm),
+            "typing_speed_wpm must be in [50, 450]"
         );
         anyhow::ensure!(
-            self.typing_interval_ms <= 1_000,
-            "typing_interval_ms must be <= 1000"
-        );
-        anyhow::ensure!(
-            self.idle_worker_timeout_secs > 0,
+            self.speech.idle_worker_timeout_secs > 0,
             "idle_worker_timeout_secs must be positive"
         );
         anyhow::ensure!(
-            (250..=30_000).contains(&self.worker_shutdown_grace_ms),
+            (250..=30_000).contains(&self.speech.worker_shutdown_grace_ms),
             "worker_shutdown_grace_ms must be in [250, 30000]"
         );
         anyhow::ensure!(
-            !self.parakeet_runtime_dir.trim().is_empty(),
+            !self.speech.runtime_dir.trim().is_empty(),
             "parakeet_runtime_dir must not be empty"
         );
         anyhow::ensure!(
-            !self.model_dir.trim().is_empty(),
+            !self.speech.model_dir.trim().is_empty(),
             "model_dir must not be empty"
         );
-        validate_model_filename(&self.selected_model_filename)?;
+        validate_model_filename(&self.speech.selected_model_filename)?;
         Ok(())
     }
 
@@ -405,123 +414,56 @@ impl AppConfig {
         }
         let raw =
             fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let schema_version = serde_json::from_str::<serde_json::Value>(&raw)
-            .ok()
-            .and_then(|value| value.get("schema_version").and_then(|value| value.as_u64()));
-        if schema_version == Some(CONFIG_SCHEMA_VERSION as u64) {
-            let value: Self = serde_json::from_str(&raw)
-                .with_context(|| format!("parsing {}", path.display()))?;
-            value.validate()?;
-            return Ok(value);
-        }
-        if schema_version == Some(3) {
-            let mut value: Self = serde_json::from_str(&raw)
-                .with_context(|| format!("parsing schema-3 {}", path.display()))?;
-            value.schema_version = CONFIG_SCHEMA_VERSION;
-            #[cfg(target_os = "linux")]
-            {
-                if value.parakeet_runtime_dir.contains("parakeet-windows-cuda") {
-                    value.parakeet_runtime_dir = default_parakeet_runtime_dir();
-                }
-                if value.model_dir.contains("parakeet-windows-cuda") {
-                    value.model_dir = default_model_dir();
-                }
-            }
-            value.validate()?;
-            let backup = path.with_extension("json.schema3.bak");
-            if !backup.exists() {
-                fs::copy(path, &backup).with_context(|| {
-                    format!("backing up schema-3 config to {}", backup.display())
-                })?;
-            }
-            value.save_to(path)?;
-            return Ok(value);
-        }
-        if schema_version == Some(2) {
-            let mut value: Self = serde_json::from_str(&raw)
-                .with_context(|| format!("parsing schema-2 {}", path.display()))?;
-            value.schema_version = CONFIG_SCHEMA_VERSION;
-            value.cancel_hotkey = "CapsLock+A".to_owned();
-            if value
-                .toggle_delivery_hotkey
-                .eq_ignore_ascii_case("CapsLock+A")
-            {
-                value.toggle_delivery_hotkey = "CapsLock+D".to_owned();
-            }
-            #[cfg(target_os = "linux")]
-            {
-                if value.parakeet_runtime_dir.contains("parakeet-windows-cuda") {
-                    value.parakeet_runtime_dir = default_parakeet_runtime_dir();
-                }
-                if value.model_dir.contains("parakeet-windows-cuda") {
-                    value.model_dir = default_model_dir();
-                }
-            }
-            value.validate()?;
-            let backup = path.with_extension("json.schema2.bak");
-            if !backup.exists() {
-                fs::copy(path, &backup).with_context(|| {
-                    format!("backing up schema-2 config to {}", backup.display())
-                })?;
-            }
-            value.save_to(path)?;
-            return Ok(value);
-        }
-        let migrated = Self::migrate_legacy(&raw)?;
-        let backup = path.with_extension("json.schema1.bak");
-        if !backup.exists() {
-            fs::copy(path, &backup)
-                .with_context(|| format!("backing up old config to {}", backup.display()))?;
-        }
-        migrated.save_to(path)?;
-        Ok(migrated)
+        let parsed: serde_json::Value =
+            serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
+        let value = Self::normalize_json(&parsed);
+        value.save_to(path)?;
+        Ok(value)
     }
 
-    fn migrate_legacy(raw: &str) -> Result<Self> {
-        let old: LegacyConfig =
-            serde_json::from_str(raw).context("parsing legacy schema-1 config")?;
-        let mut value = Self::default();
-        if let Some(v) = old.idle_timeout_secs {
-            value.idle_worker_timeout_secs = v;
+    pub fn normalize_json(input: &serde_json::Value) -> Self {
+        let defaults = Self::default();
+        let object = input.as_object();
+        let section = |name: &str| object.and_then(|value| value.get(name));
+        let mut normalized = Self {
+            schema_version: CONFIG_SCHEMA_VERSION,
+            general: normalize_section(&defaults.general, section("general")),
+            audio: normalize_section(&defaults.audio, section("audio")),
+            speech: normalize_section(&defaults.speech, section("speech")),
+            output: normalize_section(&defaults.output, section("output")),
+            diagnostics: normalize_section(&defaults.diagnostics, section("diagnostics")),
+        };
+        if normalized.general.record_hotkey.trim().is_empty() {
+            normalized.general.record_hotkey = defaults.general.record_hotkey;
         }
-        if let Some(v) = old.typing_interval_ms {
-            value.typing_interval_ms = v;
+        if normalized.general.toggle_delivery_hotkey.trim().is_empty() {
+            normalized.general.toggle_delivery_hotkey = defaults.general.toggle_delivery_hotkey;
         }
-        if let Some(v) = old.typing_chunk_chars {
-            value.typing_chunk_chars = v;
+        if normalized.general.cancel_hotkey.trim().is_empty() {
+            normalized.general.cancel_hotkey = defaults.general.cancel_hotkey;
         }
-        if let Some(v) = old.audio_gain {
-            value.audio_gain = v;
+        if !(normalized.audio.gain > 0.0 && normalized.audio.gain <= 10.0) {
+            normalized.audio.gain = defaults.audio.gain;
         }
-        if let Some(v) = old.audio_device_contains {
-            value.audio_device_contains = v;
+        if !(50..=450).contains(&normalized.output.typing_speed_wpm) {
+            normalized.output.typing_speed_wpm = defaults.output.typing_speed_wpm;
         }
-        if let Some(v) = old.parakeet_runtime_dir {
-            value.parakeet_runtime_dir = v;
+        if normalized.speech.idle_worker_timeout_secs == 0 {
+            normalized.speech.idle_worker_timeout_secs = defaults.speech.idle_worker_timeout_secs;
         }
-        if let Some(v) = old.parakeet_model_path {
-            if let Some((model_dir, filename)) = split_legacy_model_path(&v) {
-                value.model_dir = model_dir;
-                value.selected_model_filename = filename;
-            }
+        if !(250..=30_000).contains(&normalized.speech.worker_shutdown_grace_ms) {
+            normalized.speech.worker_shutdown_grace_ms = defaults.speech.worker_shutdown_grace_ms;
         }
-        if let Some(v) = old.start_with_windows {
-            value.start_with_windows = v;
+        if normalized.speech.runtime_dir.trim().is_empty() {
+            normalized.speech.runtime_dir = defaults.speech.runtime_dir;
         }
-        if let Some(v) = old.hotkey_enabled {
-            value.hotkey_enabled = v;
+        if normalized.speech.model_dir.trim().is_empty() {
+            normalized.speech.model_dir = defaults.speech.model_dir;
         }
-        if let Some(v) = old.record_hotkey {
-            value.record_hotkey = normalize_legacy_hotkey(&v);
+        if validate_model_filename(&normalized.speech.selected_model_filename).is_err() {
+            normalized.speech.selected_model_filename = defaults.speech.selected_model_filename;
         }
-        if old.capslock_always_off.unwrap_or(false) {
-            value.capslock_behavior = CapsLockBehavior::AlwaysOff;
-        }
-        if let Some(v) = old.log_level {
-            value.log_level = v;
-        }
-        value.validate()?;
-        Ok(value)
+        normalized
     }
 
     pub fn save(&self) -> Result<()> {
@@ -554,13 +496,14 @@ impl AppConfig {
         }
     }
     pub fn parakeet_runtime_dir_path(&self) -> PathBuf {
-        self.resolve_from_runtime_root(&self.parakeet_runtime_dir)
+        self.resolve_from_runtime_root(&self.speech.runtime_dir)
     }
     pub fn model_dir_path(&self) -> PathBuf {
-        self.resolve_from_runtime_root(&self.model_dir)
+        self.resolve_from_runtime_root(&self.speech.model_dir)
     }
     pub fn selected_model_path(&self) -> PathBuf {
-        self.model_dir_path().join(&self.selected_model_filename)
+        self.model_dir_path()
+            .join(&self.speech.selected_model_filename)
     }
     pub fn validate_parakeet_files(&self) -> Result<()> {
         let runtime = self.parakeet_runtime_dir_path();
@@ -580,6 +523,38 @@ impl AppConfig {
         );
         Ok(())
     }
+}
+
+fn normalize_section<T>(defaults: &T, input: Option<&serde_json::Value>) -> T
+where
+    T: Serialize + serde::de::DeserializeOwned + Clone,
+{
+    let mut accepted = serde_json::to_value(defaults).expect("default config section serializes");
+    let Some(input) = input.and_then(serde_json::Value::as_object) else {
+        return defaults.clone();
+    };
+    let Some(default_fields) = accepted.as_object() else {
+        return defaults.clone();
+    };
+    let known_fields = default_fields.keys().cloned().collect::<Vec<_>>();
+    for (key, candidate) in input {
+        if !known_fields.iter().any(|known| known == key) {
+            continue;
+        }
+        let previous = accepted
+            .as_object_mut()
+            .expect("config section remains an object")
+            .insert(key.clone(), candidate.clone());
+        if serde_json::from_value::<T>(accepted.clone()).is_err() {
+            if let Some(previous) = previous {
+                accepted
+                    .as_object_mut()
+                    .expect("config section remains an object")
+                    .insert(key.clone(), previous);
+            }
+        }
+    }
+    serde_json::from_value(accepted).expect("normalized config section deserializes")
 }
 
 #[cfg(windows)]
@@ -632,47 +607,6 @@ pub fn validate_model_filename(filename: &str) -> Result<()> {
         "model filename must be a plain approved filename"
     );
     Ok(())
-}
-
-fn normalize_legacy_hotkey(value: &str) -> String {
-    value
-        .split('+')
-        .map(|part| {
-            let lower = part.trim().to_ascii_lowercase();
-            match lower.as_str() {
-                "capslock" | "caps" | "caps_lock" => "CapsLock".to_owned(),
-                "ctrl" | "control" => "Ctrl".to_owned(),
-                "alt" => "Alt".to_owned(),
-                "shift" => "Shift".to_owned(),
-                "win" | "windows" => "Win".to_owned(),
-                _ if lower.len() == 1 => lower.to_ascii_uppercase(),
-                _ => part.trim().to_owned(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("+")
-}
-
-fn split_legacy_model_path(value: &str) -> Option<(String, String)> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let split_at = trimmed
-        .char_indices()
-        .filter_map(|(idx, ch)| (ch == '/' || ch == '\\').then_some(idx))
-        .next_back();
-    match split_at {
-        Some(idx) => {
-            let filename = trimmed[idx + 1..].trim();
-            if filename.is_empty() {
-                None
-            } else {
-                Some((trimmed[..idx].to_owned(), filename.to_owned()))
-            }
-        }
-        None => Some((default_model_dir(), trimmed.to_owned())),
-    }
 }
 
 /// Returns the runtime installation root for resolving relative configured paths.
@@ -755,92 +689,59 @@ mod tests {
     fn default_config_is_valid() {
         let config = AppConfig::default();
         config.validate().unwrap();
-        assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlV);
-        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
-        assert_eq!(config.cancel_hotkey, "CapsLock+A");
-        assert!(!config.remove_punctuation);
-        assert!(!config.lowercase_output);
-        assert_eq!(config.inference_device, InferenceDevice::Auto);
+        assert_eq!(config.output.delivery_mode, TextDeliveryMode::PasteCtrlV);
+        assert_eq!(config.general.recording_mode, RecordingMode::Hold);
+        assert_eq!(config.general.toggle_delivery_hotkey, "CapsLock+D");
+        assert_eq!(config.general.cancel_hotkey, "CapsLock+A");
+        assert!(!config.output.remove_punctuation);
+        assert!(!config.output.lowercase);
+        assert_eq!(config.speech.inference_device, InferenceDevice::Auto);
     }
 
     #[test]
-    fn schema4_round_trip() {
+    fn schema5_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
-        let config = AppConfig {
-            typing_interval_ms: 33,
-            ..Default::default()
-        };
+        let mut config = AppConfig::default();
+        config.output.typing_speed_wpm = 72;
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path).unwrap(), config);
     }
 
-    #[cfg(target_os = "linux")]
     #[test]
-    fn schema4_linux_config_may_omit_hotkey_fields() {
+    fn partial_config_is_normalized_and_unknown_fields_are_removed() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
-        fs::write(
-            &path,
-            r#"{"schema_version":4,"audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"external/parakeet-runtime/parakeet-linux","model_dir":"external/parakeet-runtime/models","selected_model_filename":"tdt_ctc-110m-f16.gguf"}"#,
-        )
-        .unwrap();
+        fs::write(&path, r#"{"general":{"recording_mode":"toggle","typo":true},"audio":{"gain":2.5},"obsolete":1}"#).unwrap();
         let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.record_hotkey, "CapsLock+S");
-        assert_eq!(config.cancel_hotkey, "CapsLock+A");
-        assert_eq!(
-            config.parakeet_runtime_dir,
-            "external/parakeet-runtime/parakeet-linux"
+        assert_eq!(config.general.recording_mode, RecordingMode::Toggle);
+        assert_eq!(config.audio.gain, 2.5);
+        let normalized = fs::read_to_string(path).unwrap();
+        assert!(!normalized.contains("typo"));
+        assert!(!normalized.contains("obsolete"));
+        assert!(normalized.contains("selected_model_filename"));
+    }
+
+    #[test]
+    fn invalid_field_defaults_without_losing_valid_siblings() {
+        let value = serde_json::json!({"audio":{"gain":"loud","preferred_device_id":"mic-1"}});
+        let config = AppConfig::normalize_json(&value);
+        assert_eq!(config.audio.gain, 1.0);
+        assert_eq!(config.audio.preferred_device_id, "mic-1");
+        let out_of_range = AppConfig::normalize_json(
+            &serde_json::json!({"audio":{"gain":99.0,"preferred_device_id":"mic-2"}}),
         );
+        assert_eq!(out_of_range.audio.gain, 1.0);
+        assert_eq!(out_of_range.audio.preferred_device_id, "mic-2");
     }
 
     #[test]
-    fn schema1_is_migrated_and_backed_up() {
+    fn malformed_json_is_preserved() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
-        fs::write(&path, r#"{"idle_timeout_secs":45,"typing_interval_ms":12,"typing_chunk_chars":4,"audio_gain":1.5,"audio_device_contains":"Mic","parakeet_runtime_dir":"runtime","parakeet_model_path":"models\\old.gguf","start_with_windows":true,"hotkey_enabled":true,"record_hotkey":"capslock+s","capslock_always_off":true,"log_level":"debug"}"#).unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
-        assert_eq!(config.idle_worker_timeout_secs, 45);
-        assert_eq!(config.record_hotkey, "CapsLock+S");
-        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
-        assert_eq!(config.cancel_hotkey, "CapsLock+A");
-        assert_eq!(config.capslock_behavior, CapsLockBehavior::AlwaysOff);
-        assert!(path.with_extension("json.schema1.bak").exists());
-    }
-
-    #[test]
-    fn legacy_model_path_split_accepts_windows_and_plain_names() {
-        assert_eq!(
-            split_legacy_model_path(r"models\old.gguf"),
-            Some(("models".to_owned(), "old.gguf".to_owned()))
-        );
-        assert_eq!(
-            split_legacy_model_path("old.gguf"),
-            Some((default_model_dir(), "old.gguf".to_owned()))
-        );
-    }
-
-    #[test]
-    fn schema2_migrates_cancel_hotkey_and_moves_default_toggle() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("config.json");
-        fs::write(&path, r#"{"schema_version":2,"hotkey_enabled":true,"record_hotkey":"CapsLock+S","toggle_delivery_hotkey":"CapsLock+A","capslock_behavior":"preserve_tap","audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"start_with_windows":false,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"runtime","model_dir":"models","selected_model_filename":"model.gguf"}"#).unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.schema_version, CONFIG_SCHEMA_VERSION);
-        assert_eq!(config.cancel_hotkey, "CapsLock+A");
-        assert_eq!(config.toggle_delivery_hotkey, "CapsLock+D");
-        assert!(path.with_extension("json.schema2.bak").exists());
-    }
-
-    #[test]
-    fn schema2_preserves_custom_toggle_hotkey() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("config.json");
-        fs::write(&path, r#"{"schema_version":2,"hotkey_enabled":true,"record_hotkey":"CapsLock+S","toggle_delivery_hotkey":"LCtrl+T","capslock_behavior":"preserve_tap","audio_device_contains":"","audio_gain":1.0,"typing_chunk_chars":3,"typing_interval_ms":20,"trailing_space":true,"text_delivery_mode":"paste_ctrl_v","remove_punctuation":false,"lowercase_output":false,"idle_worker_timeout_secs":180,"worker_shutdown_grace_ms":2000,"start_with_windows":false,"log_level":"normal","diagnostic_overlay":false,"log_transcripts":false,"inference_device":"auto","ui_theme":"auto","parakeet_runtime_dir":"runtime","model_dir":"models","selected_model_filename":"model.gguf"}"#).unwrap();
-        let config = AppConfig::load_from(&path).unwrap();
-        assert_eq!(config.cancel_hotkey, "CapsLock+A");
-        assert_eq!(config.toggle_delivery_hotkey, "LCtrl+T");
+        fs::write(&path, "{broken").unwrap();
+        assert!(AppConfig::load_from(&path).is_err());
+        assert_eq!(fs::read_to_string(path).unwrap(), "{broken");
     }
 
     #[test]

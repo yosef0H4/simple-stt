@@ -45,6 +45,7 @@ pub enum ShellCommand {
     UnloadModel,
     TestModel,
     DownloadModel { filename: String },
+    RemoveModel { filename: String },
     ListInputs,
     ListModels,
     RefreshModels,

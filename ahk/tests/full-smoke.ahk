@@ -151,7 +151,7 @@ TypingSmoke() {
     Assert(WinActive("A") = window.Hwnd, "typing test window did not become active")
     edit.Focus()
     typistInstance := Typist(logger, NoopNotice)
-    typistInstance.Begin(9001, window.Hwnd, "hello world", 3, 10, false)
+    typistInstance.Begin(9001, window.Hwnd, "hello world", false, 100, false)
     deadline := A_TickCount + 5000
     while typistInstance.active && A_TickCount < deadline
         Sleep(25)
@@ -201,7 +201,7 @@ PasteSmoke() {
         edit.Focus()
         Sleep(100)
         typistInstance := Typist(logger, NoopNotice)
-        typistInstance.Begin(item[2], window.Hwnd, "hello world", 3, 10, false, item[1])
+        typistInstance.Begin(item[2], window.Hwnd, "hello world", false, 100, false, item[1])
         deadline := A_TickCount + 5000
         while typistInstance.active && A_TickCount < deadline
             Sleep(25)

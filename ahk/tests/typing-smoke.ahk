@@ -22,8 +22,13 @@ if typistInstance.active
 
 ; Use a target window that cannot match the foreground window so the timer-driven
 ; path cancels before SendText and remains safe for headless runs.
-typistInstance.Begin(1, -1, "Unicode: مرحبا 世界 🙂 — safe chunks", 3, 25, true)
-typistInstance.Begin(2, -1, "Queued text", 3, 25, true)
+if typistInstance.GetFinger("م") != "" || typistInstance.GetFinger("界") != "" || typistInstance.GetFinger("🙂") != ""
+    Fail("non-Latin characters must use the language-neutral timing path")
+if typistInstance.TransitionFactor("م", "ر") != 1.0
+    Fail("non-Latin transitions must preserve Unicode with neutral timing")
+
+typistInstance.Begin(1, -1, "Unicode: مرحبا 世界 🙂 — safe typing", true, 50, true)
+typistInstance.Begin(2, -1, "Queued text", true, 50, true)
 Sleep(150)
 
 if typistInstance.active
@@ -35,8 +40,8 @@ typistInstance.Cancel("test cleanup", false, true)
 if typistInstance.queue.Length != 0
     Fail("typist queue was not cleared by Cancel()")
 
-typistInstance.Begin(3, -1, "Cancel me", 3, 25, true)
-typistInstance.Begin(4, -1, "Queued cancel", 3, 25, true)
+typistInstance.Begin(3, -1, "Cancel me", false, 50, true)
+typistInstance.Begin(4, -1, "Queued cancel", false, 50, true)
 typistInstance.Cancel("global cancel smoke", false, true)
 if typistInstance.active
     Fail("typist should be inactive after explicit cancel")

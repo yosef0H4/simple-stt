@@ -29,17 +29,17 @@ Official sources:
 | Key-down and key-up hotkeys | The `up` suffix defines release behavior. Wildcards and the hook prefix affect matching and recursion. | Hold-to-record installs a down callback and an `up` callback; non-CapsLock hotkeys use `$*` to accept extra modifiers and avoid retriggering from generated input. |
 | `KeyWait()` | Waits for key state transitions; in v2 it returns false on timeout and true otherwise. | Researched for manual tests; not used inside shell hotkey callbacks because callbacks remain non-blocking. |
 | `Send()` | Sends keys using the current send mode and interprets braces/modifier syntax. | Not used for transcript content. |
-| `SendText()` | Sends literal text rather than treating characters as key syntax. | Chosen for Unicode transcript chunks. |
+| `SendText()` | Sends literal text rather than treating characters as key syntax. | Chosen for Unicode transcript characters. |
 | `SendInput()` | Fast input method with limitations when blocked by another process or integrity boundary. | Researched but not selected for literal transcript content; `SendText()` is clearer for Unicode text. |
 | `SendMode()` | Changes the default method used by `Send`. | Not needed for `SendText()`-based transcript typing. |
-| `SetKeyDelay()` | Applies to SendEvent/ControlSend, not SendInput. | Not used. Simple STT controls pacing with a one-shot `SetTimer()` between `SendText()` chunks. |
+| `SetKeyDelay()` | Applies to SendEvent/ControlSend, not SendInput. | Not used. Simple STT controls per-character pacing with one-shot `SetTimer()` callbacks. |
 | `A_TrayMenu` | Built-in tray menu object. | The shell deletes default entries and creates the complete Simple STT tray menu. |
 | `Menu` objects | v2 object API for menu manipulation. | Used through `A_TrayMenu.Add()`, `.Delete()`, and `.Default`. |
 | `TraySetIcon()` | Sets the tray icon. | Shell owns the icon. A stock shell icon is used until a product icon is packaged. |
 | `TrayTip()` | Displays tray notification balloons/toasts. v2 parameter order is text, title, options. | Researched but no longer used; shell notices stay in logs or the Rust overlay instead of Windows notification toasts. |
 | `Gui()` | Constructs a GUI object. Controls and callbacks use object APIs in v2. | Settings are entirely implemented in `ahk/lib/SettingsGui.ahk`. |
 | GUI controls and events | Controls expose properties such as `.Value`/`.Text`; callbacks are registered with `OnEvent`. | GUI buttons dispatch only quick local work or asynchronous helper commands. |
-| `SetTimer()` | Repeated or negative one-shot timers schedule callbacks. | Drives helper completion polling, service event polling, service supervision, and paced transcript chunks. |
+| `SetTimer()` | Repeated or negative one-shot timers schedule callbacks. | Drives helper completion polling, service event polling, service supervision, and variable-paced transcript characters. |
 | `Run()` | Can return a created process PID through an output variable. | The shell records the exact capture PID and each one-shot helper PID. |
 | `ProcessExist()` | Checks whether a process or PID exists. | PID-based monitoring only; no name-wide termination. |
 | `ProcessWait()` | Waits for a process to exist. | Researched; readiness is instead checked asynchronously by state-file publication plus `PING`. |
@@ -91,7 +91,7 @@ Source: <https://www.autohotkey.com/docs/v2/Hotkeys.htm#AltGr>
 
 ## Typing choice and integrity boundaries
 
-Simple STT sends literal transcript chunks with `SendText()` and checks the active foreground HWND before every chunk. It never defaults to clipboard injection. AHK-generated text is protected from dictation retriggering by hook-prefixed hotkeys for ordinary modifier chords and by separating the CapsLock custom-combination path.
+Simple STT sends literal transcript characters with `SendText()` and checks the active foreground HWND before every character. Its timer-driven rhythm varies around the configured WPM without blocking the AHK event loop. It never defaults to clipboard injection. AHK-generated text is protected from dictation retriggering by hook-prefixed hotkeys for ordinary modifier chords and by separating the CapsLock custom-combination path.
 
 AutoHotkey documents that sending may be ineffective when a target process runs at a higher integrity level. Simple STT does not try to bypass UAC or protected application boundaries. Distribution may optionally document UI Access as an advanced packaging decision, but it is not silently enabled.
 

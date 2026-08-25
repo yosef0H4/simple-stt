@@ -56,12 +56,12 @@ Problems I had with other voice typing apps, and how this one tries to solve the
 
 | Problem | Simple STT approach |
 | --- | --- |
-| Global hotkeys and text delivery on Windows are unreliable, especially with unusual shortcuts like Caps Lock as a modifier. | Use AutoHotkey for the Windows-facing shell: hotkeys, GUI, target tracking, typing, and paste delivery. |
+| Global hotkeys and text delivery on Windows are unreliable, especially with unusual shortcuts like Caps Lock as a modifier. | Use AutoHotkey only for the Windows-facing shell: hotkeys, target tracking, typing, and paste delivery. |
 | Some apps still use Whisper, which is not always the best fit for quick voice typing. | Use Parakeet, which has been faster, lighter, and often more accurate for this use case in my experience. |
 | Many apps load the model only after recording ends, so you wait after speaking. | Start warming the selected model as soon as recording begins, so it is often ready by the time you release the hotkey. |
 | Unloading only the model often still leaves heavy runtime memory behind. | Put Parakeet and the model in a disposable inference process that can fully exit after the idle timeout. |
 | Compiled AutoHotkey apps can upset antivirus tools. | Ship the `.ahk` scripts with a bundled AutoHotkey binary and launch through `simple-stt.cmd`. It is less tidy, but easier to inspect and less likely to look like a packed script executable. |
-| Desktop GUI and hotkey regressions are annoying to test manually. | Use AutoHotkey to smoke-test the AutoHotkey shell, settings GUI, hotkeys, and delivery paths. |
+| Cross-platform settings easily become heavy or inconsistent. | Start a disposable authenticated loopback server only when Settings is opened and serve bundled vanilla browser assets. |
 
 Loaded memory use is still not tiny, roughly hundreds of MB depending on CPU/GPU mode, but the idle state is the part that matters most for an always-running background tool.
 
@@ -74,6 +74,7 @@ simple-stt.cmd
         └── simple-stt-infer.exe  disposable Parakeet DLL/model process
 
 simple-stt-ctl.exe                 disposable AHK control helper
+simple-stt-settings.exe            disposable cross-platform browser settings
 ```
 
 The key memory-cleanup guarantee is process exit: `simple-stt-infer.exe` is the only active component allowed to load `parakeet.dll` or a GGUF model. Repeated dictations reuse a warm worker until the configured idle timeout. Cleanup terminates that worker so Windows can reclaim its process RAM and VRAM allocations.
@@ -128,7 +129,7 @@ Packaging `artifacts\dist\simple-stt-setup.exe` also requires AutoHotkey v2 and 
 
 ### Shell-owned behavior
 
-The AutoHotkey v2 shell owns the tray icon/menu, settings GUI, runtime hold-to-record hotkeys, hotkey recorder, Caps Lock tap behavior, start-with-Windows shortcut, foreground target tracking, transcript transforms, Unicode `SendText()` chunking, clipboard-preserving paste delivery, log opening, user notices, app reload, and exact-PID capture-service supervision.
+The AutoHotkey v2 shell owns the tray icon/menu, runtime hold/toggle hotkeys, Caps Lock tap behavior, start-with-Windows shortcut, foreground target tracking, transcript transforms, Unicode `SendText()` chunking, clipboard-preserving paste delivery, log opening, user notices, app reload, and exact-PID capture-service supervision. It contains no settings window or hotkey recorder.
 
 Text delivery modes are selectable in Settings:
 
@@ -177,12 +178,12 @@ The combined suite verifies:
 
 ```text
 Rust unit tests and real child-process worker lifecycle tests
-schema-v2 config round trips and schema-1 migration backup
+nested schema-v5 normalization and malformed-file preservation
 Windows Common Controls v6 manifest embedding for modern tooltips
 capture-service / inference-worker process boundaries
 loopback authenticated IPC, Unicode transport, and reconnect
 AutoHotkey v2 syntax validation for the shell and every AHK test entry point
-settings GUI open/save persistence
+authenticated browser Settings save/reload and conflict handling
 hotkey parsing and binding behavior
 foreground-window-safe typed delivery
 casual-text transforms: punctuation removal and lowercase conversion
@@ -199,28 +200,6 @@ full non-text clipboard-format restoration after paste
 The end-to-end smoke uses an isolated temporary config and state directory. It does not overwrite the normal `%APPDATA%\simple-stt\config.json` file or reuse the live shell discovery file.
 
 The paste smoke intentionally sends only `hello world` into controlled temporary edit boxes. It also places a custom non-text object format on the clipboard before pasting and asserts that the object format is restored afterward.
-
-#### Run the settings GUI preview harness
-
-When editing `ahk/lib/SettingsGui.ahk`, validate with the console-first preview harness after each small batch so AHK syntax/runtime errors surface on stderr instead of as modal GUI popups:
-
-```bat
-python scripts\run-settings-preview.py
-```
-
-The launcher first runs AutoHotkey `/Validate`, then opens the isolated preview loop in `ahk\tests\settings-preview.ahk`.
-
-Artifacts:
-
-```text
-artifacts\gui-loop\report.txt
-artifacts\gui-loop\default-*.png
-artifacts\gui-loop\compact-*.png
-artifacts\gui-loop\wide-*.png
-artifacts\gui-loop\final-general.png
-```
-
-A passing run reports `RESULT: PASS` and `screenshots: 13`. The preview loop safely exercises every settings button callback, save/reload flow, mock IPC path, and screenshot capture path without opening the real app or relying on live services.
 
 #### Run only the AutoHotkey validation and runtime smoke suite
 

@@ -19,8 +19,8 @@ $env:CARGO_TARGET_DIR = $ResolvedTargetDir
 if (-not $SkipTests) {
     cargo test --all-targets
 }
-cargo build --release --bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl
-$Expected = @("simple-stt-capture.exe", "simple-stt-infer.exe", "simple-stt-ctl.exe")
+cargo build --release --bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl --bin simple-stt-settings
+$Expected = @("simple-stt-capture.exe", "simple-stt-infer.exe", "simple-stt-ctl.exe", "simple-stt-settings.exe")
 foreach ($Name in $Expected) {
     $Path = Join-Path $ResolvedTargetDir "release\$Name"
     if (-not (Test-Path -LiteralPath $Path)) { throw "Expected binary was not built: $Path" }

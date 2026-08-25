@@ -11,16 +11,18 @@
 #Include lib\TextTransform.ahk
 #Include lib\Typist.ahk
 #Include lib\Tray.ahk
-#Include lib\SettingsGui.ahk
 
 class SimpleSttShell {
     __New() {
         this.ctlExe := SimpleSttResolveExe("simple-stt-ctl")
         this.captureExe := SimpleSttResolveExe("simple-stt-capture")
+        this.settingsExe := SimpleSttResolveExe("simple-stt-settings")
         if !FileExist(this.ctlExe)
             throw Error("Missing simple-stt-ctl.exe. Build or package the Rust binaries beside the shell.")
         if !FileExist(this.captureExe)
             throw Error("Missing simple-stt-capture.exe. Build or package the Rust binaries beside the shell.")
+        if !FileExist(this.settingsExe)
+            throw Error("Missing simple-stt-settings.exe. Build or package the Rust binaries beside the shell.")
         this.config := ConfigStore(this.ctlExe)
         this.logger := ShellLog(this.config.Get("shell_log_path"), this.config.Get("log_level", "normal"))
         this.logger.Write("info", "shell start")
@@ -37,7 +39,6 @@ class SimpleSttShell {
         this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger, this.capsController)
         this.cancelHotkey := HotkeyManager(ObjBindMethod(this, "CancelAll"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
-        this.settings := SettingsGui(this)
         this.tray := TrayController(this)
         this.modeTooltipTimer := ObjBindMethod(this, "HideModeTooltip")
         this.ApplyHotkeyConfig()
@@ -48,7 +49,8 @@ class SimpleSttShell {
     ApplyHotkeyConfig() {
         try {
             capsMode := this.config.Get("capslock_behavior", "preserve_tap")
-            this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), capsMode)
+            releaseStops := this.config.Get("recording_mode", "hold") != "toggle"
+            this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), capsMode, releaseStops)
             this.cancelHotkey.Configure(this.config.Get("cancel_hotkey", "CapsLock+A"), true, capsMode)
             this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+D"), true, capsMode)
         } catch Error as err {
@@ -58,6 +60,10 @@ class SimpleSttShell {
     }
 
     RecordDown() {
+        if this.config.Get("recording_mode", "hold") = "toggle" && this.activeRecordingSession {
+            this.RecordUp()
+            return
+        }
         if !this.ipc.ready {
             this.Notice("Audio service is not ready", "warning")
             return
@@ -140,15 +146,16 @@ class SimpleSttShell {
                 this.sessions.Delete(session)
                 text := this.TransformTranscript(event["text"])
                 this.logger.Write("info", "transcript received chars=" . StrLen(text), session)
-                this.typist.Begin(session, target, text, this.config.Int("typing_chunk_chars", 3), this.config.Int("typing_interval_ms", 20), this.config.Bool("trailing_space", true), this.config.Get("text_delivery_mode", "paste_ctrl_v"))
+                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), this.config.Bool("trailing_space", true), this.config.Get("text_delivery_mode", "paste_ctrl_v"))
             case "notice":
                 this.Notice(event["text"], event["level"])
                 if session && this.sessions.Has(session)
                     this.sessions.Delete(session)
+            case "configuration_reloaded":
+                this.ApplyReloadedConfig()
             default:
                 this.logger.Write("debug", "service event kind=" . kind, session)
         }
-        this.settings.HandleEvent(event)
     }
 
     OnServiceRestart() {
@@ -172,7 +179,16 @@ class SimpleSttShell {
     }
 
     OpenSettings(*) {
-        this.settings.Open()
+        this.logger.Write("info", "settings requested executable=" . this.settingsExe)
+        command := SimpleSttQuote(this.settingsExe) . " --state-file " . SimpleSttQuote(this.supervisor.stateFile) . " --service-token " . SimpleSttQuote(this.supervisor.token)
+        try {
+            Run(command, A_ScriptDir, "Hide", &settingsPid)
+            this.logger.Write("info", "settings process launched pid=" . settingsPid)
+        }
+        catch Error as err {
+            this.logger.Write("error", "settings launch failed: " . err.Message)
+            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
+        }
     }
 
     NoopHotkeyUp() {
@@ -204,8 +220,6 @@ class SimpleSttShell {
             this.config.SaveSync()
             this.ShowDeliveryModeTooltip(next)
             this.logger.Write("info", "delivery mode toggled mode=" . next)
-            if IsObject(this.settings) && IsObject(this.settings.gui)
-                this.settings.LoadControls()
         } catch Error as err {
             this.logger.Write("error", "delivery mode toggle failed: " . err.Message)
             this.Notice("Delivery mode toggle failed — see log", "error")
@@ -248,6 +262,20 @@ class SimpleSttShell {
         } catch Error as err {
             this.logger.Write("error", "settings reload failed: " . err.Message)
             MsgBox(err.Message, "SimpleStt settings error", "Iconx")
+        }
+    }
+
+    ApplyReloadedConfig() {
+        try {
+            this.config.LoadSync()
+            this.logger.SetLevel(this.config.Get("log_level", "normal"))
+            this.ApplyHotkeyConfig()
+            this.ApplyStartupRegistration()
+            this.tray.Rebuild()
+            this.logger.Write("info", "settings applied from browser")
+        } catch Error as err {
+            this.logger.Write("error", "browser settings apply failed: " . err.Message)
+            this.Notice("Settings saved, but Windows hotkeys could not reload", "error")
         }
     }
 

@@ -43,6 +43,12 @@ for label in ["CapsLock+S", "LCtrl+S", "AltGr+S", "RAlt+S", "LShift+X"] {
 }
 
 manager.Configure("LCtrl+S", true, "preserve_tap")
+manager.Configure("LCtrl+S", true, "preserve_tap", false)
+if manager.releaseStops
+    Fail("toggle recording mode should not stop on physical key release")
+manager.Configure("LCtrl+S", true, "preserve_tap", true)
+if !manager.releaseStops
+    Fail("hold recording mode should stop on physical key release")
 manager.SetEnabled(false)
 if manager.enabled
     Fail("manager should be disabled after SetEnabled(false)")

@@ -26,14 +26,14 @@ The combined validation suite covers:
 ```text
 Rust unit tests
 real-child-process worker lifecycle integration tests
-schema-v2 config validation and schema-1 migration backup
+nested schema-v5 normalization and malformed-file preservation
 install-relative runtime path behavior
 Windows Common Controls v6 manifest embedding
 loopback authenticated IPC
 Unicode transport and malformed protocol rejection
 state-file reconnect after simulated service restart
 AHK v2 load validation for all shell and test entry points
-settings GUI open/save persistence
+authenticated browser Settings load/save and external-edit conflict detection
 typed delivery and foreground mismatch cancellation
 punctuation removal and lowercase transcript transforms
 Windows response-file sharing-violation retry handling
@@ -63,7 +63,7 @@ shell JSON Unicode and malformed JSON
 escaped helper protocol Unicode/control-character round trip
 worker framed protocol PCM and Unicode transcript framing
 protocol-version and malformed-size rejection
-schema-v2 validation and schema-1 migration backup
+schema-v5 normalization, unknown-field removal, and malformed-file preservation
 approved model-name restriction
 lazy launch / warm reuse / model replacement / idle policy
 install-relative runtime root behavior
@@ -83,7 +83,7 @@ blocked inference exact-PID termination fallback
 Unicode transcript transport across child pipes
 ```
 
-The release build script names only `simple-stt-capture`, `simple-stt-infer`, and `simple-stt-ctl`, so the mock binary is not staged.
+The release build script names `simple-stt-capture`, `simple-stt-infer`, `simple-stt-ctl`, and `simple-stt-settings`, so the mock binary is not staged.
 
 ## Run source and IPC checks only
 
@@ -110,7 +110,7 @@ framed Rust-to-Rust PCM protocol
 clipboard-preserving paste implementation
 response-file sharing-violation retry
 recording-start worker warm-up
-schema migration, atomic writes, and download hygiene
+schema normalization, atomic writes, authenticated Settings, and download hygiene
 mock-worker exclusion from release packaging
 ```
 
@@ -123,49 +123,9 @@ asynchronous polled Unicode TRANSCRIPT
 state-file reconnect after simulated service restart
 ```
 
-## Run settings GUI preview only
+## Browser Settings coverage
 
-```bat
-python scripts\run-settings-preview.py
-```
-
-Use this while editing `ahk\lib\SettingsGui.ahk`. The launcher:
-
-```text
-runs AutoHotkey /Validate with /ErrorStdOut=UTF-8
-starts ahk\tests\settings-preview.ahk
-exercises every settings button callback in test mode
-captures screenshots for default, compact, wide, and final-general states
-writes artifacts\gui-loop\report.txt
-```
-
-Expected success shape:
-
-```text
-RESULT: PASS
-screenshots: 13
-```
-
-Generated artifacts:
-
-```text
-artifacts\gui-loop\report.txt
-artifacts\gui-loop\default-general.png
-artifacts\gui-loop\default-audio-models.png
-artifacts\gui-loop\default-output.png
-artifacts\gui-loop\default-advanced.png
-artifacts\gui-loop\compact-general.png
-artifacts\gui-loop\compact-audio-models.png
-artifacts\gui-loop\compact-output.png
-artifacts\gui-loop\compact-advanced.png
-artifacts\gui-loop\wide-general.png
-artifacts\gui-loop\wide-audio-models.png
-artifacts\gui-loop\wide-output.png
-artifacts\gui-loop\wide-advanced.png
-artifacts\gui-loop\final-general.png
-```
-
-The preview harness is intentionally console-first so syntax or shutdown-path regressions do not surface as modal GUI dialogs.
+Browser automation covers all five pages, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
 
 ## Run AutoHotkey validation and runtime smoke only
 
@@ -194,24 +154,17 @@ Validated entry points:
 ahk\simple-stt.ahk
 ahk\tests\hotkeys-manual.ahk
 ahk\tests\ipc-smoke.ahk
-ahk\tests\settings-smoke.ahk
 ahk\tests\typing-smoke.ahk
 ahk\tests\text-transform-smoke.ahk
 ahk\tests\tabprotocol-retry-smoke.ahk
 ahk\tests\full-smoke.ahk
 ```
 
-`ahk\tests\settings-preview.ahk` is validated by `python scripts\run-settings-preview.py`, not by `scripts\test-ahk-full.cmd`.
-
 Runtime smoke scripts:
 
 ```text
 hotkeys-manual.ahk
   parser and runtime binding smoke
-
-settings-smoke.ahk
-  real GUI construction and Save persistence through simple-stt-ctl
-  text-delivery mode and casual-text option persistence
 
 typing-smoke.ahk
   typed queue behavior and foreground mismatch cancellation

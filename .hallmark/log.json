@@ -1,0 +1,10 @@
+[
+  {
+    "date": "2026-08-25",
+    "scope": "app",
+    "macrostructure": "Workbench",
+    "theme": "custom cool workbench",
+    "enrichment": "none",
+    "brief": "Simple STT disposable cross-platform settings editor"
+  }
+]

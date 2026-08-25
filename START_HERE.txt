@@ -29,7 +29,7 @@ Outputs:
 Static source checks and IPC POC:
   .\scripts\test-static.ps1
 
-Settings GUI preview loop:
-  python scripts\run-settings-preview.py
+Settings UI:
+  use the tray's Open Settings command, or run target\debug\simple-stt-settings.exe
 
 The Linux editing environment did not build binaries. Run the documented Windows checks before release.

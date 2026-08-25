@@ -62,6 +62,7 @@ $Iscc = Resolve-Tool $Iscc @(
     "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
 ) 'Inno Setup compiler (ISCC.exe)'
 Require-File (Join-Path $Root 'ahk\simple-stt.ahk')
+Require-File (Join-Path $Root 'ahk\hotkey-recorder.ahk')
 Require-File (Join-Path $Root 'fixtures\parakeet-smoke.wav')
 Require-File (Join-Path $ParakeetSource 'bin\parakeet.dll')
 if ($IncludeModel) {
@@ -78,10 +79,11 @@ if ($SkipTests) {
 if (Test-Path -LiteralPath $Portable) { Remove-Item -LiteralPath $Portable -Recurse -Force }
 New-Item -ItemType Directory -Path $Runtime -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\simple-stt.ahk') -Destination $Runtime -Force
+Copy-Item -LiteralPath (Join-Path $Root 'ahk\hotkey-recorder.ahk') -Destination $Runtime -Force
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\lib') -Destination (Join-Path $Runtime 'lib') -Recurse -Force
 Copy-Item -LiteralPath $AhkBase -Destination (Join-Path $Runtime 'AutoHotkey64.exe') -Force
 
-foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe')) {
+foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe','simple-stt-settings.exe')) {
     Copy-Item -LiteralPath (Join-Path $ResolvedTargetDir "release\$Name") -Destination $Runtime -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $Portable -Force
@@ -98,10 +100,12 @@ if ($IncludeModel) {
 }
 $Required = @(
     'runtime\simple-stt.ahk',
+    'runtime\hotkey-recorder.ahk',
     'runtime\AutoHotkey64.exe',
     'runtime\simple-stt-capture.exe',
     'runtime\simple-stt-infer.exe',
     'runtime\simple-stt-ctl.exe',
+    'runtime\simple-stt-settings.exe',
     'runtime\fixtures\parakeet-smoke.wav',
     'runtime\external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll'
 )

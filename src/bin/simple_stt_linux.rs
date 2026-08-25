@@ -39,6 +39,8 @@ enum LinuxCommand {
     UnloadModel,
     Shutdown,
     Status,
+    Settings,
+    ConfigureShortcuts,
     PrintShortcutCommands,
     InstallUserService,
 }
@@ -83,6 +85,8 @@ fn main() -> Result<()> {
         LinuxCommand::UnloadModel => unload_model(),
         LinuxCommand::Shutdown => shutdown(),
         LinuxCommand::Status => status(),
+        LinuxCommand::Settings => settings(),
+        LinuxCommand::ConfigureShortcuts => configure_shortcuts(),
         LinuxCommand::PrintShortcutCommands => print_shortcut_commands(),
         LinuxCommand::InstallUserService => install_user_service(),
     }
@@ -114,6 +118,13 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
     fs::write(pid_file(), format!("{}\n", std::process::id()))
         .context("writing linux daemon pid file")?;
     println!("[{APP}] capture service pid={child_pid}");
+
+    #[cfg(target_os = "linux")]
+    std::thread::spawn(|| {
+        if let Err(error) = futures_lite::future::block_on(portal_shortcuts_loop()) {
+            eprintln!("[{APP}] GlobalShortcuts portal unavailable: {error:#}");
+        }
+    });
 
     let shutdown_child = Arc::clone(&child);
     ctrlc::set_handler(move || {
@@ -259,6 +270,235 @@ fn print_shortcut_commands() -> Result<()> {
     Ok(())
 }
 
+fn settings() -> Result<()> {
+    ensure_dirs()?;
+    let executable = find_exe("simple-stt-settings")?;
+    ProcessCommand::new(executable)
+        .arg("--state-file")
+        .arg(state_file())
+        .arg("--service-token")
+        .arg(token()?)
+        .spawn()
+        .context("starting Simple STT Settings")?;
+    Ok(())
+}
+
+fn configure_shortcuts() -> Result<()> {
+    if pid_file().exists() {
+        let request = shortcut_request_file();
+        let result = shortcut_result_file();
+        let _ = fs::remove_file(&result);
+        fs::write(&request, format!("{}\n", now_secs()))
+            .context("requesting portal shortcut configuration")?;
+        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        while std::time::Instant::now() < deadline {
+            if let Ok(message) = fs::read_to_string(&result) {
+                let _ = fs::remove_file(&result);
+                if let Some(error) = message.strip_prefix("error:") {
+                    eprintln!("[{APP}] portal configuration unavailable: {}", error.trim());
+                    break;
+                }
+                println!("[{APP}] {}", message.trim());
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+    for (program, argument) in [
+        ("kcmshell6", "kcm_keys"),
+        ("systemsettings", "kcm_keys"),
+        ("kcmshell5", "keys"),
+        ("systemsettings5", "keys"),
+        ("gnome-control-center", "keyboard"),
+    ] {
+        if command_exists(program) {
+            ProcessCommand::new(program)
+                .arg(argument)
+                .spawn()
+                .with_context(|| format!("opening {program}"))?;
+            println!("[{APP}] opened desktop shortcut settings with {program}");
+            return Ok(());
+        }
+    }
+    print_shortcut_commands()?;
+    bail!("No desktop shortcut settings application was detected; bind the commands printed above")
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+enum PortalEvent {
+    Activated(String),
+    Deactivated(String),
+    Changed(Vec<(String, String)>),
+    Closed,
+    Tick,
+}
+
+#[cfg(target_os = "linux")]
+async fn portal_shortcuts_loop() -> Result<()> {
+    use ashpd::desktop::global_shortcuts::{
+        BindShortcutsOptions, ConfigureShortcutsOptions, GlobalShortcuts, NewShortcut,
+    };
+    use ashpd::desktop::session::CreateSessionOptions;
+    use futures_lite::{FutureExt, StreamExt};
+
+    let portal = GlobalShortcuts::new().await?;
+    let session = portal
+        .create_session(CreateSessionOptions::default())
+        .await?;
+    let shortcuts = [
+        NewShortcut::new("record", "Record or stop dictation"),
+        NewShortcut::new("cancel", "Cancel dictation"),
+        NewShortcut::new("delivery", "Toggle text delivery mode"),
+    ];
+    let request = portal
+        .bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default())
+        .await?;
+    let bound = request.response()?;
+    write_shortcut_state(
+        bound
+            .shortcuts()
+            .iter()
+            .map(|item| (item.id().to_owned(), item.trigger_description().to_owned()))
+            .collect(),
+    )?;
+    let mut activated = portal.receive_activated().await?;
+    let mut deactivated = portal.receive_deactivated().await?;
+    let mut changed = portal.receive_shortcuts_changed().await?;
+    let mut closed = session.receive_closed().await?;
+    loop {
+        let activation = activated.next().map(|value| {
+            value
+                .map(|item| PortalEvent::Activated(item.shortcut_id().to_owned()))
+                .unwrap_or(PortalEvent::Closed)
+        });
+        let deactivation = deactivated.next().map(|value| {
+            value
+                .map(|item| PortalEvent::Deactivated(item.shortcut_id().to_owned()))
+                .unwrap_or(PortalEvent::Closed)
+        });
+        let shortcut_change = changed.next().map(|value| {
+            value
+                .map(|item| {
+                    PortalEvent::Changed(
+                        item.shortcuts()
+                            .iter()
+                            .map(|shortcut| {
+                                (
+                                    shortcut.id().to_owned(),
+                                    shortcut.trigger_description().to_owned(),
+                                )
+                            })
+                            .collect(),
+                    )
+                })
+                .unwrap_or(PortalEvent::Closed)
+        });
+        let session_closed = closed.next().map(|_| PortalEvent::Closed);
+        let tick = async_io::Timer::after(Duration::from_millis(250)).map(|_| PortalEvent::Tick);
+        let event = activation
+            .or(deactivation)
+            .or(shortcut_change)
+            .or(session_closed)
+            .or(tick)
+            .await;
+        match event {
+            PortalEvent::Activated(id) => {
+                if let Err(error) = handle_portal_activation(&id) {
+                    eprintln!("[{APP}] portal shortcut {id} failed: {error:#}");
+                }
+            }
+            PortalEvent::Deactivated(id) => {
+                if let Err(error) = handle_portal_deactivation(&id) {
+                    eprintln!("[{APP}] portal shortcut release {id} failed: {error:#}");
+                }
+            }
+            PortalEvent::Changed(shortcuts) => write_shortcut_state(shortcuts)?,
+            PortalEvent::Closed => bail!("GlobalShortcuts portal session closed"),
+            PortalEvent::Tick => {
+                if shortcut_request_file().exists() {
+                    let _ = fs::remove_file(shortcut_request_file());
+                    let result = if portal.version() >= 2 {
+                        portal
+                            .configure_shortcuts(
+                                &session,
+                                None,
+                                ConfigureShortcutsOptions::default(),
+                            )
+                            .await
+                            .map(|_| "portal shortcut configuration opened".to_owned())
+                            .map_err(|error| error.to_string())
+                    } else {
+                        Err(
+                            "GlobalShortcuts portal version 1 does not support ConfigureShortcuts"
+                                .to_owned(),
+                        )
+                    };
+                    let body = match result {
+                        Ok(message) => message,
+                        Err(error) => format!("error: {error}"),
+                    };
+                    let _ = fs::write(shortcut_result_file(), body);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn handle_portal_activation(id: &str) -> Result<()> {
+    match id {
+        "record" => {
+            let config = AppConfig::load()?;
+            if config.general.recording_mode == simple_stt::config::RecordingMode::Hold
+                && read_session()?.recording
+            {
+                Ok(())
+            } else {
+                toggle(90.0, false)
+            }
+        }
+        "cancel" => cancel(),
+        "delivery" => toggle_linux_delivery_mode(),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn handle_portal_deactivation(id: &str) -> Result<()> {
+    if id != "record" {
+        return Ok(());
+    }
+    if AppConfig::load().is_ok_and(|config| {
+        config.general.recording_mode == simple_stt::config::RecordingMode::Hold
+    }) {
+        stop(90.0, false)?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn toggle_linux_delivery_mode() -> Result<()> {
+    let mut config = AppConfig::load()?;
+    config.output.delivery_mode = match config.output.delivery_mode {
+        simple_stt::config::TextDeliveryMode::Type => {
+            simple_stt::config::TextDeliveryMode::PasteCtrlV
+        }
+        _ => simple_stt::config::TextDeliveryMode::Type,
+    };
+    config.save()
+}
+
+#[cfg(target_os = "linux")]
+fn write_shortcut_state(shortcuts: Vec<(String, String)>) -> Result<()> {
+    let value = shortcuts.into_iter().collect::<BTreeMap<_, _>>();
+    fs::write(
+        shortcut_state_file(),
+        serde_json::to_string_pretty(&value)? + "\n",
+    )?;
+    Ok(())
+}
+
 fn install_user_service() -> Result<()> {
     let unit_dir = config_home().join("systemd").join("user");
     fs::create_dir_all(&unit_dir).context("creating systemd user dir")?;
@@ -269,10 +509,35 @@ fn install_user_service() -> Result<()> {
         exe.display()
     );
     fs::write(&unit, body).with_context(|| format!("writing {}", unit.display()))?;
+    install_desktop_entries(&exe)?;
     println!("Wrote {}", unit.display());
     println!("Run:");
     println!("  systemctl --user daemon-reload");
     println!("  systemctl --user enable --now simple-stt-linux.service");
+    Ok(())
+}
+
+fn install_desktop_entries(exe: &Path) -> Result<()> {
+    let applications = data_home().join("applications");
+    fs::create_dir_all(&applications)?;
+    for (filename, name, command) in [
+        (
+            "simple-stt-settings.desktop",
+            "Simple STT Settings",
+            "settings",
+        ),
+        (
+            "simple-stt-shortcuts.desktop",
+            "Configure Simple STT Shortcuts",
+            "configure-shortcuts",
+        ),
+    ] {
+        let body = format!(
+            "[Desktop Entry]\nType=Application\nName={name}\nExec={} {command}\nTerminal=false\nCategories=Settings;AudioVideo;\n",
+            exe.display()
+        );
+        fs::write(applications.join(filename), body)?;
+    }
     Ok(())
 }
 
@@ -334,13 +599,13 @@ fn wait_for_transcript(session_id: u64, after: u64, timeout_s: f64) -> Result<St
 fn transform_text(text: &str) -> Result<String> {
     let cfg = AppConfig::load()?;
     let mut text = text.trim().to_owned();
-    if cfg.remove_punctuation {
+    if cfg.output.remove_punctuation {
         text.retain(|ch| !".,!?;:".contains(ch));
     }
-    if cfg.lowercase_output {
+    if cfg.output.lowercase {
         text = text.to_lowercase();
     }
-    if cfg.trailing_space && !text.is_empty() {
+    if cfg.output.trailing_space && !text.is_empty() {
         text.push(' ');
     }
     Ok(text)
@@ -719,6 +984,16 @@ fn config_home() -> PathBuf {
         .to_path_buf()
 }
 
+fn data_home() -> PathBuf {
+    std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".local/share")
+        })
+}
+
 fn token_file() -> PathBuf {
     data_dir().join("linux-token")
 }
@@ -737,6 +1012,19 @@ fn seq_file() -> PathBuf {
 
 fn state_file() -> PathBuf {
     AppConfig::state_dir().join("linux-capture-state.json")
+}
+
+fn shortcut_request_file() -> PathBuf {
+    data_dir().join("linux-configure-shortcuts.request")
+}
+
+fn shortcut_result_file() -> PathBuf {
+    data_dir().join("linux-configure-shortcuts.result")
+}
+
+#[cfg(target_os = "linux")]
+fn shortcut_state_file() -> PathBuf {
+    data_dir().join("linux-shortcuts.json")
 }
 
 #[cfg(test)]

@@ -1,97 +1,45 @@
 # Configuration schema and ownership
 
-## Canonical source
+`config.json` is Simple STT's canonical, portable configuration. The disposable `simple-stt-settings` browser process is only a visual editor for it. Windows uses `%APPDATA%\simple-stt\instances\<runtime-id>\config.json`; Linux uses the matching XDG config directory. `SIMPLE_STT_CONFIG` overrides the path for development and tests.
 
-Simple STT has one canonical persisted config file per runtime root: human-readable JSON schema version 2.
-
-Default Windows path shape:
-
-```text
-%APPDATA%\simple-stt\instances\<runtime-root-id>\config.json
-```
-
-This keeps portable, installed, and checkout/dev builds isolated from each other so one build cannot silently reuse another build's runtime, model, log, or state paths.
-
-Override for development and diagnostics:
-
-```powershell
-$env:SIMPLE_STT_CONFIG = 'C:\path\to\config.json'
-```
-
-The Rust config module owns JSON serialization, migration, validation, and atomic replacement. The AHK GUI reads and writes through local `simple-stt-ctl config-show` / `config-save` commands so the shell does not need a JSON library.
+The current intentionally breaking schema is version 5:
 
 ```json
 {
-  "schema_version": 2,
-  "hotkey_enabled": true,
-  "record_hotkey": "CapsLock+S",
-  "capslock_behavior": "preserve_tap",
-  "audio_device_contains": "",
-  "audio_gain": 1.0,
-  "typing_chunk_chars": 3,
-  "typing_interval_ms": 20,
-  "trailing_space": true,
-  "idle_worker_timeout_secs": 180,
-  "worker_shutdown_grace_ms": 2000,
-  "start_with_windows": false,
-  "log_level": "normal",
-  "diagnostic_overlay": false,
-  "log_transcripts": false,
-  "inference_device": "auto",
-  "parakeet_runtime_dir": "external\\parakeet-runtime\\parakeet-windows-cuda",
-  "model_dir": "external\\parakeet-runtime\\parakeet-windows-cuda\\models",
-  "selected_model_filename": "tdt_ctc-110m-f16.gguf"
+  "schema_version": 5,
+  "general": {
+    "enabled": true,
+    "recording_mode": "hold",
+    "record_hotkey": "CapsLock+S",
+    "toggle_delivery_hotkey": "CapsLock+D",
+    "cancel_hotkey": "CapsLock+A",
+    "capslock_behavior": "preserve_tap",
+    "start_at_login": false,
+    "ui_theme": "auto"
+  },
+  "audio": { "preferred_device_id": "", "gain": 1.0 },
+  "speech": {
+    "inference_device": "auto",
+    "runtime_dir": "external\\parakeet-runtime\\parakeet-windows-cuda",
+    "model_dir": "external\\parakeet-runtime\\parakeet-windows-cuda\\models",
+    "selected_model_filename": "tdt_ctc-110m-f16.gguf",
+    "idle_worker_timeout_secs": 180,
+    "worker_shutdown_grace_ms": 2000
+  },
+  "output": {
+    "delivery_mode": "paste_ctrl_v",
+    "paced_typing_enabled": true,
+    "typing_speed_wpm": 450,
+    "trailing_space": true,
+    "remove_punctuation": false,
+    "lowercase": false
+  },
+  "diagnostics": { "log_level": "normal", "diagnostic_overlay": false, "log_transcripts": false }
 }
 ```
 
-## Fields, validation, and apply scope
+There are no version migrations or migration backups. Every parseable file is normalized immediately: exact current fields with valid values are retained, missing or invalid fields receive defaults, and unknown/obsolete fields are dropped. A syntactically malformed file is preserved byte-for-byte and Settings requires an explicit Import or Reset preview followed by Save before replacing it.
 
-| Field | Validation / behavior | Apply scope |
-| --- | --- | --- |
-| `schema_version` | Must equal `2`. | Migration-owned. |
-| `hotkey_enabled` | Boolean. | Immediate shell rebind. |
-| `record_hotkey` | Non-empty chord parsed by AHK v2 hotkey parser. | Immediate shell rebind. |
-| `capslock_behavior` | `preserve_tap` or `always_off`. | Immediate shell rebind. |
-| `audio_device_contains` | Empty for default device or case-insensitive name substring. | Restart capture service. |
-| `audio_gain` | Floating point in `(0, 10]`. | Restart capture service. |
-| `typing_chunk_chars` | Integer `[1, 256]`. | Immediate for newly received transcripts. |
-| `typing_interval_ms` | Integer `0..1000`. | Immediate for newly received transcripts. |
-| `trailing_space` | Boolean. | Immediate for newly received transcripts. |
-| `idle_worker_timeout_secs` | Positive integer. | Recycle infer worker, keep capture service. |
-| `worker_shutdown_grace_ms` | Integer `[250, 30000]`. | Recycle infer worker, keep capture service. |
-| `start_with_windows` | Boolean. | Immediate shell shortcut update. |
-| `log_level` | `minimal`, `normal`, `debug`, or `extreme`. | Immediate shell filter update; restart capture service and recycle infer worker. |
-| `diagnostic_overlay` | Boolean. | Capture reload. |
-| `log_transcripts` | Boolean; default false. | Capture reload / worker diagnostics. Transcript content must stay off by default. |
-| `inference_device` | `auto`, `nvidia_gpu`, or `cpu`; default `auto`. Auto uses NVIDIA GPU when `nvidia-smi` reports at least 1024 MB free VRAM within 2.5 seconds, otherwise CPU. Diagnostic override: `SIMPLE_STT_AUTO_INFERENCE_DEVICE=cpu` or `nvidia_gpu`. | Recycle infer worker. |
-| `parakeet_runtime_dir` | Non-empty path. | Recycle infer worker. |
-| `model_dir` | Non-empty path. | Recycle infer worker. |
-| `selected_model_filename` | Plain approved `.gguf` filename; no slash, backslash, or `..`. | Recycle infer worker. |
+Writes use a temporary file, flush it, and atomically replace the destination. Relative runtime/model paths are preserved in JSON and resolved against the runtime root only when used. An unavailable `audio.preferred_device_id` is retained while capture temporarily follows the system default.
 
-`ReloadConfig` compares old and new audio fields and the capture logging level. The response tells the shell when an audio-service restart is necessary. Model and worker lifecycle fields are applied by recycling only `simple-stt-infer.exe`.
-
-## Migration from schema 1
-
-On first load of an old config without `schema_version: 2`, Rust:
-
-1. parses known schema-1 fields;
-2. maps `idle_timeout_secs` to `idle_worker_timeout_secs`;
-3. splits `parakeet_model_path` into `model_dir` and `selected_model_filename`;
-4. maps `capslock_always_off` to `capslock_behavior`;
-5. normalizes legacy hotkey spelling such as `capslock+s` to `CapsLock+S`;
-6. writes a backup named `config.json.schema1.bak`;
-7. atomically writes schema 2.
-
-## Atomic writes
-
-On Windows, schema-v2 saves, helper response files, and completed model downloads write a temporary file, flush it, and call `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH`. This avoids the old “delete destination then rename” gap. Every model download receives a unique `.partial.<random>` file and removes it after a failed transfer, so overlapping requests do not corrupt one shared partial file.
-
-## Other tracked state
-
-The only additional runtime state is the ephemeral capture discovery file:
-
-```text
-%LOCALAPPDATA%\simple-stt\instances\<runtime-root-id>\state\capture-state.json
-```
-
-It contains protocol number, capture PID, loopback address, and startup timestamp. The per-launch random token is passed directly from shell to capture/helper command lines and is not persisted as long-lived configuration.
+The settings server detects external edits with a content hash before Save. A successful Save asks the capture service to reload and emits `configuration_reloaded`; Windows AHK then reapplies its owned hotkeys, startup registration, transforms, and delivery settings.

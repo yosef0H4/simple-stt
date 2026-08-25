@@ -16,6 +16,46 @@ pub struct ModelSpec {
     pub size_mb: u32,
     pub recommended: bool,
     pub installed: bool,
+    pub languages: Vec<String>,
+}
+
+const V3_LANGUAGES: &[&str] = &[
+    "Bulgarian (bg)",
+    "Croatian (hr)",
+    "Czech (cs)",
+    "Danish (da)",
+    "Dutch (nl)",
+    "English (en)",
+    "Estonian (et)",
+    "Finnish (fi)",
+    "French (fr)",
+    "German (de)",
+    "Greek (el)",
+    "Hungarian (hu)",
+    "Italian (it)",
+    "Latvian (lv)",
+    "Lithuanian (lt)",
+    "Maltese (mt)",
+    "Polish (pl)",
+    "Portuguese (pt)",
+    "Romanian (ro)",
+    "Slovak (sk)",
+    "Slovenian (sl)",
+    "Spanish (es)",
+    "Swedish (sv)",
+    "Russian (ru)",
+    "Ukrainian (uk)",
+];
+
+fn languages_for_family(family: &str) -> Vec<String> {
+    if family == "tdt-0.6b-v3" {
+        V3_LANGUAGES
+            .iter()
+            .map(|language| (*language).into())
+            .collect()
+    } else {
+        vec!["English (en)".into()]
+    }
 }
 const FAMILIES: &[(&str, &[(&str, u32)])] = &[
     (
@@ -131,6 +171,7 @@ pub fn catalog() -> Vec<ModelSpec> {
                 size_mb: *size_mb,
                 recommended: false,
                 installed: false,
+                languages: languages_for_family(family),
             })
         })
         .collect()
@@ -177,11 +218,11 @@ pub fn refresh_catalog_cache() -> Result<Vec<String>> {
 pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
     let mut models = BTreeMap::<String, ModelSpec>::new();
     for mut model in catalog() {
-        model.recommended = is_recommended_for_device(&model.file, &config.inference_device);
+        model.recommended = is_recommended_for_device(&model.file, &config.speech.inference_device);
         models.insert(model.file.clone(), model);
     }
     for file in cached_catalog_files() {
-        let recommended = is_recommended_for_device(&file, &config.inference_device);
+        let recommended = is_recommended_for_device(&file, &config.speech.inference_device);
         models.entry(file.clone()).or_insert_with(|| ModelSpec {
             family: "online".into(),
             quant: "unknown".into(),
@@ -189,10 +230,11 @@ pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
             size_mb: 0,
             recommended,
             installed: false,
+            languages: Vec::new(),
         });
     }
     for file in installed_model_files(config) {
-        let recommended = is_recommended_for_device(&file, &config.inference_device);
+        let recommended = is_recommended_for_device(&file, &config.speech.inference_device);
         models
             .entry(file.clone())
             .and_modify(|model| model.installed = true)
@@ -203,6 +245,7 @@ pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
                 size_mb: 0,
                 recommended,
                 installed: true,
+                languages: Vec::new(),
             });
     }
     models.into_values().collect()
@@ -238,8 +281,8 @@ pub fn downloadable_models(config: &AppConfig) -> Vec<ModelSpec> {
         .filter(|model| !model.installed)
         .collect::<Vec<_>>();
     models.sort_by(|a, b| {
-        let a_rank = recommendation_rank(&a.file, &config.inference_device, Some(a.size_mb));
-        let b_rank = recommendation_rank(&b.file, &config.inference_device, Some(b.size_mb));
+        let a_rank = recommendation_rank(&a.file, &config.speech.inference_device, Some(a.size_mb));
+        let b_rank = recommendation_rank(&b.file, &config.speech.inference_device, Some(b.size_mb));
         match (a_rank, b_rank) {
             (Some(a_rank), Some(b_rank)) => a_rank
                 .cmp(&b_rank)
@@ -354,6 +397,23 @@ where
     }
 }
 
+pub fn remove_model(config: &AppConfig, filename: &str) -> Result<()> {
+    validate_model_filename(filename)?;
+    anyhow::ensure!(
+        filename != config.speech.selected_model_filename,
+        "select another model before removing the active model"
+    );
+    anyhow::ensure!(
+        catalog_for_config(config)
+            .iter()
+            .any(|model| model.file == filename),
+        "model is not in the approved catalog"
+    );
+    let path = config.model_dir_path().join(filename);
+    anyhow::ensure!(path.is_file(), "model is not installed");
+    fs::remove_file(&path).with_context(|| format!("removing model {}", path.display()))
+}
+
 pub fn smoke_audio_path() -> PathBuf {
     crate::config::runtime_root()
         .join("fixtures")
@@ -386,6 +446,21 @@ mod tests {
         }
     }
     #[test]
+    fn catalog_exposes_authoritative_language_metadata() {
+        let english = find_by_file("tdt-0.6b-v2-f16.gguf").unwrap();
+        assert_eq!(english.languages, ["English (en)"]);
+        let multilingual = find_by_file("tdt-0.6b-v3-f16.gguf").unwrap();
+        assert_eq!(multilingual.languages.len(), 25);
+        assert!(multilingual
+            .languages
+            .iter()
+            .any(|value| value == "Spanish (es)"));
+        assert!(multilingual
+            .languages
+            .iter()
+            .any(|value| value == "Ukrainian (uk)"));
+    }
+    #[test]
     fn gpu_and_cpu_recommendations_are_device_specific() {
         assert!(is_recommended_for_device(
             "tdt_ctc-110m-f16.gguf",
@@ -403,5 +478,28 @@ mod tests {
     #[test]
     fn only_approved_names_are_downloadable() {
         assert!(find_by_file("..\\evil.gguf").is_none());
+    }
+    #[test]
+    fn installed_non_selected_model_can_be_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.speech.model_dir = temp.path().display().to_string();
+        config.speech.selected_model_filename = "tdt_ctc-110m-f16.gguf".into();
+        let removable = "tdt_ctc-110m-q4_k.gguf";
+        let path = temp.path().join(removable);
+        fs::write(&path, b"fixture").unwrap();
+        remove_model(&config, removable).unwrap();
+        assert!(!path.exists());
+    }
+    #[test]
+    fn selected_model_is_not_removed() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.speech.model_dir = temp.path().display().to_string();
+        let selected = config.speech.selected_model_filename.clone();
+        let path = temp.path().join(&selected);
+        fs::write(&path, b"fixture").unwrap();
+        assert!(remove_model(&config, &selected).is_err());
+        assert!(path.exists());
     }
 }

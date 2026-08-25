@@ -7,8 +7,7 @@ simple-stt.cmd
     launches bundled AutoHotkey64.exe with simple-stt.ahk
     thin AutoHotkey v2 desktop shell
     ├── tray icon and stateful menu
-    ├── settings GUI and hotkey recorder
-    ├── runtime hold-to-record hotkeys and Caps Lock tap behavior
+    ├── runtime hold/toggle recording hotkeys and Caps Lock tap behavior
     ├── foreground target capture and Unicode transcript typing
     ├── start-with-Windows shortcut
     ├── user-facing notices and shell log
@@ -32,6 +31,14 @@ simple-stt-capture.exe
     ├── model downloads and tests off the control thread
     └── lazy supervision of simple-stt-infer.exe
 
+simple-stt-settings.exe
+    disposable authenticated loopback settings server
+    ├── serves bundled vanilla HTML/CSS/JavaScript to the default browser
+    ├── edits canonical nested config.json with explicit Save
+    ├── streams capture/model events to the browser
+    ├── starts model refresh, download, selection, and test workflows
+    └── exits on Close or idle timeout; repeated opens reuse its session
+
 simple-stt-infer.exe
     disposable Rust inference worker
     ├── only active component allowed to load parakeet.dll
@@ -46,9 +53,9 @@ simple-stt-infer.exe
 | Feature | Owner | Notes |
 | --- | --- | --- |
 | Tray icon/menu | AHK shell | `A_TrayMenu`, menu object APIs, `TraySetIcon()`. |
-| Settings GUI | AHK shell | No Slint in active build. |
+| Settings UI | `simple-stt-settings` | Cross-platform browser UI; no webview, Node, or frontend framework. |
 | User hotkeys | AHK shell | Runtime `Hotkey()` bindings; CapsLock custom combination path. |
-| Final typing | AHK shell | `SendText()` chunks; target HWND checked before every chunk. |
+| Final typing | AHK shell | Variable-paced per-character `SendText()`; target HWND checked before every character. |
 | Service PID supervision | AHK shell | PID from `Run()`; graceful request then `ProcessWaitClose()` and exact-PID `ProcessClose()` fallback. |
 | Audio capture | capture service | CPAL stream stays warm while shell runs. |
 | Microphone preference | capture service | Empty preference follows the system default; a stable device ID is pinned and falls back temporarily. On Windows, Core Audio endpoint notifications trigger bounded readiness retries. The device is also resolved at recording start as a safety net, and switching never interrupts an active dictation. |
@@ -56,7 +63,7 @@ simple-stt-infer.exe
 | Rapid recording visualizer | capture service | Rust Win32 overlay. |
 | Parakeet DLL and model | infer worker | Isolated; capture service cannot import loader. |
 | Model idle cleanup | capture service + infer worker | request graceful worker shutdown, then process exit; exact-PID force kill only after grace period. |
-| Canonical config | schema-v2 JSON | Read/write through Rust config module; shell edits via `simple-stt-ctl`. |
+| Canonical config | schema-v5 JSON | Nested portable JSON; browser UI is only an editor. |
 | Component logs | each component | Shell, capture, and infer logs are separate. |
 
 ## Dictation sequence
@@ -92,7 +99,7 @@ capture service
 AHK poll timer
   launch simple-stt-ctl poll-events
   receive transcript event
-  queue transcript for paced SendText typing
+  queue transcript for variable-paced per-character SendText typing
   verify same HWND before every chunk
 ```
 

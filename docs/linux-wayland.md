@@ -6,8 +6,10 @@ AutoHotkey shell with a Rust Linux shell.
 ## What changed
 
 - **No AutoHotkey on Linux.** The Linux entry point is the Rust binary `simple-stt-linux`.
-- **No hotkeys in Linux JSON.** Bind commands in KDE/GNOME/Hyprland shortcut
-  settings instead.
+- **Shared shortcut fields remain in JSON.** Settings displays them read-only on Linux;
+  the desktop/compositor owns the actual bindings.
+- **Shared Settings UI.** Run `simple-stt-linux settings`; it launches the same
+  disposable browser editor used on Windows.
 - **Same Parakeet backend model.** `simple-stt-infer` loads the Parakeet C API
   from `parakeet.dll` on Windows or `libparakeet.so` / `parakeet.so` on Linux.
 - **Same RAM-saving design.** Only the disposable inference worker loads the
@@ -66,28 +68,22 @@ The default Linux config points there. You can also use absolute paths in
 
 ```json
 {
-  "schema_version": 4,
-  "audio_device_contains": "",
-  "audio_gain": 1.0,
-  "trailing_space": true,
-  "text_delivery_mode": "paste_ctrl_v",
-  "remove_punctuation": false,
-  "lowercase_output": false,
-  "idle_worker_timeout_secs": 180,
-  "worker_shutdown_grace_ms": 2000,
-  "log_level": "normal",
-  "diagnostic_overlay": false,
-  "log_transcripts": false,
-  "inference_device": "auto",
-  "ui_theme": "auto",
-  "parakeet_runtime_dir": "external/parakeet-runtime/parakeet-linux",
-  "model_dir": "external/parakeet-runtime/models",
-  "selected_model_filename": "tdt_ctc-110m-f16.gguf"
+  "schema_version": 5,
+  "general": { "enabled": true, "recording_mode": "toggle", "record_hotkey": "CapsLock+S" },
+  "audio": { "preferred_device_id": "", "gain": 1.0 },
+  "speech": {
+    "inference_device": "auto",
+    "runtime_dir": "external/parakeet-runtime/parakeet-linux",
+    "model_dir": "external/parakeet-runtime/models",
+    "selected_model_filename": "tdt_ctc-110m-f16.gguf"
+  },
+  "output": { "delivery_mode": "paste_ctrl_v", "trailing_space": true },
+  "diagnostics": { "log_level": "normal" }
 }
 ```
 
-Notice that there is no Linux hotkey field in the example. Desktop settings own
-that.
+The complete canonical nested schema is documented in `docs/configuration.md`.
+Desktop settings still own Linux shortcut assignment.
 
 CPAL uses ALSA as this build's Linux host. On PipeWire or PulseAudio desktops,
 ensure the ALSA `default`, `pipewire`, or `pulse` PCM is configured and usable.
@@ -112,6 +108,15 @@ systemctl --user enable --now simple-stt-linux.service
 ```
 
 ## Bind desktop shortcuts
+
+Ask Simple STT to open the detected desktop shortcut settings:
+
+```bash
+target/release/simple-stt-linux configure-shortcuts
+```
+
+If no compatible settings application is detected, the command prints the
+manual commands below.
 
 Print the commands:
 

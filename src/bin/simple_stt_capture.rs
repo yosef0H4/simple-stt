@@ -153,7 +153,7 @@ fn main() -> Result<()> {
     simple_stt::logging::init_component(
         "capture",
         &AppConfig::capture_log_path(),
-        &config.log_level,
+        &config.diagnostics.log_level,
     )?;
     tracing::info!(pid = std::process::id(), config = %AppConfig::config_path().display(), "capture service starting");
 
@@ -169,8 +169,8 @@ fn main() -> Result<()> {
         })
         .ok();
     let mut capture = audio::start_capture(
-        &config.audio_device_contains,
-        config.audio_gain,
+        &config.audio.preferred_device_id,
+        config.audio.gain,
         frame_tx.clone(),
         Some(overlay.level_cell()),
         Some(Arc::clone(&recording_active)),
@@ -184,7 +184,7 @@ fn main() -> Result<()> {
     if let Some(handle) = &capture {
         log_audio_selection(handle.selection());
     }
-    let mut capture_gain = config.audio_gain;
+    let mut capture_gain = config.audio.gain;
 
     let supervisor = WorkerSupervisor::new(worker_config(&config)?);
     let worker_pid = supervisor.pid_tracker();
@@ -234,7 +234,7 @@ fn main() -> Result<()> {
                 handle_background(result, &mut BackgroundContext {
                     overlay: &overlay,
                     events: &mut events,
-                    log_transcripts: config.log_transcripts,
+                    log_transcripts: config.diagnostics.log_transcripts,
                     active_recording: active.is_some(),
                     transcribing: &mut transcribing,
                     warming: &mut warming,
@@ -273,10 +273,10 @@ fn main() -> Result<()> {
                 if device_recovery.as_ref().is_some_and(|retry| Instant::now() >= retry.next_attempt) {
                     let now = Instant::now();
                     let recovered = if active.is_some() {
-                        if config.audio_device_contains.trim().is_empty() {
+                        if config.audio.preferred_device_id.trim().is_empty() {
                             true
                         } else {
-                            audio::resolve_input_device(&config.audio_device_contains).is_ok_and(|desired| {
+                            audio::resolve_input_device(&config.audio.preferred_device_id).is_ok_and(|desired| {
                                 let preferred_ready = !desired.using_default_fallback;
                                 if preferred_ready && !preferred_detected_notice_sent {
                                     preferred_detected_notice_sent = true;
@@ -313,7 +313,7 @@ fn main() -> Result<()> {
                                         "Preferred microphone ready",
                                     ));
                                 }
-                                config.audio_device_contains.trim().is_empty()
+                                config.audio.preferred_device_id.trim().is_empty()
                                     || capture.as_ref().is_some_and(|handle| !handle.selection().using_default_fallback)
                             }
                             Err(error) => {
@@ -358,7 +358,7 @@ fn main() -> Result<()> {
     if let Err(error) = shutdown_shared(
         Arc::clone(&worker),
         Arc::clone(&worker_pid),
-        Duration::from_millis(config.worker_shutdown_grace_ms),
+        Duration::from_millis(config.speech.worker_shutdown_grace_ms),
     ) {
         tracing::error!(%error, "inference-worker shutdown failed while capture service was stopping");
     }
@@ -421,17 +421,17 @@ fn refresh_audio_capture(
     let was_using_fallback = capture
         .as_ref()
         .is_some_and(|handle| handle.selection().using_default_fallback);
-    let desired = audio::resolve_input_device(&config.audio_device_contains)?;
+    let desired = audio::resolve_input_device(&config.audio.preferred_device_id)?;
     let device_changed = capture
         .as_ref()
         .is_none_or(|handle| handle.selection().id != desired.id);
-    let gain_changed = (*capture_gain - config.audio_gain).abs() > f32::EPSILON;
+    let gain_changed = (*capture_gain - config.audio.gain).abs() > f32::EPSILON;
     if !device_changed && !gain_changed {
         return Ok(false);
     }
     let next_capture = audio::start_capture(
-        &config.audio_device_contains,
-        config.audio_gain,
+        &config.audio.preferred_device_id,
+        config.audio.gain,
         frame_tx.clone(),
         Some(overlay.level_cell()),
         Some(Arc::clone(recording_active)),
@@ -440,7 +440,7 @@ fn refresh_audio_capture(
     let preferred_restored = was_using_fallback && !next_capture.selection().using_default_fallback;
     log_audio_selection(next_capture.selection());
     *capture = Some(next_capture);
-    *capture_gain = config.audio_gain;
+    *capture_gain = config.audio.gain;
     Ok(preferred_restored)
 }
 
@@ -642,7 +642,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 let worker = Arc::clone(worker);
                 let tracker = Arc::clone(worker_pid);
                 let tx = background_tx.clone();
-                let grace = Duration::from_millis(config.worker_shutdown_grace_ms);
+                let grace = Duration::from_millis(config.speech.worker_shutdown_grace_ms);
                 std::thread::spawn(move || {
                     let result =
                         shutdown_shared(worker, tracker, grace).map_err(|error| error.to_string());
@@ -661,9 +661,8 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         }
         ShellCommand::ReloadConfig => match AppConfig::load() {
             Ok(next) => {
-                let audio_changed = next.audio_device_contains != config.audio_device_contains
-                    || (next.audio_gain - config.audio_gain).abs() > f32::EPSILON
-                    || next.log_level != config.log_level;
+                let audio_changed = next.audio != config.audio
+                    || next.diagnostics.log_level != config.diagnostics.log_level;
                 match worker_config(&next) {
                     Ok(next_worker) => {
                         *config = next;
@@ -685,6 +684,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                             "configuration reload accepted; worker changes queued"
                         );
                         let mut response = ShellResponse::ok("configuration reload queued");
+                        events.push(ServiceEvent::simple("configuration_reloaded"));
                         response
                             .values
                             .insert("restart_audio_service".into(), "false".into());
@@ -699,7 +699,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let worker = Arc::clone(worker);
             let tracker = Arc::clone(worker_pid);
             let tx = background_tx.clone();
-            let grace = Duration::from_millis(config.worker_shutdown_grace_ms);
+            let grace = Duration::from_millis(config.speech.worker_shutdown_grace_ms);
             std::thread::spawn(move || {
                 let result =
                     shutdown_shared(worker, tracker, grace).map_err(|error| error.to_string());
@@ -762,6 +762,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             });
             ShellResponse::ok("model download queued")
         }
+        ShellCommand::RemoveModel { filename } => {
+            match simple_stt::models::remove_model(config, &filename) {
+                Ok(()) => ShellResponse::ok("model removed"),
+                Err(error) => ShellResponse::error(error.to_string()),
+            }
+        }
         ShellCommand::ListInputs => match audio::list_input_devices() {
             Ok(devices) => {
                 let mut response = ShellResponse::ok("microphone devices");
@@ -781,7 +787,8 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let mut response = ShellResponse::ok("cached models");
             response.values.insert(
                 "recommended_model".into(),
-                simple_stt::models::recommended_model_for_device(&config.inference_device).into(),
+                simple_stt::models::recommended_model_for_device(&config.speech.inference_device)
+                    .into(),
             );
             for (index, model) in simple_stt::models::installed_models(config)
                 .into_iter()
@@ -1028,10 +1035,10 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             }
             Err(error) => {
                 tracing::error!(%error, "model download failed");
-                context.events.push(notice_event(
-                    NoticeLevel::Error,
-                    "Model download failed — see log",
-                ));
+                let mut event = notice_event(NoticeLevel::Error, "Model download failed — see log");
+                event.kind = "model_download_failed".into();
+                event.values.insert("filename".into(), filename);
+                context.events.push(event);
             }
         },
     }
@@ -1110,10 +1117,10 @@ fn worker_config(config: &AppConfig) -> Result<WorkerConfig> {
         runtime_dir: config.parakeet_runtime_dir_path(),
         model_path: config.selected_model_path(),
         log_path: AppConfig::infer_log_path(),
-        log_level: config.log_level.clone(),
-        inference_device: config.inference_device,
-        idle_timeout: Duration::from_secs(config.idle_worker_timeout_secs),
-        shutdown_grace: Duration::from_millis(config.worker_shutdown_grace_ms),
+        log_level: config.diagnostics.log_level.clone(),
+        inference_device: config.speech.inference_device,
+        idle_timeout: Duration::from_secs(config.speech.idle_worker_timeout_secs),
+        shutdown_grace: Duration::from_millis(config.speech.worker_shutdown_grace_ms),
     })
 }
 fn sibling_executable(stem: &str) -> Result<PathBuf> {

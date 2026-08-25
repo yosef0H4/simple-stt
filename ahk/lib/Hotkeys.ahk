@@ -165,7 +165,6 @@ class CapsLockTapController {
         this.capsConsumed := false
     }
 }
-
 class HotkeyManager {
     __New(onDown, onUp, logger, capsController := "") {
         this.onDown := onDown
@@ -177,15 +176,17 @@ class HotkeyManager {
         this.recording := false
         this.capslockBehavior := "preserve_tap"
         this.capsRegistered := false
+        this.releaseStops := true
         this.downCallback := ObjBindMethod(this, "HandleDown")
         this.upCallback := ObjBindMethod(this, "HandleUp")
     }
 
-    Configure(label, enabled, capslockBehavior) {
+    Configure(label, enabled, capslockBehavior, releaseStops := true) {
         this.DisableBindings()
         this.spec := HotkeySpec.Parse(label)
         this.capslockBehavior := capslockBehavior
         this.enabled := enabled
+        this.releaseStops := releaseStops
         if enabled
             this.EnableBindings()
         this.logger.Write("info", "hotkey configured label=" . this.spec["label"] . " enabled=" . SimpleSttBoolText(enabled))
@@ -238,63 +239,8 @@ class HotkeyManager {
         if !this.recording
             return
         this.recording := false
-        this.onUp.Call()
+        if this.releaseStops
+            this.onUp.Call()
     }
 
-}
-
-class HotkeyRecorder {
-    __New(logger) {
-        this.logger := logger
-        this.input := ""
-        this.onComplete := ""
-    }
-
-    Start(onComplete) {
-        if IsObject(this.input)
-            try this.input.Stop()
-        this.onComplete := onComplete
-        input := InputHook("L1")
-        input.KeyOpt("{All}", "E")
-        input.KeyOpt("{LCtrl}{RCtrl}{LAlt}{RAlt}{LShift}{RShift}{LWin}{RWin}{CapsLock}", "-E")
-        input.OnEnd := ObjBindMethod(this, "Finish")
-        this.input := input
-        input.Start()
-    }
-
-    Finish(input) {
-        key := input.EndKey
-        if key = ""
-            return
-        parts := Array()
-        if GetKeyState("CapsLock", "P")
-            parts.Push("CapsLock")
-        if GetKeyState("LCtrl", "P")
-            parts.Push("LCtrl")
-        if GetKeyState("RCtrl", "P")
-            parts.Push("RCtrl")
-        if GetKeyState("LAlt", "P")
-            parts.Push("LAlt")
-        if GetKeyState("RAlt", "P")
-            parts.Push("RAlt")
-        if GetKeyState("LShift", "P")
-            parts.Push("LShift")
-        if GetKeyState("RShift", "P")
-            parts.Push("RShift")
-        if GetKeyState("LWin", "P")
-            parts.Push("LWin")
-        if GetKeyState("RWin", "P")
-            parts.Push("RWin")
-        parts.Push(StrUpper(key))
-        label := ""
-        for index, part in parts
-            label .= (index > 1 ? "+" : "") . part
-        try HotkeySpec.Parse(label)
-        catch Error as err {
-            this.logger.Write("warning", "recorded hotkey rejected: " . err.Message)
-            return
-        }
-        if IsObject(this.onComplete)
-            this.onComplete.Call(label)
-    }
 }

@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Simple STT Settings</title>
+    <link rel="stylesheet" href="/tokens.css" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">S</span>
+          <div><strong>Simple STT</strong><span>Settings</span></div>
+        </div>
+        <div class="settings-search">
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-4-4" />
+          </svg>
+          <input
+            id="settings-search"
+            type="search"
+            placeholder="Find a setting"
+            aria-label="Search all settings"
+            autocomplete="off"
+            aria-controls="settings-search-results"
+            aria-expanded="false"
+          />
+          <div
+            id="settings-search-results"
+            class="settings-search-results"
+            role="listbox"
+            hidden
+          ></div>
+        </div>
+        <nav aria-label="Settings pages">
+          <button data-page="general" class="active">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path
+                d="M4 21v-7m0-4V3m8 18v-9m0-4V3m8 18v-5m0-4V3M1 14h6M9 8h6m2 8h6"
+              /></svg
+            ><span>General</span><small>Shortcuts &amp; startup</small>
+          </button>
+          <button data-page="audio">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2m7 9v3" /></svg
+            ><span>Audio &amp; models</span
+            ><small>Input &amp; recognition</small>
+          </button>
+          <button data-page="output">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M9 18l6-6-6-6" />
+              <path d="M3 12h12m4-7v14" /></svg
+            ><span>Output</span><small>Typing &amp; transforms</small>
+          </button>
+          <button data-page="advanced">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3" />
+              <path
+                d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.1.4.3.8.6 1 .3.3.7.4 1.1.4H21v4h-.09c-.4 0-.8.2-1.1.6Z"
+              /></svg
+            ><span>Advanced</span><small>Runtime &amp; diagnostics</small>
+          </button>
+          <button data-page="config">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path
+                d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"
+              />
+              <path d="M14 2v6h6M8 13h8m-8 4h6" /></svg
+            ><span>Config</span><small>Portable JSON</small>
+          </button>
+        </nav>
+        <div
+          id="notice"
+          class="notice"
+          role="status"
+          aria-live="polite"
+          hidden
+        ></div>
+        <div id="service" class="service-pill" data-state="loading">
+          <span></span>Connecting…
+        </div>
+      </aside>
+      <main>
+        <form id="settings">
+          <section data-section="general">
+            <header class="page-head">
+              <h1>General</h1>
+            </header>
+            <div id="general-fields"></div>
+          </section>
+          <section data-section="audio" hidden>
+            <header class="page-head">
+              <h1>Audio &amp; models</h1>
+            </header>
+            <div id="audio-fields"></div>
+            <div id="model-workbench" class="setting-group"></div>
+          </section>
+          <section data-section="output" hidden>
+            <header class="page-head">
+              <h1>Output</h1>
+            </header>
+            <div id="output-fields"></div>
+          </section>
+          <section data-section="advanced" hidden>
+            <header class="page-head">
+              <h1>Advanced</h1>
+            </header>
+            <div id="advanced-fields"></div>
+            <button
+              type="button"
+              id="configure-shortcuts"
+              class="secondary"
+              hidden
+            >
+              Configure system shortcuts
+            </button>
+          </section>
+          <section data-section="config" hidden>
+            <header class="page-head">
+              <h1>Config</h1>
+            </header>
+            <div class="config-toolbar">
+              <button type="button" id="open-config">Open file</button
+              ><button type="button" id="open-folder">Open folder</button
+              ><button type="button" id="reload">Reload</button><span></span
+              ><button type="button" id="import">Import</button
+              ><button type="button" id="export">Export</button
+              ><button type="button" id="copy">Copy JSON</button
+              ><button type="button" id="reset" class="danger-quiet">
+                Reset preview
+              </button>
+            </div>
+            <input
+              id="import-file"
+              type="file"
+              accept="application/json,.json"
+              hidden
+            />
+            <label class="json-label" for="json">config.json</label
+            ><textarea id="json" spellcheck="false"></textarea>
+          </section>
+        </form>
+      </main>
+    </div>
+    <div id="savebar" class="savebar" hidden>
+      <span id="dirty">Unsaved changes</span>
+      <div>
+        <button type="button" id="close">Close</button
+        ><button type="submit" form="settings" class="primary">
+          Save changes
+        </button>
+      </div>
+    </div>
+    <dialog id="capture-dialog">
+      <form method="dialog">
+        <div class="capture-icon" aria-hidden="true">⌨</div>
+        <h2>Press your shortcut</h2>
+        <p>
+          Hold the modifiers, then press the final key. Press Escape to cancel.
+        </p>
+        <output id="capture-current">Listening…</output>
+      </form>
+    </dialog>
+    <script src="/app.js"></script>
+  </body>
+</html>

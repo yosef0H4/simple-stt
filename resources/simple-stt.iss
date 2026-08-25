@@ -35,6 +35,7 @@ Type: files; Name: "{userstartup}\Simple STT.lnk"
 
 [Files]
 Source: "simple-stt-portable\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main/tdt_ctc-110m-f16.gguf"; DestDir: "{app}\runtime\external\parakeet-runtime\parakeet-windows-cuda\models"; DestName: "tdt_ctc-110m-f16.gguf"; ExternalSize: 267452544; Hash: "7f9a6376edde6a74592ace48b2ebdc27a1ac972d0be9dfcc29e668d99381faf1"; Flags: external download ignoreversion; Tasks: downloadmodel; Check: RecommendedModelNeedsDownload
 
 [Icons]
 Name: "{group}\simple-stt"; Filename: "{app}\simple-stt.cmd"; WorkingDir: "{app}"
@@ -42,5 +43,19 @@ Name: "{autodesktop}\simple-stt"; Filename: "{app}\simple-stt.cmd"; WorkingDir: 
 Name: "{userstartup}\simple-stt"; Filename: "{app}\simple-stt.cmd"; WorkingDir: "{app}"; Tasks: startup
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""try {{ $ErrorActionPreference='Stop'; $dir='{app}\runtime\external\parakeet-runtime\parakeet-windows-cuda\models'; New-Item -ItemType Directory -Force -Path $dir | Out-Null; $out=Join-Path $dir 'tdt_ctc-110m-f16.gguf'; if (!(Test-Path -LiteralPath $out)) {{ Invoke-WebRequest -Uri 'https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main/tdt_ctc-110m-f16.gguf' -OutFile $out }} }} catch {{ Write-Output $_ }}; exit 0"""; StatusMsg: "Downloading recommended speech model..."; Flags: runhidden waituntilterminated; Tasks: downloadmodel
 Filename: "{app}\simple-stt.cmd"; WorkingDir: "{app}"; Description: "Launch simple-stt"; Flags: postinstall nowait skipifsilent
+
+[Code]
+const
+  RecommendedModelSHA256 = '7f9a6376edde6a74592ace48b2ebdc27a1ac972d0be9dfcc29e668d99381faf1';
+
+function RecommendedModelNeedsDownload: Boolean;
+var
+  ModelPath: String;
+begin
+  ModelPath := ExpandConstant('{app}\runtime\external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf');
+  if not FileExists(ModelPath) then
+    Result := True
+  else
+    Result := not SameText(GetSHA256OfFile(ModelPath), RecommendedModelSHA256);
+end;

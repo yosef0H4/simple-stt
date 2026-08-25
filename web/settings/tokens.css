@@ -1,0 +1,71 @@
+:root {
+  --color-paper: oklch(97% 0.012 255);
+  --color-paper-raised: oklch(99% 0.006 255);
+  --color-paper-soft: oklch(92% 0.025 255);
+  --color-ink: oklch(24% 0.05 262);
+  --color-ink-muted: oklch(48% 0.04 258);
+  --color-rule: oklch(84% 0.03 255);
+  --color-rule-strong: oklch(74% 0.045 255);
+  --color-accent: oklch(48% 0.13 260);
+  --color-accent-hover: oklch(43% 0.13 260);
+  --color-accent-ink: oklch(98% 0.01 255);
+  --color-focus: oklch(58% 0.13 255);
+  --color-success: oklch(54% 0.1 155);
+  --color-warning: oklch(66% 0.11 78);
+  --color-danger: oklch(52% 0.15 25);
+  --color-shadow: oklch(24% 0.05 262 / 0.12);
+  --font-display: "Segoe UI Variable Display", "Segoe UI", sans-serif;
+  --font-body: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --space-3xs: 0.25rem;
+  --space-2xs: 0.5rem;
+  --space-xs: 0.75rem;
+  --space-sm: 1rem;
+  --space-md: 1.5rem;
+  --space-lg: 2rem;
+  --space-xl: 3rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: clamp(1.75rem, 4vw, 2.5rem);
+  --radius-input: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-pill: 999px;
+  --rule-thin: 1px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-short: 120ms;
+  --dur-medium: 220ms;
+}
+[data-theme="dark"] {
+  --color-paper: oklch(18% 0.014 250);
+  --color-paper-raised: oklch(22% 0.017 250);
+  --color-paper-soft: oklch(25% 0.018 250);
+  --color-ink: oklch(94% 0.008 245);
+  --color-ink-muted: oklch(70% 0.018 245);
+  --color-rule: oklch(31% 0.022 250);
+  --color-rule-strong: oklch(43% 0.03 250);
+  --color-accent: oklch(64% 0.1 245);
+  --color-accent-hover: oklch(69% 0.1 245);
+  --color-accent-ink: oklch(18% 0.025 250);
+  --color-focus: oklch(70% 0.1 245);
+  --color-shadow: oklch(5% 0.01 250 / 0.3);
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    --color-paper: oklch(18% 0.014 250);
+    --color-paper-raised: oklch(22% 0.017 250);
+    --color-paper-soft: oklch(25% 0.018 250);
+    --color-ink: oklch(94% 0.008 245);
+    --color-ink-muted: oklch(70% 0.018 245);
+    --color-rule: oklch(31% 0.022 250);
+    --color-rule-strong: oklch(43% 0.03 250);
+    --color-accent: oklch(64% 0.1 245);
+    --color-accent-hover: oklch(69% 0.1 245);
+    --color-accent-ink: oklch(18% 0.025 250);
+    --color-focus: oklch(70% 0.1 245);
+    --color-shadow: oklch(5% 0.01 250 / 0.3);
+  }
+}

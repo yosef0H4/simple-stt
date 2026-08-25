@@ -1,0 +1,9 @@
+{
+  "date": "2026-08-25",
+  "framework": "vanilla HTML/CSS/JavaScript embedded by Rust",
+  "font_stack": "system UI only",
+  "palette": "previously hard-coded hex values",
+  "motion": "no motion library",
+  "spacing": "no prior token scale",
+  "preserved": ["vanilla frontend", "offline assets", "five settings pages", "explicit save"]
+}

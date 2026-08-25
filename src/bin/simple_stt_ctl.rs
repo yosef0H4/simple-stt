@@ -6,8 +6,8 @@ use simple_stt::common::shell_protocol::{
     ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
 use simple_stt::config::{
-    replace_file_atomic, AppConfig, CapsLockBehavior, InferenceDevice, LogLevel, TextDeliveryMode,
-    UiTheme,
+    replace_file_atomic, AppConfig, CapsLockBehavior, InferenceDevice, LogLevel, RecordingMode,
+    TextDeliveryMode, UiTheme,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -227,20 +227,28 @@ fn config_show() -> Result<ShellResponse> {
         .insert("schema_version".into(), config.schema_version.to_string());
     response
         .values
-        .insert("hotkey_enabled".into(), config.hotkey_enabled.to_string());
+        .insert("hotkey_enabled".into(), config.general.enabled.to_string());
     response
         .values
-        .insert("record_hotkey".into(), config.record_hotkey.clone());
+        .insert("record_hotkey".into(), config.general.record_hotkey.clone());
+    response.values.insert(
+        "recording_mode".into(),
+        match config.general.recording_mode {
+            RecordingMode::Hold => "hold",
+            RecordingMode::Toggle => "toggle",
+        }
+        .into(),
+    );
     response.values.insert(
         "toggle_delivery_hotkey".into(),
-        config.toggle_delivery_hotkey.clone(),
+        config.general.toggle_delivery_hotkey.clone(),
     );
     response
         .values
-        .insert("cancel_hotkey".into(), config.cancel_hotkey.clone());
+        .insert("cancel_hotkey".into(), config.general.cancel_hotkey.clone());
     response.values.insert(
         "capslock_behavior".into(),
-        match config.capslock_behavior {
+        match config.general.capslock_behavior {
             CapsLockBehavior::PreserveTap => "preserve_tap",
             CapsLockBehavior::AlwaysOff => "always_off",
         }
@@ -248,25 +256,26 @@ fn config_show() -> Result<ShellResponse> {
     );
     response.values.insert(
         "audio_device_contains".into(),
-        config.audio_device_contains.clone(),
+        config.audio.preferred_device_id.clone(),
     );
     response
         .values
-        .insert("audio_gain".into(), config.audio_gain.to_string());
+        .insert("audio_gain".into(), config.audio.gain.to_string());
     response.values.insert(
-        "typing_chunk_chars".into(),
-        config.typing_chunk_chars.to_string(),
+        "paced_typing_enabled".into(),
+        config.output.paced_typing_enabled.to_string(),
     );
     response.values.insert(
-        "typing_interval_ms".into(),
-        config.typing_interval_ms.to_string(),
+        "typing_speed_wpm".into(),
+        config.output.typing_speed_wpm.to_string(),
     );
-    response
-        .values
-        .insert("trailing_space".into(), config.trailing_space.to_string());
+    response.values.insert(
+        "trailing_space".into(),
+        config.output.trailing_space.to_string(),
+    );
     response.values.insert(
         "text_delivery_mode".into(),
-        match config.text_delivery_mode {
+        match config.output.delivery_mode {
             TextDeliveryMode::Type => "type",
             TextDeliveryMode::PasteCtrlV => "paste_ctrl_v",
             TextDeliveryMode::PasteCtrlShiftV => "paste_ctrl_shift_v",
@@ -275,27 +284,27 @@ fn config_show() -> Result<ShellResponse> {
     );
     response.values.insert(
         "remove_punctuation".into(),
-        config.remove_punctuation.to_string(),
+        config.output.remove_punctuation.to_string(),
     );
     response.values.insert(
         "lowercase_output".into(),
-        config.lowercase_output.to_string(),
+        config.output.lowercase.to_string(),
     );
     response.values.insert(
         "idle_worker_timeout_secs".into(),
-        config.idle_worker_timeout_secs.to_string(),
+        config.speech.idle_worker_timeout_secs.to_string(),
     );
     response.values.insert(
         "worker_shutdown_grace_ms".into(),
-        config.worker_shutdown_grace_ms.to_string(),
+        config.speech.worker_shutdown_grace_ms.to_string(),
     );
     response.values.insert(
         "start_with_windows".into(),
-        config.start_with_windows.to_string(),
+        config.general.start_at_login.to_string(),
     );
     response.values.insert(
         "log_level".into(),
-        match config.log_level {
+        match config.diagnostics.log_level {
             LogLevel::Minimal => "minimal",
             LogLevel::Normal => "normal",
             LogLevel::Debug => "debug",
@@ -305,41 +314,41 @@ fn config_show() -> Result<ShellResponse> {
     );
     response.values.insert(
         "diagnostic_overlay".into(),
-        config.diagnostic_overlay.to_string(),
+        config.diagnostics.diagnostic_overlay.to_string(),
     );
-    response
-        .values
-        .insert("log_transcripts".into(), config.log_transcripts.to_string());
+    response.values.insert(
+        "log_transcripts".into(),
+        config.diagnostics.log_transcripts.to_string(),
+    );
     response.values.insert(
         "inference_device".into(),
-        config.inference_device.as_str().into(),
+        config.speech.inference_device.as_str().into(),
     );
     response.values.insert(
         "resolved_inference_device".into(),
-        config.inference_device.effective().as_str().into(),
+        config.speech.inference_device.effective().as_str().into(),
     );
     response
         .values
-        .insert("ui_theme".into(), config.ui_theme.as_str().into());
+        .insert("ui_theme".into(), config.general.ui_theme.as_str().into());
     response.values.insert(
         "parakeet_runtime_dir".into(),
-        config.parakeet_runtime_dir_path().display().to_string(),
+        config.speech.runtime_dir.clone(),
     );
     response.values.insert(
         "parakeet_runtime_dir_resolved".into(),
         config.parakeet_runtime_dir_path().display().to_string(),
     );
-    response.values.insert(
-        "model_dir".into(),
-        config.model_dir_path().display().to_string(),
-    );
+    response
+        .values
+        .insert("model_dir".into(), config.speech.model_dir.clone());
     response.values.insert(
         "model_dir_resolved".into(),
         config.model_dir_path().display().to_string(),
     );
     response.values.insert(
         "selected_model_filename".into(),
-        config.selected_model_filename.clone(),
+        config.speech.selected_model_filename.clone(),
     );
     response.values.insert(
         "config_path".into(),
@@ -411,13 +420,14 @@ fn apply_config_field(config: &mut AppConfig, key: &str, value: &str) -> Result<
 
 fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
     let target = match key {
-        "hotkey_enabled" => &mut config.hotkey_enabled,
-        "trailing_space" => &mut config.trailing_space,
-        "remove_punctuation" => &mut config.remove_punctuation,
-        "lowercase_output" => &mut config.lowercase_output,
-        "start_with_windows" => &mut config.start_with_windows,
-        "diagnostic_overlay" => &mut config.diagnostic_overlay,
-        "log_transcripts" => &mut config.log_transcripts,
+        "hotkey_enabled" => &mut config.general.enabled,
+        "paced_typing_enabled" => &mut config.output.paced_typing_enabled,
+        "trailing_space" => &mut config.output.trailing_space,
+        "remove_punctuation" => &mut config.output.remove_punctuation,
+        "lowercase_output" => &mut config.output.lowercase,
+        "start_with_windows" => &mut config.general.start_at_login,
+        "diagnostic_overlay" => &mut config.diagnostics.diagnostic_overlay,
+        "log_transcripts" => &mut config.diagnostics.log_transcripts,
         _ => return Ok(false),
     };
     *target = parse_bool(value)?;
@@ -426,13 +436,13 @@ fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
 
 fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
     let target = match key {
-        "record_hotkey" => &mut config.record_hotkey,
-        "toggle_delivery_hotkey" => &mut config.toggle_delivery_hotkey,
-        "cancel_hotkey" => &mut config.cancel_hotkey,
-        "audio_device_contains" => &mut config.audio_device_contains,
-        "parakeet_runtime_dir" => &mut config.parakeet_runtime_dir,
-        "model_dir" => &mut config.model_dir,
-        "selected_model_filename" => &mut config.selected_model_filename,
+        "record_hotkey" => &mut config.general.record_hotkey,
+        "toggle_delivery_hotkey" => &mut config.general.toggle_delivery_hotkey,
+        "cancel_hotkey" => &mut config.general.cancel_hotkey,
+        "audio_device_contains" => &mut config.audio.preferred_device_id,
+        "parakeet_runtime_dir" => &mut config.speech.runtime_dir,
+        "model_dir" => &mut config.speech.model_dir,
+        "selected_model_filename" => &mut config.speech.selected_model_filename,
         _ => return false,
     };
     *target = value.to_owned();
@@ -441,11 +451,10 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
 
 fn apply_numeric_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
     match key {
-        "audio_gain" => config.audio_gain = value.parse()?,
-        "typing_chunk_chars" => config.typing_chunk_chars = value.parse()?,
-        "typing_interval_ms" => config.typing_interval_ms = value.parse()?,
-        "idle_worker_timeout_secs" => config.idle_worker_timeout_secs = value.parse()?,
-        "worker_shutdown_grace_ms" => config.worker_shutdown_grace_ms = value.parse()?,
+        "audio_gain" => config.audio.gain = value.parse()?,
+        "typing_speed_wpm" => config.output.typing_speed_wpm = value.parse()?,
+        "idle_worker_timeout_secs" => config.speech.idle_worker_timeout_secs = value.parse()?,
+        "worker_shutdown_grace_ms" => config.speech.worker_shutdown_grace_ms = value.parse()?,
         _ => return Ok(false),
     }
     Ok(true)
@@ -453,14 +462,23 @@ fn apply_numeric_config(config: &mut AppConfig, key: &str, value: &str) -> Resul
 
 fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
     match key {
-        "capslock_behavior" => config.capslock_behavior = parse_capslock_behavior(value)?,
-        "text_delivery_mode" => config.text_delivery_mode = parse_text_delivery_mode(value)?,
-        "log_level" => config.log_level = parse_log_level(value)?,
-        "inference_device" => config.inference_device = parse_inference_device(value)?,
-        "ui_theme" => config.ui_theme = parse_ui_theme(value)?,
+        "capslock_behavior" => config.general.capslock_behavior = parse_capslock_behavior(value)?,
+        "recording_mode" => config.general.recording_mode = parse_recording_mode(value)?,
+        "text_delivery_mode" => config.output.delivery_mode = parse_text_delivery_mode(value)?,
+        "log_level" => config.diagnostics.log_level = parse_log_level(value)?,
+        "inference_device" => config.speech.inference_device = parse_inference_device(value)?,
+        "ui_theme" => config.general.ui_theme = parse_ui_theme(value)?,
         _ => return Ok(false),
     }
     Ok(true)
+}
+
+fn parse_recording_mode(value: &str) -> Result<RecordingMode> {
+    match value {
+        "hold" => Ok(RecordingMode::Hold),
+        "toggle" => Ok(RecordingMode::Toggle),
+        _ => anyhow::bail!("invalid recording_mode: {value}"),
+    }
 }
 
 fn parse_bool(value: &str) -> Result<bool> {
@@ -613,12 +631,15 @@ mod tests {
         )
         .unwrap();
 
-        assert!(!config.hotkey_enabled);
-        assert_eq!(config.record_hotkey, "CapsLock+Q");
-        assert_eq!(config.cancel_hotkey, "CapsLock+A");
-        assert_eq!(config.audio_gain, 2.5);
-        assert_eq!(config.text_delivery_mode, TextDeliveryMode::PasteCtrlShiftV);
-        assert_eq!(config.inference_device, InferenceDevice::NvidiaGpu);
+        assert!(!config.general.enabled);
+        assert_eq!(config.general.record_hotkey, "CapsLock+Q");
+        assert_eq!(config.general.cancel_hotkey, "CapsLock+A");
+        assert_eq!(config.audio.gain, 2.5);
+        assert_eq!(
+            config.output.delivery_mode,
+            TextDeliveryMode::PasteCtrlShiftV
+        );
+        assert_eq!(config.speech.inference_device, InferenceDevice::NvidiaGpu);
     }
 
     #[test]

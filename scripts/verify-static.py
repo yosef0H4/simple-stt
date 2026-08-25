@@ -39,9 +39,10 @@ def forbid(path: str, *needles: str) -> str:
 required_files = [
     "ahk/simple-stt.ahk",
     "ahk/lib/Config.ahk", "ahk/lib/Hotkeys.ahk", "ahk/lib/IpcClient.ahk",
-    "ahk/lib/Logging.ahk", "ahk/lib/ProcessSupervisor.ahk", "ahk/lib/SettingsGui.ahk",
+    "ahk/lib/Logging.ahk", "ahk/lib/ProcessSupervisor.ahk",
     "ahk/lib/TabProtocol.ahk", "ahk/lib/Tray.ahk", "ahk/lib/Typist.ahk", "ahk/lib/Utils.ahk",
-    "src/bin/simple_stt_capture.rs", "src/bin/simple_stt_infer.rs", "src/bin/simple_stt_ctl.rs", "src/bin/simple_stt_mock_infer.rs",
+    "src/bin/simple_stt_capture.rs", "src/bin/simple_stt_infer.rs", "src/bin/simple_stt_ctl.rs", "src/bin/simple_stt_settings.rs", "src/bin/simple_stt_mock_infer.rs",
+    "web/settings/index.html", "web/settings/styles.css", "web/settings/app.js",
     "src/capture/audio.rs", "src/capture/inference_supervisor.rs", "src/capture/ipc_server.rs", "src/capture/process.rs",
     "src/infer/parakeet_native.rs", "src/infer/protocol.rs", "src/common/shell_protocol.rs",
     "docs/ahk-v2-research.md", "docs/current-behavior-inventory.md", "docs/ipc-decision.md",
@@ -124,12 +125,18 @@ if set(loader_paths) != allowed_loader_paths:
 need("src/bin/simple_stt_infer.rs", "ParakeetNative", "worker idle timeout reached; exiting process", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck", "model warm-up begin", "model warm-up end")
 need("src/capture/inference_supervisor.rs", "shutdown_now", "force-terminating inference worker", "handshake failed; terminating child", "shutdown_shared", "force_terminate_pid", "pid_tracker", "pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()>", "MessageType::WarmUp", "MessageType::ModelLoaded", "MessageType::WarmUpAck")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
-need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.log_level != config.log_level", "log_level: config.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion", "cancel_generation", "ShellCommand::Cancel", "discarding stale transcript after cancellation", "had_warming", "had_transcribing")
+need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.diagnostics.log_level != config.diagnostics.log_level", "log_level: config.diagnostics.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion", "cancel_generation", "ShellCommand::Cancel", "discarding stale transcript after cancellation", "had_warming", "had_transcribing")
 need("src/bin/simple_stt_capture.rs", "resolve_input_device", "refresh_audio_capture", "ShellCommand::StartRecording", "using_default_fallback", "Preferred microphone ready — release and record again", "Preferred microphone restored — recording with it now", "DeviceRecovery", "endpoint_recovery_retries_are_bounded", "audio_error_is_current", "stale_audio_error_does_not_invalidate_replacement_stream")
 need("src/capture/audio.rs", "choose_input_device_id", "preferred_microphone_falls_back_and_returns", "automatic_mode_tracks_the_default", "InputDeviceSelection", "opening Windows/system default after preferred microphone failed", "RegisterEndpointNotificationCallback", "DeviceTopologyChanged", "watch_device_changes")
 need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "inference_device: InferenceDevice", "PARAKEET_DEVICE", "InferenceDevice::Cpu", "InferenceDevice::NvidiaGpu", "InferenceDevice::Auto")
-need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 4", "cancel_hotkey", 'toggle_delivery_hotkey: "CapsLock+D"', 'cancel_hotkey: "CapsLock+A"', "schema2_migrates_cancel_hotkey_and_moves_default_toggle", "pub enum InferenceDevice", "NvidiaGpu", "Auto", "auto_inference_device", "inference_device: InferenceDevice")
-need("ahk/lib/SettingsGui.ahk", '["auto", "nvidia_gpu", "cpu"]', 'toggle_delivery_hotkey', 'cancel_hotkey', 'config.Set("inference_device"')
+need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 5", "pub struct GeneralConfig", "pub struct AudioConfig", "pub struct SpeechConfig", "pub struct OutputConfig", "pub struct DiagnosticsConfig", "normalize_json", "malformed_json_is_preserved", "pub enum RecordingMode", "pub enum InferenceDevice", "NvidiaGpu", "Auto", "auto_inference_device")
+need("src/bin/simple_stt_settings.rs", "127.0.0.1", "X-Simple-STT-Token", "Content-Security-Policy", "settings-session.json", "text/event-stream", "ShellCommand::DownloadModel", "ShellCommand::RemoveModel", "ShellCommand::TestModel", "linux_shortcut_state", "sync_shortcuts", "capture_hotkey_with_ahk", "tokens.css")
+need("src/models.rs", "pub fn remove_model", "select another model before removing the active model", "installed_non_selected_model_can_be_removed", "selected_model_is_not_removed")
+need("web/settings/app.js", "model_download_progress", "model_download_complete", "modelDownloads", "download-progress", "remove_model", "renderSettingsSearch", "fuzzyScore", "portalShortcutField", "sync_shortcuts", "refresh_models", "test_model", "Search language or model", "/api/hotkey-capture")
+need("resources/simple-stt.iss", "Flags: external download ignoreversion", "Hash:", "RecommendedModelNeedsDownload", "GetSHA256OfFile")
+forbid("resources/simple-stt.iss", "Invoke-WebRequest", "exit 0\"\"\"; StatusMsg: \"Downloading recommended speech model")
+need("web/settings/tokens.css", "--color-accent", "--font-display", "--space-md", "prefers-color-scheme")
+need("web/settings/index.html", "Configure system shortcuts", "Save changes", "Audio &amp; models")
 need("src/logging.rs", "component={component} pid={}", "prefix_lines", "component_prefix_survives_split_writes_and_multiline_events")
 need("src/capture/inference_supervisor.rs", '.arg("--log-level")', '.arg("--inference-device")')
 forbid("src/bin/simple_stt_capture.rs", "worker.lock().unwrap().worker_pid()", "worker.lock().unwrap().replace_config")
@@ -141,19 +148,22 @@ tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", "Open Settings", "Restart Audi
 for needle in ["TraySetIcon", "SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
     if needle in tray_ahk:
         errors.append(f"tray menu must use the default Windows/AHK drawing path, but found {needle!r}")
-for path in ["ahk/lib/SettingsGui.ahk", "ahk/simple-stt.ahk"]:
+for path in ["ahk/simple-stt.ahk"]:
     body = text(path)
     for needle in ["GetProcAddress", "SetPreferredAppMode"]:
         if needle in body:
             errors.append(f"{path} must not set process-wide app theme state; found {needle!r}")
-need("ahk/lib/SettingsGui.ahk", "Gui(", "Record shortcut", "Refresh devices", "Download model", "Runtime locations", "text_delivery_mode")
-hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "class CapsLockTapController", "Register(capslockBehavior)", "Unregister()", "Hotkey(", "InputHook(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
+forbid("ahk/simple-stt.ahk", "SettingsGui", "Gui(", "InputHook(")
+hotkeys_ahk = need("ahk/lib/Hotkeys.ahk", "class CapsLockTapController", "Register(capslockBehavior)", "Unregister()", "Hotkey(", "*CapsLock", "CapsLock & ", "AltGr", "SetCapsLockState")
 if '"*CapsLock & "' in hotkeys_ahk:
     errors.append("CapsLock custom combination must not prepend wildcard; combinations already wildcard-match")
 need("ahk/lib/TabProtocol.ahk", 'StrReplace(value . "", "\\", "\\\\")', 'case "\\": out .= "\\"', "Loop 20", "unable to read helper response after retry")
 need("ahk/lib/Utils.ahk", 'DllCall("advapi32\\SystemFunction036"')
-typist = need("ahk/lib/Typist.ahk", "SendText(", "ClipboardAll()", 'A_Clipboard := this.text', 'Send("^+v")', 'Send("^v")', "RestoreClipboardIfOwned", "GetClipboardSequenceNumber", "WinActive(\"A\") != this.targetWindow", "AnyPhysicalModifierDown")
-checks.append("AHK owns tray, GUI, hotkeys, full-format clipboard-preserving paste modes, and foreground-safe Unicode typing")
+need("ahk/hotkey-recorder.ahk", "#Requires AutoHotkey v2.0", "#SingleInstance Force", '#Include lib\\Utils.ahk', 'InputHook("L1")', 'Hotkey("*CapsLock", CaptureCapsDown, "On")', 'Hotkey("*CapsLock up", CaptureCapsUp, "On")', 'modifier = "CapsLock" && capsHeld', "HotkeySpec.Parse")
+typist = need("ahk/lib/Typist.ahk", "SendText(", "paced_typing_enabled", "TypingDelay", "TransitionFactor", "BoundaryFactor", "GetFinger", "ClipboardAll()", 'A_Clipboard := this.text', 'Send("^+v")', 'Send("^v")', "RestoreClipboardIfOwned", "GetClipboardSequenceNumber", "WinActive(\"A\") != this.targetWindow", "AnyPhysicalModifierDown")
+need("web/settings/app.js", "output.paced_typing_enabled", "output.typing_speed_wpm", 'label: "Speed"', "min: 50", "max: 450", "range-value", '"installed downloaded local"', '"recommended"', '"selected"', 'more.textContent = "View more"', "visibleModelLimit += 8", 'class="group-reset icon-button"', 'reset to defaults. Save to apply it.')
+forbid("src/config.rs", "typing_chunk_chars", "typing_interval_ms")
+checks.append("AHK owns tray, hotkeys, full-format clipboard-preserving paste modes, and foreground-safe Unicode typing; browser settings owns configuration UI")
 
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
 ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])', '"missing_since"', "A_TickCount - job[\"missing_since\"] < 250")
@@ -170,9 +180,9 @@ need("src/infer/protocol.rs", 'pub const MAGIC: [u8; 4] = *b"UVX1"', "VERSION", 
 checks.append("control IPC is loopback-only and versioned; raw PCM stays on framed child pipes")
 
 # Canonical schema-v2 config, partial downloads, and process-exit diagnostics are present.
-need("src/config.rs", "MoveFileExW", "MOVEFILE_REPLACE_EXISTING", "schema1_is_migrated_and_backed_up", "runtime_root", "current_exe")
+need("src/config.rs", "MoveFileExW", "MOVEFILE_REPLACE_EXISTING", "normalize_json", "partial_config_is_normalized_and_unknown_fields_are_removed", "runtime_root", "current_exe")
 need("src/models.rs", 'https://', 'gguf.partial.', "replace_file_atomic", "validate_model_filename", 'join("fixtures")')
-need("scripts/build-distribution.ps1", "fixtures\\parakeet-smoke.wav", "AutoHotkey64.exe", "runtime\\simple-stt.ahk")
+need("scripts/build-distribution.ps1", "fixtures\\parakeet-smoke.wav", "AutoHotkey64.exe", "runtime\\simple-stt.ahk", "runtime\\hotkey-recorder.ahk")
 need("scripts/build-release.ps1", "--bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl")
 need("scripts/memory-cleanup-validation.ps1", "Get-Process", "nvidia-smi", "unload-model")
 checks.append("schema migration, install-relative paths, atomic writes, HTTPS partial downloads, and diagnostics are present")
