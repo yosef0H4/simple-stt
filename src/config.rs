@@ -393,8 +393,8 @@ impl AppConfig {
             "audio_gain must be in (0, 10]"
         );
         anyhow::ensure!(
-            (50..=450).contains(&self.output.typing_speed_wpm),
-            "typing_speed_wpm must be in [50, 450]"
+            (50..=850).contains(&self.output.typing_speed_wpm),
+            "typing_speed_wpm must be in [50, 850]"
         );
         anyhow::ensure!(
             !self.output.enabled_delivery_modes.is_empty(),
@@ -505,7 +505,7 @@ impl AppConfig {
         if !(normalized.audio.gain > 0.0 && normalized.audio.gain <= 10.0) {
             normalized.audio.gain = defaults.audio.gain;
         }
-        if !(50..=450).contains(&normalized.output.typing_speed_wpm) {
+        if !(50..=850).contains(&normalized.output.typing_speed_wpm) {
             normalized.output.typing_speed_wpm = defaults.output.typing_speed_wpm;
         }
         normalized.output.enabled_delivery_modes.dedup();

@@ -362,15 +362,48 @@ fn linux_automation_state() -> Value {
     let native = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("resources/bin/linux-fast-paste")
         .is_file();
+    let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let release_value = |key: &str| {
+        os_release
+            .lines()
+            .find_map(|line| {
+                let (candidate, value) = line.split_once('=')?;
+                (candidate == key).then(|| value.trim_matches('"').to_owned())
+            })
+            .unwrap_or_default()
+    };
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "Unknown desktop".into());
+    let desktop_lower = desktop.to_ascii_lowercase();
+    let recommended = if !wayland && exists("xdotool") {
+        "xdotool"
+    } else if wayland
+        && (desktop_lower.contains("kde") || desktop_lower.contains("plasma"))
+        && native
+    {
+        "native"
+    } else if wayland && desktop_lower.contains("gnome") && ydotool_daemon {
+        "ydotool"
+    } else if wayland && exists("wtype") {
+        "wtype"
+    } else if ydotool_daemon {
+        "ydotool"
+    } else if native {
+        "native"
+    } else {
+        "clipboard_only"
+    };
     json!({
         "session": if wayland { "Wayland" } else { "X11" },
+        "desktop": desktop,
+        "distro": release_value("PRETTY_NAME"),
+        "distro_id": release_value("ID"),
         "wl_clipboard": exists("wl-copy") && exists("wl-paste"),
         "wtype": exists("wtype"),
         "ydotool": exists("ydotool"),
         "ydotool_daemon": ydotool_daemon,
         "xdotool": exists("xdotool"),
         "native": native,
-        "recommended": if ydotool_daemon { "ydotool" } else if wayland && exists("wtype") { "wtype" } else if !wayland && exists("xdotool") { "xdotool" } else { "clipboard_only" },
+        "recommended": recommended,
         "start_command": "systemctl --user start simple-stt-linux.service",
         "stop_command": "simple-stt-linux shutdown"
     })

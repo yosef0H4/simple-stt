@@ -1075,10 +1075,11 @@ fn is_terminal_identity(identity: &str) -> bool {
 }
 
 fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool> {
-    let allowed = |candidate| backend == LinuxAutomationBackend::Auto || backend == candidate;
-    // The RemoteDesktop portal deliberately asks for input-control consent. Keep
-    // it available as an explicit backend, but never select it automatically.
-    if backend == LinuxAutomationBackend::Native {
+    let automatic = automatic_backend(false);
+    let allowed = |candidate| {
+        backend == candidate || (backend == LinuxAutomationBackend::Auto && automatic == candidate)
+    };
+    if allowed(LinuxAutomationBackend::Native) {
         if let Ok(helper) = find_native_paste_helper() {
             if run_native_paste(&helper, key) {
                 return Ok(true);
@@ -1193,7 +1194,10 @@ fn typing_delay_ms(paced: bool, words_per_minute: u64) -> u64 {
 }
 
 fn type_text(text: &str, backend: LinuxAutomationBackend, delay_ms: u64) -> Result<bool> {
-    let allowed = |candidate| backend == LinuxAutomationBackend::Auto || backend == candidate;
+    let automatic = automatic_backend(true);
+    let allowed = |candidate| {
+        backend == candidate || (backend == LinuxAutomationBackend::Auto && automatic == candidate)
+    };
     if allowed(LinuxAutomationBackend::Ydotool) && ydotool_ready() {
         let delay = delay_ms.to_string();
         if run_quiet(ProcessCommand::new("ydotool").args([
@@ -1232,6 +1236,45 @@ fn type_text(text: &str, backend: LinuxAutomationBackend, delay_ms: u64) -> Resu
         }
     }
     Ok(false)
+}
+
+fn automatic_backend(for_typing: bool) -> LinuxAutomationBackend {
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let native = !for_typing && find_native_paste_helper().is_ok();
+    let ydotool = ydotool_ready();
+    let wtype = wayland && command_exists("wtype");
+    let xdotool = !wayland && command_exists("xdotool");
+
+    if !wayland && xdotool {
+        return LinuxAutomationBackend::Xdotool;
+    }
+    if wayland && (desktop.contains("kde") || desktop.contains("plasma")) {
+        if native {
+            return LinuxAutomationBackend::Native;
+        }
+        if ydotool {
+            return LinuxAutomationBackend::Ydotool;
+        }
+    }
+    if wayland && desktop.contains("gnome") && ydotool {
+        return LinuxAutomationBackend::Ydotool;
+    }
+    if wayland && wtype {
+        return LinuxAutomationBackend::Wtype;
+    }
+    if ydotool {
+        return LinuxAutomationBackend::Ydotool;
+    }
+    if native {
+        return LinuxAutomationBackend::Native;
+    }
+    if xdotool {
+        return LinuxAutomationBackend::Xdotool;
+    }
+    LinuxAutomationBackend::ClipboardOnly
 }
 
 fn ydotool_ready() -> bool {

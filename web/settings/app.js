@@ -430,6 +430,58 @@ function windowsDeliveryChooser(parent) {
   root.append(advanced);
   parent.append(root);
 }
+function linuxAutomationGuide(parent, tools) {
+  const desktop = String(tools.desktop || "Unknown desktop");
+  const session = String(tools.session || "Unknown session");
+  const distro = String(tools.distro || "Linux");
+  const id = String(tools.distro_id || "");
+  const wayland = session.toLowerCase() === "wayland";
+  const desktopLower = desktop.toLowerCase();
+  const packages = !wayland
+    ? "xdotool xclip"
+    : desktopLower.includes("kde") || desktopLower.includes("plasma")
+      ? "wl-clipboard"
+      : desktopLower.includes("gnome")
+        ? "wl-clipboard ydotool"
+        : "wl-clipboard wtype";
+  const install = id === "fedora"
+    ? `sudo dnf install ${packages}`
+    : ["arch", "manjaro", "endeavouros"].includes(id)
+      ? `sudo pacman -S ${packages}`
+      : ["debian", "ubuntu", "linuxmint", "pop"].includes(id)
+        ? `sudo apt install ${packages}`
+        : id.startsWith("opensuse")
+          ? `sudo zypper install ${packages}`
+          : id === "alpine"
+            ? `sudo apk add ${packages}`
+            : id === "void"
+              ? `sudo xbps-install -S ${packages}`
+              : ["nixos", "nix"].includes(id)
+                ? `nix shell ${packages.split(" ").map((name) => `nixpkgs#${name}`).join(" ")}`
+          : "Install wl-clipboard plus the recommended input tool with your package manager.";
+  let recommendation;
+  if (!wayland) recommendation = "X11: xdotool is the simplest input tool; use xclip or xsel for clipboard access.";
+  else if (desktopLower.includes("kde") || desktopLower.includes("plasma")) recommendation = "KDE Plasma Wayland: Native fast paste is the safest compositor-aware choice. Use ydotool when you also need simulated typing; it requires ydotoold.";
+  else if (desktopLower.includes("gnome")) recommendation = "GNOME Wayland: ydotool is the dependable typing option because it works through Linux uinput. Native portal paste is permission-aware; wtype usually is not suitable for GNOME.";
+  else recommendation = "wlroots Wayland (Sway, Hyprland, river, Wayfire): wtype is the lightweight first choice. ydotool is the compositor-independent fallback.";
+  const guide = document.createElement("details");
+  guide.className = "automation-guide";
+  const summary = document.createElement("summary");
+  summary.textContent = `What should I install? · ${distro} · ${desktop} (${session})`;
+  const body = document.createElement("div");
+  body.className = "automation-guide-body";
+  const recommended = document.createElement("p");
+  recommended.innerHTML = `<strong>Recommended:</strong> ${recommendation}`;
+  const roles = document.createElement("ul");
+  roles.innerHTML = `<li><strong>wl-clipboard:</strong> clipboard data on Wayland; it does not inject keys.</li><li><strong>wtype:</strong> fast Wayland typing for compositors supporting virtual-keyboard, mainly wlroots.</li><li><strong>ydotool:</strong> Wayland and X11 through uinput; broad compatibility, but ydotoold needs input-device permission.</li><li><strong>xdotool:</strong> X11 only; do not choose it for native Wayland applications.</li>`;
+  const command = document.createElement("code");
+  command.textContent = install;
+  const caution = document.createElement("small");
+  caution.textContent = "You do not need every tool. Install wl-clipboard plus one input tool suited to your session.";
+  body.append(recommended, roles, command, caution);
+  guide.append(summary, body);
+  parent.append(guide);
+}
 function combobox(
   parent,
   { label, description, path, items, placeholder, onchange },
@@ -716,11 +768,13 @@ function build() {
     const tools = state.linux_automation || {};
     const summary = group(o, "Automation & delivery", "Choose the automation tool and how Simple STT inserts text. Missing tools can be selected after you install them.");
     const autoReady = Boolean(
+      tools.native ||
       (tools.ydotool && tools.ydotool_daemon) ||
       (tools.session === "Wayland" && tools.wtype) ||
       (tools.session === "X11" && tools.xdotool),
     );
     linuxDeliveryChooser(summary, tools);
+    linuxAutomationGuide(summary, tools);
     commandShortcutField(
       summary,
       "Automatic status",
@@ -735,7 +789,6 @@ function build() {
       tools.ydotool && `ydotool${tools.ydotool_daemon ? " (ready)" : " (daemon not running)"}`,
       tools.xdotool && "xdotool",
     ].filter(Boolean).join(", ") || "No supported tools detected");
-    commandShortcutField(summary, "Install", "Choose packages appropriate for your desktop; you do not need all of them.", "Fedora: sudo dnf install wl-clipboard wtype ydotool xdotool");
     const refreshTools = document.createElement("button");
     refreshTools.type = "button";
     refreshTools.className = "shortcut-refresh";
@@ -763,7 +816,7 @@ function build() {
     path: "output.typing_speed_wpm",
     type: "range",
     min: 50,
-    max: 450,
+    max: 850,
     step: 1,
     suffix: " WPM",
   });

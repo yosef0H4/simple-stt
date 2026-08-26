@@ -19,7 +19,7 @@ class Typist {
             "target_window", targetWindow,
             "text", trailingSpace && text != "" ? text . " " : text,
             "paced_typing_enabled", !!pacedTypingEnabled,
-            "typing_speed_wpm", Min(450, Max(50, typingSpeedWpm + 0)),
+            "typing_speed_wpm", Min(850, Max(50, typingSpeedWpm + 0)),
             "delivery_mode", deliveryMode
         )
         if this.active {

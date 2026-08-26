@@ -340,6 +340,39 @@ main {
   gap: 8px;
   margin-top: 12px;
 }
+.automation-guide {
+  margin: 14px 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 86%, var(--accent) 14%);
+}
+.automation-guide > summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  font-weight: 700;
+}
+.automation-guide-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 14px;
+  color: var(--muted);
+}
+.automation-guide-body p,
+.automation-guide-body ul {
+  margin: 0;
+}
+.automation-guide-body li + li {
+  margin-top: 5px;
+}
+.automation-guide-body code {
+  display: block;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--control);
+  color: var(--text);
+  user-select: all;
+}
 @media (max-width: 720px) {
   .app-override-row {
     grid-template-columns: 1fr;

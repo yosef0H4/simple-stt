@@ -143,10 +143,11 @@ Settings offers `auto`, `native`, `wtype`, `ydotool`, `xdotool`, and
 `clipboard_only`. Automatic mode selects a tool that matches the current
 Wayland or X11 session. Type delivery honors the same paced-typing and WPM
 settings as Windows. `wl-clipboard` supplies clipboard data but does not inject
-keys; `wtype` targets Wayland, `xdotool` targets X11, and `ydotool` supports
-both when `ydotoold` is running. The native portal helper is explicit-only
-because desktop security correctly requires user consent for input control;
-automatic mode does not cause a permission dialog for each transcript.
+keys; `wtype` targets Wayland compositors supporting virtual-keyboard,
+`xdotool` targets X11, and `ydotool` supports both when `ydotoold` is running.
+Automatic prefers Native portal paste on KDE Wayland, ydotool on GNOME
+Wayland, wtype on wlroots desktops, and xdotool on X11. KDE may request portal
+approval once; its persistent restore token prevents a prompt per transcript.
 When Native fast paste is selected, an approved persistent RemoteDesktop
 portal restore token is stored in the instance state directory and reused, so
 KDE can restore the permission without prompting on every paste.
