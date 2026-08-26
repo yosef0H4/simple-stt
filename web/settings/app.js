@@ -199,15 +199,17 @@ function linuxDeliveryChooser(parent, tools) {
     ["clipboard_only", "wl-clipboard", Boolean(tools.wl_clipboard)],
   ];
   const modes = [
-    ["paste_ctrl_v", "Paste", "Ctrl+V"],
-    ["type", "Type", "Simulated typing"],
-    ["paste_ctrl_shift_v", "Terminal paste", "Ctrl+Shift+V"],
-    ["clipboard", "Clipboard", "Manual paste"],
+    ["smart_paste", "Smart Paste", "Shift+Insert · terminals use Ctrl+Shift+V", false],
+    ["type", "Type", "Simulated typing", false],
+    ["clipboard", "Clipboard", "Manual paste", false],
+    ["paste_shift_insert", "Shift+Insert", "Always use Shift+Insert", true],
+    ["paste_ctrl_shift_v", "Ctrl+Shift+V", "Always use Ctrl+Shift+V", true],
+    ["paste_ctrl_v", "Ctrl+V", "Compatibility override", true],
   ];
   const supported = (backend, mode) =>
     backend === "clipboard_only" ? mode === "clipboard" : backend === "native" ? mode !== "type" : true;
   config.output.linux_delivery_cycle ||= [
-    { backend: "auto", mode: "paste_ctrl_v" },
+    { backend: "auto", mode: "smart_paste" },
     { backend: "auto", mode: "type" },
   ];
   const root = document.createElement("div");
@@ -224,13 +226,19 @@ function linuxDeliveryChooser(parent, tools) {
   const draw = () => {
     const query = search.value.trim().toLowerCase();
     results.replaceChildren();
-    for (const [mode, modeLabel, detail] of modes) {
+    const advanced = document.createElement("details");
+    advanced.className = "delivery-picker-advanced";
+    const advancedSummary = document.createElement("summary");
+    advancedSummary.textContent = "Advanced paste shortcuts";
+    advanced.append(advancedSummary);
+    for (const [mode, modeLabel, detail, isAdvanced] of modes) {
+      const target = isAdvanced ? advanced : results;
       const matches = backends.filter(([backend, backendLabel]) =>
         supported(backend, mode) && `${backendLabel} ${modeLabel} ${detail}`.toLowerCase().includes(query));
       if (!matches.length) continue;
       const heading = document.createElement("h3");
       heading.textContent = `${modeLabel} · ${detail}`;
-      results.append(heading);
+      target.append(heading);
       for (const [backend, backendLabel, installed] of matches) {
         const row = document.createElement("div");
         const current = config.output.linux_automation_backend === backend && config.output.delivery_mode === mode;
@@ -265,8 +273,12 @@ function linuxDeliveryChooser(parent, tools) {
           draw();
         };
         row.append(choose, cycle);
-        results.append(row);
+        target.append(row);
       }
+    }
+    if (advanced.childElementCount > 1) {
+      if (query || ["paste_shift_insert", "paste_ctrl_shift_v", "paste_ctrl_v"].includes(config.output.delivery_mode)) advanced.open = true;
+      results.append(advanced);
     }
   };
   search.oninput = draw;
@@ -564,6 +576,8 @@ function build() {
       type: "select",
       options: [
         ["type", "Type keystrokes"],
+        ["smart_paste", "Smart Paste"],
+        ["paste_shift_insert", "Paste with Shift+Insert"],
         ["paste_ctrl_v", "Paste with Ctrl+V"],
         ["paste_ctrl_shift_v", "Paste with Ctrl+Shift+V"],
       ],

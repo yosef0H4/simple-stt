@@ -12,7 +12,7 @@ class Typist {
     }
 
     Begin(sessionId, targetWindow, text, pacedTypingEnabled, typingSpeedWpm, trailingSpace, deliveryMode := "type") {
-        if deliveryMode != "type" && deliveryMode != "paste_ctrl_v" && deliveryMode != "paste_ctrl_shift_v"
+        if deliveryMode != "type" && deliveryMode != "smart_paste" && deliveryMode != "paste_shift_insert" && deliveryMode != "paste_ctrl_v" && deliveryMode != "paste_ctrl_shift_v"
             deliveryMode := "type"
         item := Map(
             "session_id", sessionId,
@@ -172,7 +172,9 @@ class Typist {
                 ; Give Windows a moment to publish the new clipboard payload before
                 ; the target application receives the paste shortcut.
                 Sleep(60)
-                if this.deliveryMode = "paste_ctrl_shift_v"
+                if this.deliveryMode = "paste_shift_insert"
+                    Send("+{Insert}")
+                else if this.deliveryMode = "paste_ctrl_shift_v"
                     Send("^+v")
                 else
                     Send("^v")

@@ -301,6 +301,17 @@ main {
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
+.delivery-picker-advanced {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.delivery-picker-advanced > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 650;
+  padding: 6px 2px 10px;
+}
 .delivery-picker-row {
   display: flex;
   align-items: stretch;

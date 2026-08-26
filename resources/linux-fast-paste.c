@@ -634,6 +634,7 @@ int main(int argc, char *argv[]) {
     int use_uinput = 0;
     int use_portal = 0;
     int media_play_pause = 0;
+    int detect_terminal = 0;
     const char *restore_token = NULL;
     Window target_window = None;
 
@@ -648,6 +649,8 @@ int main(int argc, char *argv[]) {
             use_portal = 1;
         } else if (strcmp(argv[i], "--media-play-pause") == 0) {
             media_play_pause = 1;
+        } else if (strcmp(argv[i], "--detect-terminal") == 0) {
+            detect_terminal = 1;
         } else if (strcmp(argv[i], "--restore-token") == 0 && i + 1 < argc) {
             restore_token = argv[++i];
         } else if (strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
@@ -657,6 +660,27 @@ int main(int argc, char *argv[]) {
 
     if (media_play_pause) {
         return send_media_play_pause();
+    }
+
+    if (detect_terminal) {
+#ifdef HAVE_ATSPI
+        int atspi_result = detect_terminal_atspi();
+        if (atspi_result >= 0) return atspi_result ? 0 : 1;
+#endif
+        Display *dpy = XOpenDisplay(NULL);
+        if (!dpy) return 2;
+        Window win = get_active_window(dpy);
+        int result = 0;
+        XClassHint hint;
+        if (win != None && XGetClassHint(dpy, win, &hint)) {
+            result = is_terminal(hint.res_class) || is_terminal(hint.res_name);
+            XFree(hint.res_name);
+            XFree(hint.res_class);
+        } else if (win != None) {
+            result = check_parent_terminal(dpy, win);
+        }
+        XCloseDisplay(dpy);
+        return result ? 0 : 1;
     }
 
     if (use_portal) {

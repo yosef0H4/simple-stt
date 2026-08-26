@@ -213,8 +213,8 @@ class SimpleSttShell {
     }
 
     ToggleDeliveryModeHotkey() {
-        current := this.config.Get("text_delivery_mode", "paste_ctrl_v")
-        next := current = "type" ? "paste_ctrl_v" : "type"
+        current := this.config.Get("text_delivery_mode", "smart_paste")
+        next := current = "type" ? "smart_paste" : "type"
         this.config.Set("text_delivery_mode", next)
         try {
             this.config.SaveSync()

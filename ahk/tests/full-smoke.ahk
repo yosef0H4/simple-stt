@@ -190,7 +190,7 @@ PasteSmoke() {
     global SmokeTypingGui
     logger := ShellLog(A_Temp . "\\simple-stt-full-smoke-paste.log")
     Hotkey("^+v", PastePlain, "On")
-    for item in [["paste_ctrl_v", 9101], ["paste_ctrl_shift_v", 9102]] {
+    for item in [["smart_paste", 9100], ["paste_ctrl_v", 9101], ["paste_ctrl_shift_v", 9102], ["paste_shift_insert", 9103]] {
         format := SetClipboardMarker()
         window := Gui("+AlwaysOnTop", "SimpleStt Full Smoke Paste")
         edit := window.AddEdit("w360 h80")
@@ -287,5 +287,4 @@ try {
     SimpleSttConsoleError("STACK: " . err.Stack)
     ExitApp(1)
 }
-
 

@@ -27,11 +27,11 @@ The current intentionally breaking schema is version 5:
     "worker_shutdown_grace_ms": 2000
   },
   "output": {
-    "delivery_mode": "paste_ctrl_v",
-    "enabled_delivery_modes": ["paste_ctrl_v", "type"],
+    "delivery_mode": "smart_paste",
+    "enabled_delivery_modes": ["smart_paste", "type"],
     "linux_automation_backend": "auto",
     "linux_delivery_cycle": [
-      { "backend": "auto", "mode": "paste_ctrl_v" },
+      { "backend": "auto", "mode": "smart_paste" },
       { "backend": "auto", "mode": "type" }
     ],
     "paced_typing_enabled": true,

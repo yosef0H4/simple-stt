@@ -148,7 +148,9 @@ both when `ydotoold` is running. The native portal helper is explicit-only
 because desktop security correctly requires user consent for input control;
 automatic mode does not cause a permission dialog for each transcript.
 
-Delivery has a current mode and a user-selected cycle list. The default cycle
+Delivery has a current mode and a user-selected cycle list. Smart Paste uses
+Shift+Insert in regular applications and Ctrl+Shift+V in recognized terminals;
+the individual shortcuts remain available under Advanced paste shortcuts. The default cycle
 contains Automatic + Ctrl+V paste and Automatic + simulated typing. The
 searchable picker treats each automation-tool and delivery-mode pair as one
 choice. Selecting a row switches temporarily; its separate Cycle checkbox

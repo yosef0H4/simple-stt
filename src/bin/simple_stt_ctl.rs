@@ -277,6 +277,8 @@ fn config_show() -> Result<ShellResponse> {
         "text_delivery_mode".into(),
         match config.output.delivery_mode {
             TextDeliveryMode::Type => "type",
+            TextDeliveryMode::SmartPaste => "smart_paste",
+            TextDeliveryMode::PasteShiftInsert => "paste_shift_insert",
             TextDeliveryMode::PasteCtrlV => "paste_ctrl_v",
             TextDeliveryMode::PasteCtrlShiftV => "paste_ctrl_shift_v",
             TextDeliveryMode::Clipboard => "clipboard",
@@ -501,6 +503,8 @@ fn parse_capslock_behavior(value: &str) -> Result<CapsLockBehavior> {
 fn parse_text_delivery_mode(value: &str) -> Result<TextDeliveryMode> {
     match value {
         "type" => Ok(TextDeliveryMode::Type),
+        "smart_paste" => Ok(TextDeliveryMode::SmartPaste),
+        "paste_shift_insert" => Ok(TextDeliveryMode::PasteShiftInsert),
         "paste_ctrl_v" => Ok(TextDeliveryMode::PasteCtrlV),
         "paste_ctrl_shift_v" => Ok(TextDeliveryMode::PasteCtrlShiftV),
         "clipboard" => Ok(TextDeliveryMode::Clipboard),

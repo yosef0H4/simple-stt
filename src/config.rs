@@ -49,6 +49,8 @@ pub enum CapsLockBehavior {
 pub enum TextDeliveryMode {
     Type,
     #[default]
+    SmartPaste,
+    PasteShiftInsert,
     PasteCtrlV,
     PasteCtrlShiftV,
     Clipboard,
@@ -275,13 +277,13 @@ impl Default for AppConfig {
                 worker_shutdown_grace_ms: 2_000,
             },
             output: OutputConfig {
-                delivery_mode: TextDeliveryMode::PasteCtrlV,
-                enabled_delivery_modes: vec![TextDeliveryMode::PasteCtrlV, TextDeliveryMode::Type],
+                delivery_mode: TextDeliveryMode::SmartPaste,
+                enabled_delivery_modes: vec![TextDeliveryMode::SmartPaste, TextDeliveryMode::Type],
                 linux_automation_backend: LinuxAutomationBackend::Auto,
                 linux_delivery_cycle: vec![
                     LinuxDeliveryChoice {
                         backend: LinuxAutomationBackend::Auto,
-                        mode: TextDeliveryMode::PasteCtrlV,
+                        mode: TextDeliveryMode::SmartPaste,
                     },
                     LinuxDeliveryChoice {
                         backend: LinuxAutomationBackend::Auto,
@@ -747,7 +749,7 @@ mod tests {
     fn default_config_is_valid() {
         let config = AppConfig::default();
         config.validate().unwrap();
-        assert_eq!(config.output.delivery_mode, TextDeliveryMode::PasteCtrlV);
+        assert_eq!(config.output.delivery_mode, TextDeliveryMode::SmartPaste);
         assert_eq!(
             config.general.recording_mode,
             if cfg!(target_os = "linux") {

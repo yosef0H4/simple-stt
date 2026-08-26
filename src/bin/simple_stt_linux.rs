@@ -686,8 +686,10 @@ fn automation_backend_label(backend: LinuxAutomationBackend) -> &'static str {
 fn delivery_mode_label(mode: TextDeliveryMode) -> &'static str {
     match mode {
         TextDeliveryMode::Type => "Type",
-        TextDeliveryMode::PasteCtrlV => "Paste",
-        TextDeliveryMode::PasteCtrlShiftV => "Terminal paste",
+        TextDeliveryMode::SmartPaste => "Smart Paste",
+        TextDeliveryMode::PasteShiftInsert => "Shift+Insert",
+        TextDeliveryMode::PasteCtrlV => "Ctrl+V",
+        TextDeliveryMode::PasteCtrlShiftV => "Ctrl+Shift+V",
         TextDeliveryMode::Clipboard => "Clipboard",
     }
 }
@@ -879,7 +881,9 @@ fn paste_text(
     }
     let _ = write_clipboard(text, true)?;
     std::thread::sleep(Duration::from_millis(80));
-    let sent = send_paste_key(force_shift_insert, backend)?;
+    let mode = AppConfig::load()?.output.delivery_mode;
+    let key = paste_key_for_mode(mode, force_shift_insert);
+    let sent = send_paste_key(key, backend)?;
     if !sent {
         eprintln!(
             "[{APP}] automatic paste failed; transcript is left in clipboard for manual paste"
@@ -969,9 +973,50 @@ fn start_clipboard_owner(cmd: &mut ProcessCommand, text: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn send_paste_key(force_shift_insert: bool, backend: LinuxAutomationBackend) -> Result<bool> {
-    let use_shift_insert =
-        force_shift_insert || std::env::var("XDG_SESSION_TYPE").ok().as_deref() == Some("wayland");
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasteKey {
+    CtrlV,
+    CtrlShiftV,
+    ShiftInsert,
+}
+
+fn paste_key_for_mode(mode: TextDeliveryMode, force_shift_insert: bool) -> PasteKey {
+    if force_shift_insert {
+        return PasteKey::ShiftInsert;
+    }
+    match mode {
+        TextDeliveryMode::SmartPaste => smart_paste_key(focused_app_is_terminal()),
+        TextDeliveryMode::PasteCtrlShiftV => PasteKey::CtrlShiftV,
+        TextDeliveryMode::PasteCtrlV => PasteKey::CtrlV,
+        TextDeliveryMode::PasteShiftInsert => PasteKey::ShiftInsert,
+        TextDeliveryMode::Type | TextDeliveryMode::Clipboard => PasteKey::ShiftInsert,
+    }
+}
+
+fn smart_paste_key(terminal: bool) -> PasteKey {
+    if terminal {
+        PasteKey::CtrlShiftV
+    } else {
+        PasteKey::ShiftInsert
+    }
+}
+
+fn focused_app_is_terminal() -> bool {
+    find_native_paste_helper()
+        .ok()
+        .and_then(|helper| {
+            ProcessCommand::new(helper)
+                .arg("--detect-terminal")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .ok()
+        })
+        .is_some_and(|status| status.code() == Some(0))
+}
+
+fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool> {
     let allowed = |candidate| backend == LinuxAutomationBackend::Auto || backend == candidate;
     // The RemoteDesktop portal deliberately asks for input-control consent. Keep
     // it available as an explicit backend, but never select it automatically.
@@ -981,8 +1026,14 @@ fn send_paste_key(force_shift_insert: bool, backend: LinuxAutomationBackend) -> 
             if std::env::var_os("WAYLAND_DISPLAY").is_some() {
                 command.arg("--portal");
             }
-            if use_shift_insert {
-                command.arg("--shift-insert");
+            match key {
+                PasteKey::ShiftInsert => {
+                    command.arg("--shift-insert");
+                }
+                PasteKey::CtrlShiftV => {
+                    command.arg("--terminal");
+                }
+                PasteKey::CtrlV => {}
             }
             if run_quiet(&mut command) {
                 return Ok(true);
@@ -990,10 +1041,10 @@ fn send_paste_key(force_shift_insert: bool, backend: LinuxAutomationBackend) -> 
         }
     }
     if allowed(LinuxAutomationBackend::Ydotool) && ydotool_ready() {
-        let args = if use_shift_insert {
-            vec!["key", "42:1", "110:1", "110:0", "42:0"]
-        } else {
-            vec!["key", "29:1", "47:1", "47:0", "29:0"]
+        let args = match key {
+            PasteKey::ShiftInsert => vec!["key", "42:1", "110:1", "110:0", "42:0"],
+            PasteKey::CtrlShiftV => vec!["key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"],
+            PasteKey::CtrlV => vec!["key", "29:1", "47:1", "47:0", "29:0"],
         };
         if run_quiet(ProcessCommand::new("ydotool").args(args)) {
             return Ok(true);
@@ -1003,10 +1054,12 @@ fn send_paste_key(force_shift_insert: bool, backend: LinuxAutomationBackend) -> 
         && command_exists("wtype")
         && std::env::var_os("WAYLAND_DISPLAY").is_some()
     {
-        let args = if use_shift_insert {
-            vec!["-M", "shift", "-k", "Insert", "-m", "shift"]
-        } else {
-            vec!["-M", "ctrl", "-k", "v", "-m", "ctrl"]
+        let args = match key {
+            PasteKey::ShiftInsert => vec!["-M", "shift", "-k", "Insert", "-m", "shift"],
+            PasteKey::CtrlShiftV => vec![
+                "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl",
+            ],
+            PasteKey::CtrlV => vec!["-M", "ctrl", "-k", "v", "-m", "ctrl"],
         };
         if run_quiet(ProcessCommand::new("wtype").args(args)) {
             return Ok(true);
@@ -1016,10 +1069,10 @@ fn send_paste_key(force_shift_insert: bool, backend: LinuxAutomationBackend) -> 
         && command_exists("xdotool")
         && std::env::var_os("DISPLAY").is_some()
     {
-        let key = if use_shift_insert {
-            "shift+Insert"
-        } else {
-            "ctrl+v"
+        let key = match key {
+            PasteKey::ShiftInsert => "shift+Insert",
+            PasteKey::CtrlShiftV => "ctrl+shift+v",
+            PasteKey::CtrlV => "ctrl+v",
         };
         if run_quiet(ProcessCommand::new("xdotool").args(["key", "--clearmodifiers", key])) {
             return Ok(true);
@@ -1444,5 +1497,11 @@ mod tests {
             ),
             "wtype · Type"
         );
+    }
+
+    #[test]
+    fn smart_paste_uses_terminal_shortcut_only_for_terminals() {
+        assert_eq!(smart_paste_key(false), PasteKey::ShiftInsert);
+        assert_eq!(smart_paste_key(true), PasteKey::CtrlShiftV);
     }
 }
