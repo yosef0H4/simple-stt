@@ -54,6 +54,7 @@ linux_shell = need(
 need("src/capture/overlay_model.rs", 'ascii_visualizer', 'render_overlay_text', 'OverlayPrimary')
 need("src/capture/overlay_windows.rs", 'render_overlay_text', 'crate::capture::overlay::overlay_model::ascii_visualizer')
 need("resources/linux-fast-paste.c", 'adapted from OpenWhispr', 'PASTE_MODE_SHIFT_INSERT', '--detect-terminal', '--active-app', 'active_app_atspi', 'RemoteDesktop')
+need("src/bin/simple_stt_linux.rs", 'native-paste-restore-token', '--restore-token', 'run_native_paste')
 need("scripts/build-linux-fast-paste.py", 'libx11/libxtst development packages missing', 'HAVE_GIO', 'HAVE_UINPUT')
 need("docs/linux-wayland.md", 'Shared shortcut fields remain in JSON', 'Same Parakeet backend model', 'simple-stt-linux configure-shortcuts')
 

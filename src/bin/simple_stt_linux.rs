@@ -1080,20 +1080,7 @@ fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool
     // it available as an explicit backend, but never select it automatically.
     if backend == LinuxAutomationBackend::Native {
         if let Ok(helper) = find_native_paste_helper() {
-            let mut command = ProcessCommand::new(helper);
-            if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                command.arg("--portal");
-            }
-            match key {
-                PasteKey::ShiftInsert => {
-                    command.arg("--shift-insert");
-                }
-                PasteKey::CtrlShiftV => {
-                    command.arg("--terminal");
-                }
-                PasteKey::CtrlV => {}
-            }
-            if run_quiet(&mut command) {
+            if run_native_paste(&helper, key) {
                 return Ok(true);
             }
         }
@@ -1137,6 +1124,64 @@ fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool
         }
     }
     Ok(false)
+}
+
+fn run_native_paste(helper: &Path, key: PasteKey) -> bool {
+    let mut command = ProcessCommand::new(helper);
+    let portal = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let restore_path = AppConfig::state_dir().join("native-paste-restore-token");
+    if portal {
+        command.arg("--portal");
+        if let Ok(token) = fs::read_to_string(&restore_path) {
+            let token = token.trim();
+            if !token.is_empty() {
+                command.arg("--restore-token").arg(token);
+            }
+        }
+    }
+    match key {
+        PasteKey::ShiftInsert => {
+            command.arg("--shift-insert");
+        }
+        PasteKey::CtrlShiftV => {
+            command.arg("--terminal");
+        }
+        PasteKey::CtrlV => {}
+    }
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let Ok(output) = command.output() else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    if portal {
+        if let Ok(token) = String::from_utf8(output.stdout) {
+            let token = token.trim();
+            if !token.is_empty() {
+                if let Some(parent) = restore_path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                }
+                let _ = write_private_restore_token(&restore_path, token);
+            }
+        }
+    }
+    true
+}
+
+fn write_private_restore_token(path: &Path, token: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(token.as_bytes())
 }
 
 fn typing_delay_ms(paced: bool, words_per_minute: u64) -> u64 {
