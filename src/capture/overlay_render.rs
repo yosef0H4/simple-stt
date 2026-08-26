@@ -100,7 +100,10 @@ fn build_layout(cr: &cairo::Context, text: &str) -> pango::Layout {
     // the resulting (possibly smaller) extent.
     layout.set_width((MAX_WIDTH as i32 - 44) * pango::SCALE);
     layout.set_wrap(pango::WrapMode::WordChar);
-    layout.set_ellipsize(pango::EllipsizeMode::End);
+    // Do not ellipsize: notification text must remain readable. Pango wraps it
+    // within MAX_WIDTH and plan_for grows the surface vertically. The compact
+    // one-line visualizer never reaches this limit, so its layout is unchanged.
+    layout.set_ellipsize(pango::EllipsizeMode::None);
     layout.set_spacing(LINE_SPACING_PX * pango::SCALE);
     layout.set_font_description(Some(&pango::FontDescription::from_string(FONT)));
     layout

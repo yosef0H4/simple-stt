@@ -13,6 +13,7 @@ logs/
 config.local.json
 external/parakeet-runtime/
 external/parakeet.cpp/
+external/localvqe-runtime/
 external/AutoHotkey/
 external/TTS-anywhere/
 models/
@@ -21,6 +22,7 @@ parakeet-windows-cuda-sm86.zip
 # Generated diagnostics and packages
 artifacts/*
 !artifacts/.gitkeep
+resources/bin/
 lcov.info
 .playwright-cli/
 

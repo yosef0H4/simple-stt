@@ -138,7 +138,17 @@ fn main() -> Result<()> {
         pid = std::process::id(),
         "inference worker exiting; process exit is the memory cleanup guarantee"
     );
-    Ok(())
+    #[cfg(target_os = "linux")]
+    unsafe {
+        // The Linux Parakeet runtime owns a process-global CUDA backend whose
+        // C++ exit handler can run after the CUDA driver has begun unloading.
+        // The per-model context is already freed above. Exit directly so the
+        // kernel reclaims the remaining process-owned CUDA allocations without
+        // invoking that unsafe native static destructor.
+        libc::_exit(0);
+    }
+    #[cfg(not(target_os = "linux"))]
+    return Ok(());
 }
 
 fn apply_inference_device(device: &InferenceDevice) {

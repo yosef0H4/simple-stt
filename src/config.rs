@@ -36,7 +36,7 @@ impl LogLevel {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CapsLockBehavior {
     #[default]
@@ -44,13 +44,32 @@ pub enum CapsLockBehavior {
     AlwaysOff,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TextDeliveryMode {
     Type,
     #[default]
     PasteCtrlV,
     PasteCtrlShiftV,
+    Clipboard,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LinuxAutomationBackend {
+    #[default]
+    Auto,
+    Native,
+    Wtype,
+    Ydotool,
+    Xdotool,
+    ClipboardOnly,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinuxDeliveryChoice {
+    pub backend: LinuxAutomationBackend,
+    pub mode: TextDeliveryMode,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
@@ -208,6 +227,9 @@ pub struct SpeechConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutputConfig {
     pub delivery_mode: TextDeliveryMode,
+    pub enabled_delivery_modes: Vec<TextDeliveryMode>,
+    pub linux_automation_backend: LinuxAutomationBackend,
+    pub linux_delivery_cycle: Vec<LinuxDeliveryChoice>,
     pub paced_typing_enabled: bool,
     pub typing_speed_wpm: u64,
     pub trailing_space: bool,
@@ -254,6 +276,18 @@ impl Default for AppConfig {
             },
             output: OutputConfig {
                 delivery_mode: TextDeliveryMode::PasteCtrlV,
+                enabled_delivery_modes: vec![TextDeliveryMode::PasteCtrlV, TextDeliveryMode::Type],
+                linux_automation_backend: LinuxAutomationBackend::Auto,
+                linux_delivery_cycle: vec![
+                    LinuxDeliveryChoice {
+                        backend: LinuxAutomationBackend::Auto,
+                        mode: TextDeliveryMode::PasteCtrlV,
+                    },
+                    LinuxDeliveryChoice {
+                        backend: LinuxAutomationBackend::Auto,
+                        mode: TextDeliveryMode::Type,
+                    },
+                ],
                 paced_typing_enabled: true,
                 typing_speed_wpm: 450,
                 trailing_space: true,
@@ -353,6 +387,16 @@ impl AppConfig {
             "typing_speed_wpm must be in [50, 450]"
         );
         anyhow::ensure!(
+            !self.output.enabled_delivery_modes.is_empty(),
+            "enabled_delivery_modes must not be empty"
+        );
+        anyhow::ensure!(
+            self.output
+                .enabled_delivery_modes
+                .contains(&self.output.delivery_mode),
+            "delivery_mode must be included in enabled_delivery_modes"
+        );
+        anyhow::ensure!(
             self.speech.idle_worker_timeout_secs > 0,
             "idle_worker_timeout_secs must be positive"
         );
@@ -447,6 +491,20 @@ impl AppConfig {
         }
         if !(50..=450).contains(&normalized.output.typing_speed_wpm) {
             normalized.output.typing_speed_wpm = defaults.output.typing_speed_wpm;
+        }
+        normalized.output.enabled_delivery_modes.dedup();
+        if normalized.output.enabled_delivery_modes.is_empty() {
+            normalized.output.enabled_delivery_modes = defaults.output.enabled_delivery_modes;
+        }
+        if !normalized
+            .output
+            .enabled_delivery_modes
+            .contains(&normalized.output.delivery_mode)
+        {
+            normalized
+                .output
+                .enabled_delivery_modes
+                .push(normalized.output.delivery_mode);
         }
         if normalized.speech.idle_worker_timeout_secs == 0 {
             normalized.speech.idle_worker_timeout_secs = defaults.speech.idle_worker_timeout_secs;
@@ -690,7 +748,14 @@ mod tests {
         let config = AppConfig::default();
         config.validate().unwrap();
         assert_eq!(config.output.delivery_mode, TextDeliveryMode::PasteCtrlV);
-        assert_eq!(config.general.recording_mode, RecordingMode::Hold);
+        assert_eq!(
+            config.general.recording_mode,
+            if cfg!(target_os = "linux") {
+                RecordingMode::Toggle
+            } else {
+                RecordingMode::Hold
+            }
+        );
         assert_eq!(config.general.toggle_delivery_hotkey, "CapsLock+D");
         assert_eq!(config.general.cancel_hotkey, "CapsLock+A");
         assert!(!config.output.remove_punctuation);

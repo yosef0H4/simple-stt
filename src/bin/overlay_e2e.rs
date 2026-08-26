@@ -75,6 +75,19 @@ fn main() {
     sleep(700);
     shot("5_show_third");
 
+    println!("step 6: resize from visualizer to a long notice");
+    overlay.notify_warning(
+        "🎙 Preferred microphone unavailable — using system default",
+        Duration::from_secs(5),
+    );
+    sleep(700);
+    shot("6_long_notice");
+
+    println!("step 7: clear notice without disturbing the visualizer");
+    overlay.clear_notice();
+    sleep(700);
+    shot("7_visualizer_after_notice");
+
     overlay.hide();
     sleep(300);
     println!("done");

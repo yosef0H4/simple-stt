@@ -28,6 +28,12 @@ The current intentionally breaking schema is version 5:
   },
   "output": {
     "delivery_mode": "paste_ctrl_v",
+    "enabled_delivery_modes": ["paste_ctrl_v", "type"],
+    "linux_automation_backend": "auto",
+    "linux_delivery_cycle": [
+      { "backend": "auto", "mode": "paste_ctrl_v" },
+      { "backend": "auto", "mode": "type" }
+    ],
     "paced_typing_enabled": true,
     "typing_speed_wpm": 450,
     "trailing_space": true,

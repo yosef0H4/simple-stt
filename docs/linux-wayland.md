@@ -18,8 +18,9 @@ AutoHotkey shell with a Rust Linux shell.
 - **Linux audio via CPAL.** The microphone capture path now builds on Linux too.
 - **Persistent microphone preference.** An empty `audio_device_contains` follows
   ALSA's `default` capture PCM. A saved CPAL/ALSA device ID is preferred when
-  present, falls back to `default` while absent, and is restored on the next
-  recording request after it becomes available.
+  present and falls back to the system default while absent. Linux polls input
+  topology changes, switches back as soon as the preferred device returns, and
+  shows the same fallback/restored overlay notices as Windows.
   Linux device labels include the ALSA PCM name so duplicate hardware/plugin
   entries remain distinguishable.
 - **OpenWhispr-style paste helper.** `resources/linux-fast-paste.c` is adapted
@@ -138,8 +139,31 @@ hold-to-record are intentionally not required for the Linux MVP.
 
 ## Paste behavior
 
+Settings offers `auto`, `native`, `wtype`, `ydotool`, `xdotool`, and
+`clipboard_only`. Automatic mode selects a tool that matches the current
+Wayland or X11 session. Type delivery honors the same paced-typing and WPM
+settings as Windows. `wl-clipboard` supplies clipboard data but does not inject
+keys; `wtype` targets Wayland, `xdotool` targets X11, and `ydotool` supports
+both when `ydotoold` is running. The native portal helper is explicit-only
+because desktop security correctly requires user consent for input control;
+automatic mode does not cause a permission dialog for each transcript.
+
+Delivery has a current mode and a user-selected cycle list. The default cycle
+contains Automatic + Ctrl+V paste and Automatic + simulated typing. The
+searchable picker treats each automation-tool and delivery-mode pair as one
+choice. Selecting a row switches temporarily; its separate Cycle checkbox
+controls whether the portal shortcut includes it. This allows cycling across
+tools as well as paste, typing, terminal paste, and clipboard-only delivery.
+
 The Linux shell copies the transcript to the normal clipboard and primary
 selection, sends a paste keystroke, and then restores the old text clipboard.
+
+## System tray
+
+The daemon publishes a freedesktop StatusNotifierItem used natively by KDE.
+Left-click opens Settings. The context menu can start or stop recording, open
+Settings, unload the speech model, or close Simple STT. Closing shuts down the
+capture service cleanly, so systemd's `Restart=on-failure` does not reopen it.
 
 Paste order:
 

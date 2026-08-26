@@ -279,6 +279,7 @@ fn config_show() -> Result<ShellResponse> {
             TextDeliveryMode::Type => "type",
             TextDeliveryMode::PasteCtrlV => "paste_ctrl_v",
             TextDeliveryMode::PasteCtrlShiftV => "paste_ctrl_shift_v",
+            TextDeliveryMode::Clipboard => "clipboard",
         }
         .into(),
     );
@@ -502,6 +503,7 @@ fn parse_text_delivery_mode(value: &str) -> Result<TextDeliveryMode> {
         "type" => Ok(TextDeliveryMode::Type),
         "paste_ctrl_v" => Ok(TextDeliveryMode::PasteCtrlV),
         "paste_ctrl_shift_v" => Ok(TextDeliveryMode::PasteCtrlShiftV),
+        "clipboard" => Ok(TextDeliveryMode::Clipboard),
         _ => anyhow::bail!("invalid text_delivery_mode: {value}"),
     }
 }

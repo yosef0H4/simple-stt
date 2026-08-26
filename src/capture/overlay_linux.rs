@@ -169,6 +169,7 @@ fn overlay_thread(rx: channel::Channel<OverlayCommand>, level: Arc<AtomicU32>) -
         pool,
         width: INITIAL_WIDTH,
         height: INITIAL_HEIGHT,
+        pending_size: None,
         configured: false,
         mapped: false,
         primary: OverlayPrimary::Hidden,
@@ -223,6 +224,7 @@ struct LayerOverlay {
     pool: SlotPool,
     width: u32,
     height: u32,
+    pending_size: Option<(u32, u32)>,
     configured: bool,
     mapped: bool,
     primary: OverlayPrimary,
@@ -367,6 +369,7 @@ impl LayerOverlay {
         // A resize must go through a configure round.
         if plan.width != self.width || plan.height != self.height {
             if let Some(layer) = &self.layer {
+                self.pending_size = Some((plan.width, plan.height));
                 layer.set_size(plan.width, plan.height);
                 layer.commit();
             }
@@ -404,7 +407,9 @@ impl LayerOverlay {
         self._input_region = Some(input_region);
         self.width = width;
         self.height = height;
+        self.pending_size = None;
         self.configured = false;
+        self.pending_size = None;
         self.mapped = false;
         self.last_signature.clear();
         tracing::debug!(width, height, "overlay: created layer surface");
@@ -556,12 +561,11 @@ impl LayerShellHandler for LayerOverlay {
         configure: LayerSurfaceConfigure,
         _serial: u32,
     ) {
-        if configure.new_size.0 > 0 {
-            self.width = configure.new_size.0;
-        }
-        if configure.new_size.1 > 0 {
-            self.height = configure.new_size.1;
-        }
+        let requested = self
+            .pending_size
+            .take()
+            .unwrap_or((self.width, self.height));
+        (self.width, self.height) = resolved_configured_size(configure.new_size, requested);
         self.configured = true;
         // The compositor has acked our size; attach a buffer now to map at the
         // confirmed size, or destroy the surface if there is nothing to show.
@@ -570,6 +574,36 @@ impl LayerShellHandler for LayerOverlay {
             None => self.destroy_layer(),
         }
         self.needs_redraw = false;
+    }
+}
+
+/// A zero layer-shell configure dimension means the compositor accepted the
+/// size requested by the client. Preserve that pending request so a notice
+/// growing from the compact visualizer size is not rendered into the old,
+/// smaller buffer and clipped.
+fn resolved_configured_size(configured: (u32, u32), requested: (u32, u32)) -> (u32, u32) {
+    (
+        if configured.0 == 0 {
+            requested.0
+        } else {
+            configured.0
+        },
+        if configured.1 == 0 {
+            requested.1
+        } else {
+            configured.1
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolved_configured_size;
+
+    #[test]
+    fn zero_configure_dimensions_keep_the_requested_notice_size() {
+        assert_eq!(resolved_configured_size((0, 0), (518, 68)), (518, 68));
+        assert_eq!(resolved_configured_size((500, 0), (518, 68)), (500, 68));
     }
 }
 

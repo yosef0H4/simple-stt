@@ -332,6 +332,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "platform":if cfg!(windows){"windows"}else if cfg!(target_os="linux"){"linux"}else{"other"},
             "service_online":service_online,
             "shortcut_state":shortcut_state,
+            "linux_automation":linux_automation_state(),
             "microphones":microphones,
             "models":models
         }),
@@ -345,6 +346,39 @@ fn linux_shortcut_state() -> Value {
         .ok()
         .and_then(|raw| serde_json::from_slice(&raw).ok())
         .unwrap_or_else(|| json!({}))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_automation_state() -> Value {
+    let exists = |name: &str| {
+        std::env::var_os("PATH")
+            .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
+    };
+    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let ydotool_daemon = Command::new("pidof")
+        .arg("ydotoold")
+        .output()
+        .is_ok_and(|output| output.status.success());
+    let native = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("resources/bin/linux-fast-paste")
+        .is_file();
+    json!({
+        "session": if wayland { "Wayland" } else { "X11" },
+        "wl_clipboard": exists("wl-copy") && exists("wl-paste"),
+        "wtype": exists("wtype"),
+        "ydotool": exists("ydotool"),
+        "ydotool_daemon": ydotool_daemon,
+        "xdotool": exists("xdotool"),
+        "native": native,
+        "recommended": if ydotool_daemon { "ydotool" } else if wayland && exists("wtype") { "wtype" } else if !wayland && exists("xdotool") { "xdotool" } else { "clipboard_only" },
+        "start_command": "systemctl --user start simple-stt-linux.service",
+        "stop_command": "simple-stt-linux shutdown"
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_automation_state() -> Value {
+    json!({})
 }
 
 #[cfg(not(target_os = "linux"))]

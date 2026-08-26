@@ -14,6 +14,8 @@ const $ = (s) => document.querySelector(s),
 const actionIcons = {
   refresh:
     '<path d="M20 6v5h-5M4 18v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 9m2 6a7 7 0 0 0 12 2.5L20 15"/>',
+  reset:
+    '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>',
   download: '<path d="M12 3v12m-5-5 5 5 5-5M5 21h14"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   test: '<path d="m9 3-5 9h7l-1 9 10-12h-7l1-6Z"/>',
@@ -56,7 +58,7 @@ const applyTheme = (value) =>
 function group(parent, title, description) {
   const root = document.createElement("div");
   root.className = "setting-group";
-  root.innerHTML = `${groupIcon(title)}<div class="group-head"><div><h2>${title}</h2>${description ? `<p>${description}</p>` : ""}</div><button type="button" class="group-reset icon-button" aria-label="Reset ${title} to defaults" title="Reset group">${actionIcon("refresh")}</button></div>`;
+  root.innerHTML = `${groupIcon(title)}<div class="group-head"><div><h2>${title}</h2>${description ? `<p>${description}</p>` : ""}</div><button type="button" class="group-reset" aria-label="Reset ${title} to defaults" title="Reset only this group to defaults">${actionIcon("reset")}<span>Reset group</span></button></div>`;
   root.querySelector(".group-reset").onclick = async () => {
     try {
       const defaults = (await api("/api/defaults")).config;
@@ -173,6 +175,104 @@ function portalShortcutField(parent, label, description, id) {
   control.append(value);
   wrap.append(control);
   parent.append(wrap);
+}
+function commandShortcutField(parent, label, description, command) {
+  const wrap = document.createElement("div");
+  wrap.className = "field portal-shortcut";
+  wrap.innerHTML = `<span class="field-copy"><strong>${label}</strong><small>${description}</small></span>`;
+  const value = document.createElement("output");
+  value.className = "hotkey-value";
+  value.textContent = command;
+  const control = document.createElement("div");
+  control.className = "control";
+  control.append(value);
+  wrap.append(control);
+  parent.append(wrap);
+}
+function linuxDeliveryChooser(parent, tools) {
+  const backends = [
+    ["auto", "Automatic", true],
+    ["ydotool", "ydotool", Boolean(tools.ydotool && tools.ydotool_daemon)],
+    ["wtype", "wtype", Boolean(tools.wtype)],
+    ["xdotool", "xdotool", Boolean(tools.xdotool)],
+    ["native", "Native fast paste", Boolean(tools.native)],
+    ["clipboard_only", "wl-clipboard", Boolean(tools.wl_clipboard)],
+  ];
+  const modes = [
+    ["paste_ctrl_v", "Paste", "Ctrl+V"],
+    ["type", "Type", "Simulated typing"],
+    ["paste_ctrl_shift_v", "Terminal paste", "Ctrl+Shift+V"],
+    ["clipboard", "Clipboard", "Manual paste"],
+  ];
+  const supported = (backend, mode) =>
+    backend === "clipboard_only" ? mode === "clipboard" : backend === "native" ? mode !== "type" : true;
+  config.output.linux_delivery_cycle ||= [
+    { backend: "auto", mode: "paste_ctrl_v" },
+    { backend: "auto", mode: "type" },
+  ];
+  const root = document.createElement("div");
+  root.className = "delivery-picker";
+  root.dataset.settingPath = "output.linux_delivery_cycle";
+  const search = document.createElement("input");
+  search.type = "search";
+  search.className = "delivery-picker-search";
+  search.placeholder = "Search tools and delivery methods…";
+  search.setAttribute("aria-label", "Search Linux delivery options");
+  const results = document.createElement("div");
+  results.className = "delivery-picker-results";
+  const same = (choice, backend, mode) => choice.backend === backend && choice.mode === mode;
+  const draw = () => {
+    const query = search.value.trim().toLowerCase();
+    results.replaceChildren();
+    for (const [mode, modeLabel, detail] of modes) {
+      const matches = backends.filter(([backend, backendLabel]) =>
+        supported(backend, mode) && `${backendLabel} ${modeLabel} ${detail}`.toLowerCase().includes(query));
+      if (!matches.length) continue;
+      const heading = document.createElement("h3");
+      heading.textContent = `${modeLabel} · ${detail}`;
+      results.append(heading);
+      for (const [backend, backendLabel, installed] of matches) {
+        const row = document.createElement("div");
+        const current = config.output.linux_automation_backend === backend && config.output.delivery_mode === mode;
+        const cycling = config.output.linux_delivery_cycle.some((choice) => same(choice, backend, mode));
+        row.className = "delivery-picker-row";
+        row.classList.toggle("selected", current);
+        const choose = document.createElement("button");
+        choose.type = "button";
+        choose.className = "delivery-picker-select";
+        choose.innerHTML = `<span><strong>${backendLabel}</strong><small>${installed ? "Installed" : "Not installed"}${current ? " · Current" : ""}</small></span>`;
+        choose.onclick = () => {
+          config.output.linux_automation_backend = backend;
+          config.output.delivery_mode = mode;
+          if (!config.output.enabled_delivery_modes.includes(mode)) config.output.enabled_delivery_modes.push(mode);
+          if (!installed) notice(`${backendLabel} is not ready. Install it before using this option.`, "error");
+          markDirty();
+          draw();
+        };
+        const cycle = document.createElement("label");
+        cycle.className = "delivery-picker-cycle";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = cycling;
+        cycle.append(checkbox, document.createTextNode("Cycle"));
+        checkbox.onchange = () => {
+          if (checkbox.checked) {
+            config.output.linux_delivery_cycle.push({ backend, mode });
+          } else {
+            config.output.linux_delivery_cycle = config.output.linux_delivery_cycle.filter((choice) => !same(choice, backend, mode));
+          }
+          markDirty();
+          draw();
+        };
+        row.append(choose, cycle);
+        results.append(row);
+      }
+    }
+  };
+  search.oninput = draw;
+  root.append(search, results);
+  parent.append(root);
+  draw();
 }
 function combobox(
   parent,
@@ -300,12 +400,14 @@ function build() {
       "Wayland portal assignment.",
       "delivery",
     );
+    commandShortcutField(shortcuts, "Start program", "Bind this command in KDE or GNOME shortcuts; it works while Simple STT is closed.", state.linux_automation?.start_command || "systemctl --user start simple-stt-linux.service");
+    commandShortcutField(shortcuts, "Close program", "Bind this command in KDE or GNOME shortcuts.", state.linux_automation?.stop_command || "simple-stt-linux shutdown");
     const shortcutActions = document.createElement("div");
     shortcutActions.className = "group-actions";
     const sync = document.createElement("button");
     sync.type = "button";
-    sync.className = "icon-button";
-    sync.innerHTML = actionIcon("refresh");
+    sync.className = "shortcut-refresh";
+    sync.innerHTML = `${actionIcon("refresh")}<span>Refresh</span>`;
     sync.setAttribute("aria-label", "Refresh or register system shortcuts");
     sync.title = "Refresh assignments or request portal registration";
     sync.onclick = () =>
@@ -326,7 +428,8 @@ function build() {
         .then(refreshState)
         .catch((error) => notice(error.message, "error"));
     shortcutActions.append(sync, configure);
-    shortcuts.querySelector(".group-head").append(shortcutActions);
+    const shortcutHead = shortcuts.querySelector(".group-head");
+    shortcutHead.insertBefore(shortcutActions, shortcutHead.querySelector(".group-reset"));
   } else {
     field(shortcuts, {
       label: "Recording mode",
@@ -453,17 +556,53 @@ function build() {
     "Delivery",
     "",
   );
-  field(delivery, {
-    label: "Delivery mode",
-    description: "Paste is faster; typing works where paste is blocked.",
-    path: "output.delivery_mode",
-    type: "select",
-    options: [
-      ["type", "Type keystrokes"],
-      ["paste_ctrl_v", "Paste with Ctrl+V"],
-      ["paste_ctrl_shift_v", "Paste with Ctrl+Shift+V"],
-    ],
-  });
+  if (state.platform !== "linux")
+    field(delivery, {
+      label: "Current mode",
+      description: "The mode Simple STT uses right now.",
+      path: "output.delivery_mode",
+      type: "select",
+      options: [
+        ["type", "Type keystrokes"],
+        ["paste_ctrl_v", "Paste with Ctrl+V"],
+        ["paste_ctrl_shift_v", "Paste with Ctrl+Shift+V"],
+      ],
+    });
+  if (state.platform === "linux") {
+    const tools = state.linux_automation || {};
+    const summary = group(o, "Linux tool support", "Choose the automation backend Simple STT should use. Missing tools can be selected after you install them.");
+    const autoReady = Boolean(
+      (tools.ydotool && tools.ydotool_daemon) ||
+      (tools.session === "Wayland" && tools.wtype) ||
+      (tools.session === "X11" && tools.xdotool),
+    );
+    linuxDeliveryChooser(summary, tools);
+    commandShortcutField(
+      summary,
+      "Automatic status",
+      autoReady
+        ? "Ready. Automatic will choose the best installed tool for this session."
+        : "Action required: install at least one supported automation tool.",
+      autoReady ? `Using recommendation: ${tools.recommended}` : "Please install wtype, ydotool, or xdotool",
+    );
+    commandShortcutField(summary, "Detected", "wtype: type and paste on Wayland · ydotool: type and paste on Wayland/X11 (requires ydotoold) · xdotool: type and paste on X11 · wl-clipboard: clipboard copy/paste data only.", [
+      tools.wl_clipboard && "wl-clipboard",
+      tools.wtype && "wtype",
+      tools.ydotool && `ydotool${tools.ydotool_daemon ? " (ready)" : " (daemon not running)"}`,
+      tools.xdotool && "xdotool",
+    ].filter(Boolean).join(", ") || "No supported tools detected");
+    commandShortcutField(summary, "Install", "Choose packages appropriate for your desktop; you do not need all of them.", "Fedora: sudo dnf install wl-clipboard wtype ydotool xdotool");
+    const refreshTools = document.createElement("button");
+    refreshTools.type = "button";
+    refreshTools.className = "shortcut-refresh";
+    refreshTools.innerHTML = `${actionIcon("refresh")}<span>Refresh tools</span>`;
+    refreshTools.title = "Detect installed Linux automation tools again";
+    refreshTools.onclick = () => refreshState().catch((error) => notice(error.message, "error"));
+    const summaryHead = summary.querySelector(".group-head");
+    summaryHead.insertBefore(refreshTools, summaryHead.querySelector(".group-reset"));
+    o.insertBefore(summary, delivery);
+
+  }
   const pacedTyping = field(delivery, {
     label: "Type gradually",
     description: "Turn off to insert the transcript all at once.",
@@ -909,6 +1048,9 @@ async function eventLoop() {
           modelDownloads.delete(e.values.filename);
           renderModels();
         }
+        if (e.kind === "configuration_reloaded") {
+          await refreshState(true);
+        }
         if (e.text) notice(e.text);
       }
     } catch (e) {
@@ -916,8 +1058,20 @@ async function eventLoop() {
     }
   }
 }
-async function refreshState() {
-  state = await api("/api/state");
+async function refreshState(reloadConfig = false) {
+  const nextState = await api("/api/state");
+  if (reloadConfig && nextState.config) {
+    if (dirty) {
+      config.output.linux_automation_backend = nextState.config.output.linux_automation_backend;
+      config.output.delivery_mode = nextState.config.output.delivery_mode;
+      baseline = nextState.config_hash;
+      syncJson();
+    } else {
+      config = structuredClone(nextState.config);
+      baseline = nextState.config_hash;
+    }
+  }
+  state = nextState;
   build();
 }
 function showPage(page) {

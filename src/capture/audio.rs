@@ -350,7 +350,7 @@ mod platform {
             recording_active,
             event_tx,
         )
-        .with_context(|| "opening Windows/system default after preferred microphone failed")
+        .with_context(|| "opening system default after preferred microphone failed")
     }
 
     fn start_capture_device(
@@ -630,10 +630,65 @@ mod device_notifications {
 #[cfg(windows)]
 pub use device_notifications::{watch_device_changes, DeviceNotificationGuard};
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub struct DeviceNotificationGuard {
+    stop: Option<std::sync::mpsc::Sender<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for DeviceNotificationGuard {
+    fn drop(&mut self) {
+        if let Some(stop) = self.stop.take() {
+            let _ = stop.send(());
+        }
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn watch_device_changes(events: Sender<AudioEvent>) -> Result<DeviceNotificationGuard> {
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel();
+    let thread = std::thread::Builder::new()
+        .name("linux-audio-device-notifications".to_owned())
+        .spawn(move || {
+            let mut previous = linux_input_topology_signature();
+            loop {
+                match stop_rx.recv_timeout(std::time::Duration::from_millis(750)) {
+                    Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                }
+                let current = linux_input_topology_signature();
+                if current != previous {
+                    previous = current;
+                    let _ = events.send(AudioEvent::DeviceTopologyChanged);
+                }
+            }
+        })?;
+    Ok(DeviceNotificationGuard {
+        stop: Some(stop_tx),
+        thread: Some(thread),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_input_topology_signature() -> (Vec<String>, Option<String>) {
+    let mut ids = list_input_devices()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|device| device.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    let default = resolve_input_device("").ok().map(|device| device.id);
+    (ids, default)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct DeviceNotificationGuard;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn watch_device_changes(_: Sender<AudioEvent>) -> Result<DeviceNotificationGuard> {
     Ok(DeviceNotificationGuard)
 }

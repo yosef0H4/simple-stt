@@ -164,7 +164,7 @@ fn main() -> Result<()> {
     let (audio_event_tx, audio_event_rx) = unbounded::<AudioEvent>();
     let _device_notifications = audio::watch_device_changes(audio_event_tx.clone())
         .map_err(|error| {
-            tracing::warn!(%error, "Windows audio endpoint notifications unavailable; recording-start recovery remains active");
+            tracing::warn!(%error, "Audio endpoint notifications unavailable; recording-start recovery remains active");
             error
         })
         .ok();
@@ -312,6 +312,23 @@ fn main() -> Result<()> {
                                         NoticeLevel::Info,
                                         "Preferred microphone ready",
                                     ));
+                                } else if capture.as_ref().is_some_and(|handle| {
+                                    handle.selection().using_default_fallback
+                                }) && device_recovery
+                                    .as_ref()
+                                    .is_some_and(|recovery| !recovery.fallback_notice_sent)
+                                {
+                                    if let Some(recovery) = device_recovery.as_mut() {
+                                        recovery.fallback_notice_sent = true;
+                                    }
+                                    overlay.notify_warning(
+                                        "🎙 Preferred microphone unavailable — using system default",
+                                        Duration::from_secs(4),
+                                    );
+                                    events.push(notice_event(
+                                        NoticeLevel::Warning,
+                                        "Preferred microphone unavailable — using system default",
+                                    ));
                                 }
                                 config.audio.preferred_device_id.trim().is_empty()
                                     || capture.as_ref().is_some_and(|handle| !handle.selection().using_default_fallback)
@@ -373,6 +390,7 @@ fn main() -> Result<()> {
 struct DeviceRecovery {
     attempt: usize,
     next_attempt: Instant,
+    fallback_notice_sent: bool,
 }
 
 impl DeviceRecovery {
@@ -380,6 +398,7 @@ impl DeviceRecovery {
         Self {
             attempt: 0,
             next_attempt: now + DEVICE_RETRY_DELAYS[0],
+            fallback_notice_sent: false,
         }
     }
 
@@ -398,7 +417,7 @@ fn log_audio_selection(selection: &audio::InputDeviceSelection) {
         tracing::warn!(
             device_id = %selection.id,
             device = %selection.label,
-            "preferred microphone unavailable; using Windows default temporarily"
+            "preferred microphone unavailable; using system default temporarily"
         );
     } else {
         tracing::info!(
@@ -422,9 +441,10 @@ fn refresh_audio_capture(
         .as_ref()
         .is_some_and(|handle| handle.selection().using_default_fallback);
     let desired = audio::resolve_input_device(&config.audio.preferred_device_id)?;
-    let device_changed = capture
-        .as_ref()
-        .is_none_or(|handle| handle.selection().id != desired.id);
+    let device_changed = capture.as_ref().is_none_or(|handle| {
+        handle.selection().id != desired.id
+            || handle.selection().using_default_fallback != desired.using_default_fallback
+    });
     let gain_changed = (*capture_gain - config.audio.gain).abs() > f32::EPSILON;
     if !device_changed && !gain_changed {
         return Ok(false);
@@ -666,6 +686,17 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 match worker_config(&next) {
                     Ok(next_worker) => {
                         *config = next;
+                        if audio_changed {
+                            let _ = audio_event_tx.send(AudioEvent::DeviceTopologyChanged);
+                            overlay.notify_info(
+                                "🎙 Microphone settings changed — switching…",
+                                Some(Duration::from_secs(2)),
+                            );
+                            events.push(notice_event(
+                                NoticeLevel::Info,
+                                "Microphone settings changed — switching…",
+                            ));
+                        }
                         let worker = Arc::clone(worker);
                         let tx = background_tx.clone();
                         std::thread::spawn(move || {
