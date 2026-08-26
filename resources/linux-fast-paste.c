@@ -376,10 +376,10 @@ static int check_parent_terminal(Display *dpy, Window win) {
 }
 
 #ifdef HAVE_ATSPI
-static int detect_terminal_atspi(void) {
+static char *active_app_atspi(void) {
     atspi_init();
     AtspiAccessible *desktop = atspi_get_desktop(0);
-    if (!desktop) return -1;
+    if (!desktop) return NULL;
 
     int n = atspi_accessible_get_child_count(desktop, NULL);
     for (int i = 0; i < n; i++) {
@@ -394,17 +394,23 @@ static int detect_terminal_atspi(void) {
             g_object_unref(states);
             if (active) {
                 char *name = atspi_accessible_get_name(app, NULL);
-                int result = name ? is_terminal(name) : 0;
-                g_free(name);
                 g_object_unref(win);
                 g_object_unref(app);
-                return result;
+                return name;
             }
             g_object_unref(win);
         }
         g_object_unref(app);
     }
-    return -1;
+    return NULL;
+}
+
+static int detect_terminal_atspi(void) {
+    char *name = active_app_atspi();
+    if (!name) return -1;
+    int result = is_terminal(name);
+    g_free(name);
+    return result;
 }
 #endif
 
@@ -635,6 +641,7 @@ int main(int argc, char *argv[]) {
     int use_portal = 0;
     int media_play_pause = 0;
     int detect_terminal = 0;
+    int print_active_app = 0;
     const char *restore_token = NULL;
     Window target_window = None;
 
@@ -651,6 +658,8 @@ int main(int argc, char *argv[]) {
             media_play_pause = 1;
         } else if (strcmp(argv[i], "--detect-terminal") == 0) {
             detect_terminal = 1;
+        } else if (strcmp(argv[i], "--active-app") == 0) {
+            print_active_app = 1;
         } else if (strcmp(argv[i], "--restore-token") == 0 && i + 1 < argc) {
             restore_token = argv[++i];
         } else if (strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
@@ -681,6 +690,33 @@ int main(int argc, char *argv[]) {
         }
         XCloseDisplay(dpy);
         return result ? 0 : 1;
+    }
+
+    if (print_active_app) {
+#ifdef HAVE_ATSPI
+        char *name = active_app_atspi();
+        if (name && *name) {
+            puts(name);
+            g_free(name);
+            return 0;
+        }
+        g_free(name);
+#endif
+        Display *dpy = XOpenDisplay(NULL);
+        if (!dpy) return 2;
+        Window win = get_active_window(dpy);
+        XClassHint hint;
+        if (win != None && XGetClassHint(dpy, win, &hint)) {
+            const char *identity = hint.res_class && *hint.res_class ? hint.res_class : hint.res_name;
+            int found = identity && *identity;
+            if (identity && *identity) puts(identity);
+            XFree(hint.res_name);
+            XFree(hint.res_class);
+            XCloseDisplay(dpy);
+            return found ? 0 : 2;
+        }
+        XCloseDisplay(dpy);
+        return 2;
     }
 
     if (use_portal) {

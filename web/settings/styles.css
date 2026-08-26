@@ -312,6 +312,42 @@ main {
   font-weight: 650;
   padding: 6px 2px 10px;
 }
+.app-overrides-help,
+.app-overrides-empty {
+  color: var(--muted);
+  margin: 0 0 12px;
+}
+.app-overrides-rows {
+  display: grid;
+  gap: 8px;
+}
+.app-override-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(190px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+.app-override-row input,
+.app-override-row select {
+  width: 100%;
+}
+.app-override-remove {
+  color: var(--danger);
+}
+.app-overrides-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+@media (max-width: 720px) {
+  .app-override-row {
+    grid-template-columns: 1fr;
+  }
+  .app-override-remove {
+    justify-self: start;
+  }
+}
 .delivery-picker-row {
   display: flex;
   align-items: stretch;

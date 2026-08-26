@@ -146,7 +146,8 @@ class SimpleSttShell {
                 this.sessions.Delete(session)
                 text := this.TransformTranscript(event["text"])
                 this.logger.Write("info", "transcript received chars=" . StrLen(text), session)
-                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), this.config.Bool("trailing_space", true), this.config.Get("text_delivery_mode", "paste_ctrl_v"))
+                mode := this.DeliveryModeForWindow(target)
+                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), this.config.Bool("trailing_space", true), mode)
             case "notice":
                 this.Notice(event["text"], event["level"])
                 if session && this.sessions.Has(session)
@@ -156,6 +157,20 @@ class SimpleSttShell {
             default:
                 this.logger.Write("debug", "service event kind=" . kind, session)
         }
+    }
+
+    DeliveryModeForWindow(targetWindow) {
+        configured := this.config.Get("text_delivery_mode", "smart_paste")
+        try appId := WinGetProcessName("ahk_id " . targetWindow)
+        catch
+            return configured
+        raw := this.config.Get("app_delivery_overrides", "[]")
+        ; The settings service serializes each override as two JSON strings.
+        ; Match the executable case-insensitively without introducing a JSON
+        ; dependency into the always-running Windows shell.
+        escaped := StrReplace(StrReplace(appId, "\", "\\"), '"', '\"')
+        pattern := 'i)\{"app_id"\s*:\s*"' . escaped . '"\s*,\s*"mode"\s*:\s*"([a-z_]+)"\}'
+        return RegExMatch(raw, pattern, &match) ? match[1] : configured
     }
 
     OnServiceRestart() {

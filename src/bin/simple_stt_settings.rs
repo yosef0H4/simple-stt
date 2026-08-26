@@ -465,6 +465,15 @@ fn platform_action(
     state: &AppState,
 ) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
     let body: ActionRequest = serde_json::from_slice(&read_body(request)?)?;
+    if body.action == "focused_app" {
+        std::thread::sleep(Duration::from_secs(3));
+        let identity = focused_app_identity()?;
+        return Ok(json_response(
+            StatusCode(200),
+            &json!({"message":"Focused app detected","app_id":identity}),
+            state,
+        ));
+    }
     match body.action.as_str() {
         "open_config" => open_path(&AppConfig::config_path())?,
         "open_config_folder" => open_path(
@@ -481,6 +490,70 @@ fn platform_action(
         &json!({"message":"Request opened"}),
         state,
     ))
+}
+
+#[cfg(target_os = "linux")]
+fn focused_app_identity() -> Result<String> {
+    let exe = std::env::current_exe()?;
+    let helper = [
+        exe.parent()
+            .unwrap_or(Path::new("."))
+            .join("linux-fast-paste"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/bin/linux-fast-paste"),
+        PathBuf::from("resources/bin/linux-fast-paste"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .context("focused-app detector is not installed")?;
+    let output = Command::new(helper).arg("--active-app").output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "The focused app does not expose an identity; enter it manually"
+    );
+    let identity = String::from_utf8(output.stdout)?.trim().to_owned();
+    anyhow::ensure!(!identity.is_empty(), "The focused app identity is empty");
+    Ok(identity)
+}
+
+#[cfg(windows)]
+fn focused_app_identity() -> Result<String> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    unsafe {
+        let window = GetForegroundWindow();
+        anyhow::ensure!(!window.is_null(), "No foreground application was found");
+        let mut pid = 0;
+        GetWindowThreadProcessId(window, &mut pid);
+        anyhow::ensure!(pid != 0, "The foreground application has no process ID");
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        anyhow::ensure!(
+            !process.is_null(),
+            "The foreground application cannot be inspected"
+        );
+        let mut path = vec![0_u16; 32_768];
+        let mut len = path.len() as u32;
+        let ok = QueryFullProcessImageNameW(process, 0, path.as_mut_ptr(), &mut len);
+        CloseHandle(process);
+        anyhow::ensure!(ok != 0, "The foreground executable name could not be read");
+        let path = String::from_utf16(&path[..len as usize])?;
+        let identity = Path::new(&path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("The foreground executable has no file name")?
+            .to_owned();
+        Ok(identity)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn focused_app_identity() -> Result<String> {
+    anyhow::bail!("Focused-app detection is unavailable on this platform")
 }
 
 fn capture_request(state: &AppState, command: ShellCommand) -> Result<ShellResponse> {

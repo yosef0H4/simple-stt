@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use simple_stt::config::{
-    AppConfig, LinuxAutomationBackend, LinuxDeliveryChoice, TextDeliveryMode,
+    AppConfig, AppDeliveryOverride, LinuxAutomationBackend, LinuxDeliveryChoice, TextDeliveryMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -839,13 +839,19 @@ fn transform_text(text: &str) -> Result<String> {
 
 fn deliver_text(text: &str, force_shift_insert: bool) -> Result<&'static str> {
     let config = AppConfig::load()?;
-    if config.output.delivery_mode == TextDeliveryMode::Clipboard {
+    let identity = focused_app_identity();
+    let mode = effective_delivery_mode(
+        config.output.delivery_mode,
+        identity.as_deref(),
+        &config.output.app_overrides,
+    );
+    if mode == TextDeliveryMode::Clipboard {
         if write_clipboard(text, false)? {
             return Ok("copied");
         }
         bail!("No clipboard tool found. Install wl-clipboard on Wayland or xclip/xsel on X11.");
     }
-    if config.output.delivery_mode == TextDeliveryMode::Type {
+    if mode == TextDeliveryMode::Type {
         if type_text(
             text,
             config.output.linux_automation_backend,
@@ -866,6 +872,8 @@ fn deliver_text(text: &str, force_shift_insert: bool) -> Result<&'static str> {
         text,
         force_shift_insert,
         config.output.linux_automation_backend,
+        mode,
+        identity.as_deref(),
     )
 }
 
@@ -873,6 +881,8 @@ fn paste_text(
     text: &str,
     force_shift_insert: bool,
     backend: LinuxAutomationBackend,
+    mode: TextDeliveryMode,
+    identity: Option<&str>,
 ) -> Result<&'static str> {
     let old_clip = read_clipboard(false);
     let old_primary = read_clipboard(true);
@@ -881,8 +891,7 @@ fn paste_text(
     }
     let _ = write_clipboard(text, true)?;
     std::thread::sleep(Duration::from_millis(80));
-    let mode = AppConfig::load()?.output.delivery_mode;
-    let key = paste_key_for_mode(mode, force_shift_insert);
+    let key = paste_key_for_mode(mode, force_shift_insert, identity);
     let sent = send_paste_key(key, backend)?;
     if !sent {
         eprintln!(
@@ -980,12 +989,30 @@ enum PasteKey {
     ShiftInsert,
 }
 
-fn paste_key_for_mode(mode: TextDeliveryMode, force_shift_insert: bool) -> PasteKey {
+fn effective_delivery_mode(
+    configured: TextDeliveryMode,
+    identity: Option<&str>,
+    overrides: &[AppDeliveryOverride],
+) -> TextDeliveryMode {
+    identity
+        .and_then(|identity| {
+            overrides
+                .iter()
+                .find(|entry| entry.app_id.eq_ignore_ascii_case(identity))
+        })
+        .map_or(configured, |entry| entry.mode)
+}
+
+fn paste_key_for_mode(
+    mode: TextDeliveryMode,
+    force_shift_insert: bool,
+    identity: Option<&str>,
+) -> PasteKey {
     if force_shift_insert {
         return PasteKey::ShiftInsert;
     }
     match mode {
-        TextDeliveryMode::SmartPaste => smart_paste_key(focused_app_is_terminal()),
+        TextDeliveryMode::SmartPaste => smart_paste_key(identity.is_some_and(is_terminal_identity)),
         TextDeliveryMode::PasteCtrlShiftV => PasteKey::CtrlShiftV,
         TextDeliveryMode::PasteCtrlV => PasteKey::CtrlV,
         TextDeliveryMode::PasteShiftInsert => PasteKey::ShiftInsert,
@@ -1001,19 +1028,50 @@ fn smart_paste_key(terminal: bool) -> PasteKey {
     }
 }
 
-fn focused_app_is_terminal() -> bool {
+fn focused_app_identity() -> Option<String> {
     find_native_paste_helper()
         .ok()
         .and_then(|helper| {
             ProcessCommand::new(helper)
-                .arg("--detect-terminal")
+                .arg("--active-app")
                 .stdin(Stdio::null())
-                .stdout(Stdio::null())
                 .stderr(Stdio::null())
-                .status()
+                .output()
                 .ok()
         })
-        .is_some_and(|status| status.code() == Some(0))
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|identity| identity.trim().to_owned())
+        .filter(|identity| !identity.is_empty())
+}
+
+fn is_terminal_identity(identity: &str) -> bool {
+    const TERMINALS: &[&str] = &[
+        "konsole",
+        "gnome-terminal",
+        "terminal",
+        "kitty",
+        "alacritty",
+        "terminator",
+        "xterm",
+        "urxvt",
+        "rxvt",
+        "tilix",
+        "terminology",
+        "wezterm",
+        "foot",
+        "yakuake",
+        "ghostty",
+        "guake",
+        "tilda",
+        "hyper",
+        "tabby",
+        "sakura",
+        "warp",
+        "termius",
+    ];
+    let identity = identity.to_ascii_lowercase();
+    TERMINALS.iter().any(|terminal| identity.contains(terminal))
 }
 
 fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool> {
@@ -1503,5 +1561,19 @@ mod tests {
     fn smart_paste_uses_terminal_shortcut_only_for_terminals() {
         assert_eq!(smart_paste_key(false), PasteKey::ShiftInsert);
         assert_eq!(smart_paste_key(true), PasteKey::CtrlShiftV);
+        assert!(is_terminal_identity("kitty"));
+        assert!(!is_terminal_identity("Zen Browser"));
+        let overrides = [AppDeliveryOverride {
+            app_id: "Example Game".to_owned(),
+            mode: TextDeliveryMode::Type,
+        }];
+        assert_eq!(
+            effective_delivery_mode(
+                TextDeliveryMode::SmartPaste,
+                Some("example game"),
+                &overrides
+            ),
+            TextDeliveryMode::Type
+        );
     }
 }

@@ -74,6 +74,12 @@ pub struct LinuxDeliveryChoice {
     pub mode: TextDeliveryMode,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppDeliveryOverride {
+    pub app_id: String,
+    pub mode: TextDeliveryMode,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
 #[serde(rename_all = "snake_case")]
 #[value(rename_all = "snake_case")]
@@ -232,6 +238,7 @@ pub struct OutputConfig {
     pub enabled_delivery_modes: Vec<TextDeliveryMode>,
     pub linux_automation_backend: LinuxAutomationBackend,
     pub linux_delivery_cycle: Vec<LinuxDeliveryChoice>,
+    pub app_overrides: Vec<AppDeliveryOverride>,
     pub paced_typing_enabled: bool,
     pub typing_speed_wpm: u64,
     pub trailing_space: bool,
@@ -290,6 +297,7 @@ impl Default for AppConfig {
                         mode: TextDeliveryMode::Type,
                     },
                 ],
+                app_overrides: Vec::new(),
                 paced_typing_enabled: true,
                 typing_speed_wpm: 450,
                 trailing_space: true,
@@ -398,6 +406,12 @@ impl AppConfig {
                 .contains(&self.output.delivery_mode),
             "delivery_mode must be included in enabled_delivery_modes"
         );
+        for app_override in &self.output.app_overrides {
+            anyhow::ensure!(
+                !app_override.app_id.trim().is_empty() && app_override.app_id.len() <= 160,
+                "Linux app override IDs must contain 1 to 160 characters"
+            );
+        }
         anyhow::ensure!(
             self.speech.idle_worker_timeout_secs > 0,
             "idle_worker_timeout_secs must be positive"
@@ -508,6 +522,17 @@ impl AppConfig {
                 .enabled_delivery_modes
                 .push(normalized.output.delivery_mode);
         }
+        normalized
+            .output
+            .app_overrides
+            .retain(|entry| !entry.app_id.trim().is_empty() && entry.app_id.len() <= 160);
+        for entry in &mut normalized.output.app_overrides {
+            entry.app_id = entry.app_id.trim().to_owned();
+        }
+        normalized
+            .output
+            .app_overrides
+            .dedup_by(|left, right| left.app_id.eq_ignore_ascii_case(&right.app_id));
         if normalized.speech.idle_worker_timeout_secs == 0 {
             normalized.speech.idle_worker_timeout_secs = defaults.speech.idle_worker_timeout_secs;
         }
@@ -773,6 +798,21 @@ mod tests {
         config.output.typing_speed_wpm = 72;
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path).unwrap(), config);
+    }
+
+    #[test]
+    fn app_delivery_overrides_normalize_and_validate() {
+        let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+        value["output"]["app_overrides"] = serde_json::json!([
+            {"app_id":"  kitty  ","mode":"paste_ctrl_shift_v"},
+            {"app_id":"ExampleGame.exe","mode":"type"},
+            {"app_id":"","mode":"clipboard"}
+        ]);
+        let config = AppConfig::normalize_json(&value);
+        assert_eq!(config.output.app_overrides.len(), 2);
+        assert_eq!(config.output.app_overrides[0].app_id, "kitty");
+        assert_eq!(config.output.app_overrides[1].mode, TextDeliveryMode::Type);
+        config.validate().unwrap();
     }
 
     #[test]

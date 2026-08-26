@@ -286,6 +286,150 @@ function linuxDeliveryChooser(parent, tools) {
   parent.append(root);
   draw();
 }
+function appOverrides(parent) {
+  config.output.app_overrides ||= [];
+  const wrap = document.createElement("div");
+  wrap.className = "app-overrides";
+  const intro = document.createElement("p");
+  intro.className = "app-overrides-help";
+  intro.textContent = "Override delivery only for specific apps. Useful for terminals, games, and apps that reject simulated paste.";
+  const rows = document.createElement("div");
+  rows.className = "app-overrides-rows";
+  const options = [
+    ["smart_paste", "Smart Paste"],
+    ["type", "Type"],
+    ["clipboard", "Clipboard only"],
+    ["paste_shift_insert", "Regular app · Shift+Insert"],
+    ["paste_ctrl_shift_v", "Terminal · Ctrl+Shift+V"],
+    ["paste_ctrl_v", "Ctrl+V compatibility"],
+  ];
+  const draw = () => {
+    rows.replaceChildren();
+    config.output.app_overrides.forEach((entry, index) => {
+      const row = document.createElement("div");
+      row.className = "app-override-row";
+      const app = document.createElement("input");
+      app.type = "text";
+      app.value = entry.app_id;
+      app.placeholder = "Application ID, e.g. kitty";
+      app.setAttribute("aria-label", "Application identity");
+      app.oninput = () => { entry.app_id = app.value; markDirty(); };
+      const mode = document.createElement("select");
+      mode.setAttribute("aria-label", `Delivery mode for ${entry.app_id || "application"}`);
+      for (const [value, label] of options) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        option.selected = entry.mode === value;
+        mode.append(option);
+      }
+      mode.onchange = () => { entry.mode = mode.value; markDirty(); };
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "app-override-remove";
+      remove.title = "Remove app override";
+      remove.setAttribute("aria-label", "Remove app override");
+      remove.textContent = "Remove";
+      remove.onclick = () => {
+        config.output.app_overrides.splice(index, 1);
+        markDirty();
+        draw();
+      };
+      row.append(app, mode, remove);
+      rows.append(row);
+    });
+    if (!config.output.app_overrides.length) {
+      const empty = document.createElement("p");
+      empty.className = "app-overrides-empty";
+      empty.textContent = "No app-specific overrides.";
+      rows.append(empty);
+    }
+  };
+  const actions = document.createElement("div");
+  actions.className = "app-overrides-actions";
+  const addCurrent = document.createElement("button");
+  addCurrent.type = "button";
+  addCurrent.textContent = "Add current app";
+  addCurrent.onclick = async () => {
+    notice("Switch to the target app now. Detecting it in 3 seconds…");
+    try {
+      const result = await api("/api/platform-action", {
+        method: "POST",
+        body: JSON.stringify({ action: "focused_app", filename: "" }),
+      });
+      const existing = config.output.app_overrides.find((entry) => entry.app_id.toLowerCase() === result.app_id.toLowerCase());
+      if (existing) notice(`${result.app_id} already has an override.`, "error");
+      else {
+        config.output.app_overrides.push({ app_id: result.app_id, mode: "smart_paste" });
+        markDirty();
+        draw();
+        notice(`${result.app_id} added. Choose its delivery mode, then Save.`, "success");
+      }
+    } catch (error) {
+      notice(`${error.message}. You can add the application ID manually.`, "error");
+    }
+  };
+  const addManual = document.createElement("button");
+  addManual.type = "button";
+  addManual.textContent = "Add manually";
+  addManual.onclick = () => {
+    config.output.app_overrides.push({ app_id: "", mode: "smart_paste" });
+    markDirty();
+    draw();
+    rows.querySelector(".app-override-row:last-child input")?.focus();
+  };
+  actions.append(addCurrent, addManual);
+  wrap.append(intro, rows, actions);
+  parent.append(wrap);
+  draw();
+}
+function windowsDeliveryChooser(parent) {
+  const modes = [
+    ["smart_paste", "Smart Paste", "Ctrl+V on Windows"],
+    ["type", "Type", "Simulated typing"],
+    ["clipboard", "Clipboard", "Manual paste"],
+  ];
+  const root = document.createElement("div");
+  root.className = "delivery-picker";
+  for (const [value, label, detail] of modes) {
+    const row = document.createElement("div");
+    row.className = "delivery-picker-row";
+    row.classList.toggle("selected", config.output.delivery_mode === value);
+    const choose = document.createElement("button");
+    choose.type = "button";
+    choose.className = "delivery-picker-select";
+    choose.innerHTML = `<span><strong>${label}</strong><small>${detail}${config.output.delivery_mode === value ? " · Current" : ""}</small></span>`;
+    choose.onclick = () => {
+      config.output.delivery_mode = value;
+      if (!config.output.enabled_delivery_modes.includes(value)) config.output.enabled_delivery_modes.push(value);
+      markDirty();
+      build();
+    };
+    row.append(choose);
+    root.append(row);
+  }
+  const advanced = document.createElement("details");
+  advanced.className = "delivery-picker-advanced";
+  const advancedSummary = document.createElement("summary");
+  advancedSummary.textContent = "Advanced paste shortcuts";
+  advanced.append(advancedSummary);
+  for (const [value, label] of [["paste_shift_insert", "Shift+Insert"], ["paste_ctrl_shift_v", "Ctrl+Shift+V"], ["paste_ctrl_v", "Ctrl+V compatibility"]]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "delivery-picker-select";
+    button.textContent = label;
+    button.onclick = () => {
+      config.output.delivery_mode = value;
+      if (!config.output.enabled_delivery_modes.includes(value)) config.output.enabled_delivery_modes.push(value);
+      markDirty();
+      build();
+    };
+    advanced.append(button);
+  }
+  if (["paste_shift_insert", "paste_ctrl_shift_v", "paste_ctrl_v"].includes(config.output.delivery_mode)) advanced.open = true;
+  root.append(advanced);
+  parent.append(root);
+}
 function combobox(
   parent,
   { label, description, path, items, placeholder, onchange },
@@ -568,23 +712,9 @@ function build() {
     "Delivery",
     "",
   );
-  if (state.platform !== "linux")
-    field(delivery, {
-      label: "Current mode",
-      description: "The mode Simple STT uses right now.",
-      path: "output.delivery_mode",
-      type: "select",
-      options: [
-        ["type", "Type keystrokes"],
-        ["smart_paste", "Smart Paste"],
-        ["paste_shift_insert", "Paste with Shift+Insert"],
-        ["paste_ctrl_v", "Paste with Ctrl+V"],
-        ["paste_ctrl_shift_v", "Paste with Ctrl+Shift+V"],
-      ],
-    });
   if (state.platform === "linux") {
     const tools = state.linux_automation || {};
-    const summary = group(o, "Linux tool support", "Choose the automation backend Simple STT should use. Missing tools can be selected after you install them.");
+    const summary = group(o, "Automation & delivery", "Choose the automation tool and how Simple STT inserts text. Missing tools can be selected after you install them.");
     const autoReady = Boolean(
       (tools.ydotool && tools.ydotool_daemon) ||
       (tools.session === "Wayland" && tools.wtype) ||
@@ -615,7 +745,11 @@ function build() {
     const summaryHead = summary.querySelector(".group-head");
     summaryHead.insertBefore(refreshTools, summaryHead.querySelector(".group-reset"));
     o.insertBefore(summary, delivery);
-
+  } else {
+    const automation = group(o, "Automation & delivery", "Choose how Simple STT inserts text. App overrides can replace this for selected applications.");
+    commandShortcutField(automation, "Automation tool", "AutoHotkey handles shortcuts, typing, clipboard preservation, and paste delivery on Windows.", "AutoHotkey · Ready");
+    windowsDeliveryChooser(automation);
+    o.insertBefore(automation, delivery);
   }
   const pacedTyping = field(delivery, {
     label: "Type gradually",
@@ -639,6 +773,8 @@ function build() {
   };
   pacedTyping.addEventListener("change", updateTypingSpeedState);
   updateTypingSpeedState();
+  const overrides = group(o, "App overrides", "Choose a different delivery method only for selected applications.");
+  appOverrides(overrides);
   const transforms = group(
     o,
     "Text cleanup",

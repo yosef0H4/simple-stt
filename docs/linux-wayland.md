@@ -150,8 +150,12 @@ automatic mode does not cause a permission dialog for each transcript.
 
 Delivery has a current mode and a user-selected cycle list. Smart Paste uses
 Shift+Insert in regular applications and Ctrl+Shift+V in recognized terminals;
-the individual shortcuts remain available under Advanced paste shortcuts. The default cycle
-contains Automatic + Ctrl+V paste and Automatic + simulated typing. The
+the individual shortcuts remain available under Advanced paste shortcuts.
+App overrides can replace delivery for a particular application with Smart Paste,
+Type, Clipboard only, or an explicit paste shortcut. Settings can capture the
+focused application after a three-second switch window, with manual ID entry as
+a fallback for apps that do not expose their identity.
+The default cycle contains Automatic + Smart Paste and Automatic + simulated typing. The
 searchable picker treats each automation-tool and delivery-mode pair as one
 choice. Selecting a row switches temporarily; its separate Cycle checkbox
 controls whether the portal shortcut includes it. This allows cycling across

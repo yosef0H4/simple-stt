@@ -286,6 +286,10 @@ fn config_show() -> Result<ShellResponse> {
         .into(),
     );
     response.values.insert(
+        "app_delivery_overrides".into(),
+        serde_json::to_string(&config.output.app_overrides).unwrap_or_else(|_| "[]".into()),
+    );
+    response.values.insert(
         "remove_punctuation".into(),
         config.output.remove_punctuation.to_string(),
     );

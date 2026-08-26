@@ -34,6 +34,7 @@ The current intentionally breaking schema is version 5:
       { "backend": "auto", "mode": "smart_paste" },
       { "backend": "auto", "mode": "type" }
     ],
+    "app_overrides": [],
     "paced_typing_enabled": true,
     "typing_speed_wpm": 450,
     "trailing_space": true,

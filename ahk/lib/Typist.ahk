@@ -12,7 +12,7 @@ class Typist {
     }
 
     Begin(sessionId, targetWindow, text, pacedTypingEnabled, typingSpeedWpm, trailingSpace, deliveryMode := "type") {
-        if deliveryMode != "type" && deliveryMode != "smart_paste" && deliveryMode != "paste_shift_insert" && deliveryMode != "paste_ctrl_v" && deliveryMode != "paste_ctrl_shift_v"
+        if deliveryMode != "type" && deliveryMode != "clipboard" && deliveryMode != "smart_paste" && deliveryMode != "paste_shift_insert" && deliveryMode != "paste_ctrl_v" && deliveryMode != "paste_ctrl_shift_v"
             deliveryMode := "type"
         item := Map(
             "session_id", sessionId,
@@ -163,6 +163,13 @@ class Typist {
     TickPaste() {
         if this.pasteStage = 0 {
             try {
+                if this.deliveryMode = "clipboard" {
+                    A_Clipboard := this.text
+                    if !ClipWait(1)
+                        throw Error("clipboard text did not become available")
+                    this.CompleteCurrent()
+                    return
+                }
                 this.clipboardBackup := ClipboardAll()
                 A_Clipboard := ""
                 A_Clipboard := this.text
