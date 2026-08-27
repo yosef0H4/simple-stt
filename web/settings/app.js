@@ -931,7 +931,7 @@ function build() {
   );
   field(diagnostics, {
     label: "Log detail",
-    description: "Normal is recommended unless troubleshooting.",
+    description: "Development builds honor this setting. Released builds always use Minimal to reduce overhead.",
     path: "diagnostics.log_level",
     type: "select",
     options: [
@@ -948,8 +948,8 @@ function build() {
     type: "checkbox",
   });
   field(diagnostics, {
-    label: "Log transcripts",
-    description: "May write private speech into logs.",
+    label: "Save transcript text in logs",
+    description: "Off by default for privacy. When off, logs contain only character counts; enable it temporarily only when needed.",
     path: "diagnostics.log_transcripts",
     type: "checkbox",
   });

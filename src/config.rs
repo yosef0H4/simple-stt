@@ -39,7 +39,7 @@ impl LogLevel {
     }
     pub fn tracing_filter(&self) -> &'static str {
         match self {
-            Self::Minimal => "simple-stt=warn",
+            Self::Minimal => "warn,simple_stt_privacy=info",
             Self::Normal => "simple-stt=info",
             Self::Debug => "simple-stt=debug",
             Self::Extreme => "simple-stt=trace",
@@ -850,6 +850,10 @@ mod tests {
         assert!(!config.output.remove_punctuation);
         assert!(!config.output.lowercase);
         assert_eq!(config.speech.inference_device, InferenceDevice::Auto);
+        assert!(!config.diagnostics.log_transcripts);
+        assert!(LogLevel::Minimal
+            .tracing_filter()
+            .contains("simple_stt_privacy=info"));
     }
 
     #[test]

@@ -24,7 +24,7 @@ class SimpleSttShell {
         if !FileExist(this.settingsExe)
             throw Error("Missing simple-stt-settings.exe. Build or package the Rust binaries beside the shell.")
         this.config := ConfigStore(this.ctlExe)
-        this.logger := ShellLog(this.config.Get("shell_log_path"), this.config.Get("log_level", "normal"))
+        this.logger := ShellLog(this.config.Get("shell_log_path"), this.EffectiveLogLevel())
         this.logger.Write("info", "shell start")
         this.sessionId := 0
         this.activeRecordingSession := 0
@@ -268,7 +268,7 @@ class SimpleSttShell {
     ReloadSettings(*) {
         try {
             this.config.LoadSync()
-            this.logger.SetLevel(this.config.Get("log_level", "normal"))
+            this.logger.SetLevel(this.EffectiveLogLevel())
             this.ApplyHotkeyConfig()
             this.ApplyStartupRegistration()
             this.tray.Rebuild()
@@ -283,7 +283,7 @@ class SimpleSttShell {
     ApplyReloadedConfig() {
         try {
             this.config.LoadSync()
-            this.logger.SetLevel(this.config.Get("log_level", "normal"))
+            this.logger.SetLevel(this.EffectiveLogLevel())
             this.ApplyHotkeyConfig()
             this.ApplyStartupRegistration()
             this.tray.Rebuild()
@@ -295,12 +295,16 @@ class SimpleSttShell {
     }
 
     ApplySavedConfig() {
-        this.logger.SetLevel(this.config.Get("log_level", "normal"))
+        this.logger.SetLevel(this.EffectiveLogLevel())
         this.ApplyHotkeyConfig()
         this.ApplyStartupRegistration()
         this.tray.Rebuild()
         this.ipc.CallService("reload-config", ObjBindMethod(this, "ReloadServiceComplete"))
         this.logger.Write("info", "settings changed")
+    }
+
+    EffectiveLogLevel() {
+        return A_IsCompiled ? "minimal" : this.config.Get("log_level", "normal")
     }
 
     ReloadServiceComplete(response) {

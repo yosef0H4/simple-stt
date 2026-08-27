@@ -1,17 +1,40 @@
 use crate::config::LogLevel;
 use anyhow::{Context, Result};
 use std::fs::{self, File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 use tracing_subscriber::fmt::MakeWriter;
+
+const MAX_LOG_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_LOG_AGE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+struct BoundedLogFile {
+    file: File,
+    bytes: u64,
+}
+
+impl BoundedLogFile {
+    fn write_all(&mut self, body: &[u8]) -> std::io::Result<()> {
+        if self.bytes.saturating_add(body.len() as u64) > MAX_LOG_BYTES {
+            self.file.set_len(0)?;
+            self.file.seek(SeekFrom::Start(0))?;
+            self.bytes = 0;
+        }
+        self.file.write_all(body)?;
+        self.bytes = self.bytes.saturating_add(body.len() as u64);
+        Ok(())
+    }
+}
 
 #[derive(Clone)]
 struct LogWriter {
-    file: Arc<Mutex<File>>,
+    file: Arc<Mutex<BoundedLogFile>>,
     prefix: Arc<Vec<u8>>,
 }
 struct LogGuard {
-    file: Arc<Mutex<File>>,
+    file: Arc<Mutex<BoundedLogFile>>,
     prefix: Arc<Vec<u8>>,
     at_line_start: bool,
 }
@@ -35,7 +58,7 @@ impl std::io::Write for LogGuard {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         let _ = std::io::stderr().flush();
-        self.file.lock().unwrap().flush()
+        self.file.lock().unwrap().file.flush()
     }
 }
 
@@ -58,17 +81,37 @@ pub fn init_component(component: &str, path: &Path, level: &LogLevel) -> Result<
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     }
+    let stale = fs::metadata(path)
+        .ok()
+        .and_then(|metadata| metadata.modified().ok())
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= MAX_LOG_AGE);
+    let oversized = fs::metadata(path)
+        .map(|metadata| metadata.len() >= MAX_LOG_BYTES)
+        .unwrap_or(false);
     let file = OpenOptions::new()
         .create(true)
         .append(true)
+        .truncate(stale || oversized)
+        .write(true)
         .open(path)
         .with_context(|| format!("opening {}", path.display()))?;
+    let bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
     let prefix = format!("component={component} pid={} ", std::process::id()).into_bytes();
     let writer = LogWriter {
-        file: Arc::new(Mutex::new(file)),
+        file: Arc::new(Mutex::new(BoundedLogFile { file, bytes })),
         prefix: Arc::new(prefix),
     };
-    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| level.tracing_filter().to_owned());
+    let effective_level = if cfg!(debug_assertions) {
+        level
+    } else {
+        &LogLevel::Minimal
+    };
+    let filter = if cfg!(debug_assertions) {
+        std::env::var("RUST_LOG").unwrap_or_else(|_| effective_level.tracing_filter().to_owned())
+    } else {
+        effective_level.tracing_filter().to_owned()
+    };
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
         .with_writer(writer)
@@ -97,5 +140,22 @@ mod tests {
         );
         assert_eq!(String::from_utf8(second).unwrap(), "ond\n");
         assert!(at_line_start);
+    }
+
+    #[test]
+    fn bounded_log_discards_old_content_at_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bounded.log");
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let mut log = BoundedLogFile { file, bytes: 0 };
+        log.write_all(&vec![b'x'; MAX_LOG_BYTES as usize]).unwrap();
+        log.write_all(b"newest").unwrap();
+        log.file.flush().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"newest");
     }
 }

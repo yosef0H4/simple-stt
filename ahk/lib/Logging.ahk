@@ -1,4 +1,6 @@
 class ShellLog {
+    static maxBytes := 2 * 1024 * 1024
+    static maxAgeSeconds := 7 * 24 * 60 * 60
     static ranks := Map("trace", 0, "debug", 1, "info", 2, "warning", 3, "error", 4)
     static thresholds := Map("extreme", 0, "debug", 1, "normal", 2, "minimal", 3)
 
@@ -9,6 +11,7 @@ class ShellLog {
         SplitPath(path, , &dir)
         if dir != ""
             DirCreate(dir)
+        this.PruneOldLog()
     }
 
     SetLevel(level) {
@@ -27,6 +30,18 @@ class ShellLog {
         if sessionId != ""
             line .= " session_id=" . sessionId
         line .= " message=" . StrReplace(message, "`n", "\n") . "`n"
-        try FileAppend(line, this.path, "UTF-8")
+        try {
+            this.PruneOldLog(StrLen(line) * 4)
+            FileAppend(line, this.path, "UTF-8")
+        }
+    }
+
+    PruneOldLog(incomingBytes := 0) {
+        if !FileExist(this.path)
+            return
+        tooLarge := FileGetSize(this.path) + incomingBytes > ShellLog.maxBytes
+        tooOld := DateDiff(A_Now, FileGetTime(this.path, "M"), "Seconds") > ShellLog.maxAgeSeconds
+        if tooLarge || tooOld
+            FileDelete(this.path)
     }
 }

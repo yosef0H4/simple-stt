@@ -909,7 +909,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 }
                 Ok(text) => {
                     if context.log_transcripts {
-                        tracing::debug!(session_id, transcript = %text, "diagnostic transcript logging enabled");
+                        tracing::info!(target: "simple_stt_privacy", session_id, privacy_opt_in = true, transcript = %text, "transcript content logging enabled by user");
                     }
                     restore_overlay_after_success(
                         context.overlay,
@@ -919,7 +919,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     let mut event = ServiceEvent::simple("transcript");
                     event.session_id = Some(session_id);
                     event.text = text;
-                    tracing::info!(
+                    tracing::info!(target: "simple_stt_privacy",
                         session_id,
                         transcript_chars = event.text.chars().count(),
                         "transcript ready"
@@ -1022,6 +1022,10 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             }
             match result {
                 Ok(text) => {
+                    tracing::info!(target: "simple_stt_privacy", model_test = true, transcript_chars = text.chars().count(), "model-test transcript ready");
+                    if context.log_transcripts {
+                        tracing::info!(target: "simple_stt_privacy", model_test = true, privacy_opt_in = true, transcript = %text, "model-test transcript content logging enabled by user");
+                    }
                     context
                         .overlay
                         .notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));

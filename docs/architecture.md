@@ -153,4 +153,4 @@ The AHK shell does not trust helper PID disappearance alone. `simple-stt-ctl` pu
 
 ## Structured log prefix
 
-Every Rust log writer prefixes each emitted line with `component=<capture|infer> pid=<pid>`. Tracing supplies timestamps and per-event fields such as `session_id`; the AHK shell log uses the same component/PID/session convention. Transcript contents remain disabled unless `log_transcripts` is explicitly enabled.
+Every Rust log writer prefixes each emitted line with `component=<capture|infer> pid=<pid>`. Tracing supplies timestamps and per-event fields such as `session_id`; the AHK shell log uses the same component/PID/session convention. Transcript contents remain disabled unless `log_transcripts` is explicitly enabled; otherwise only character counts are recorded. Release builds force minimal logging, and each component log is truncated after seven days or 2 MiB so application logs remain bounded without accumulating rotated files.
