@@ -5,8 +5,6 @@ use simple_stt::infer::parakeet_native::ParakeetNative;
 use simple_stt::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use std::io::{stdin, stdout, BufReader};
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::time::Duration;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -33,42 +31,19 @@ fn main() -> Result<()> {
     simple_stt::logging::init_component("infer", &args.log_path, &args.log_level)?;
     apply_inference_device(&args.inference_device);
     tracing::info!(pid = std::process::id(), model = %args.model_path.display(), inference_device = args.inference_device.as_str(), "disposable inference worker started");
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut input = BufReader::new(stdin());
-        loop {
-            match read_frame(&mut input) {
-                Ok(frame) => {
-                    if tx.send(Ok(frame)).is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = tx.send(Err(error));
-                    break;
-                }
-            }
-        }
-    });
+    let mut input = BufReader::new(stdin());
     let mut output = stdout();
     let mut engine: Option<ParakeetNative> = None;
-    let idle_timeout = Duration::from_secs(args.idle_timeout_secs.max(1));
+    // The capture supervisor owns the idle policy. Keeping a second timer in
+    // this child can unload the model during a long recording, before PCM is
+    // sent for transcription.
     loop {
-        let frame = match rx.recv_timeout(idle_timeout) {
-            Ok(Ok(frame)) => frame,
-            Ok(Err(error)) => {
+        let frame = match read_frame(&mut input) {
+            Ok(frame) => frame,
+            Err(error) => {
                 tracing::warn!(%error, "worker input stream closed");
                 break;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                tracing::info!(
-                    timeout_secs = idle_timeout.as_secs(),
-                    model_loaded = engine.is_some(),
-                    "worker idle timeout reached; exiting process"
-                );
-                break;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match frame.kind {
             MessageType::Hello => write_frame(&mut output, &Frame::empty(MessageType::HelloAck))?,

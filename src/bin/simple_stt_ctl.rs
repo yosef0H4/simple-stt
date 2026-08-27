@@ -6,8 +6,8 @@ use simple_stt::common::shell_protocol::{
     ClientMessage, NoticeLevel, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
 use simple_stt::config::{
-    replace_file_atomic, AppConfig, CapsLockBehavior, InferenceDevice, LogLevel, RecordingMode,
-    TextDeliveryMode, UiTheme,
+    replace_file_atomic, unique_atomic_temp_path, AppConfig, CapsLockBehavior, InferenceDevice,
+    LogLevel, RecordingMode, TextDeliveryMode, UiTheme,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -613,7 +613,7 @@ fn write_atomic(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let temp = path.with_extension("tmp");
+    let temp = unique_atomic_temp_path(path);
     let mut file = fs::File::create(&temp)?;
     file.write_all(body.as_bytes())?;
     file.flush()?;

@@ -63,6 +63,11 @@ impl LifecyclePolicy {
             .filter(|last| now.duration_since(*last) >= timeout)
             .map(|_| LifecycleAction::ShutDownIdle)
     }
+    pub fn defer_idle_shutdown(&mut self, now: Instant) {
+        if self.running {
+            self.last_used = Some(now);
+        }
+    }
     pub fn stopped(&mut self) {
         self.running = false;
         self.last_used = None;
@@ -182,7 +187,11 @@ impl WorkerSupervisor {
             other => anyhow::bail!("unexpected WAV-test response: {other:?}"),
         }
     }
-    pub fn shutdown_if_idle(&mut self) -> Result<bool> {
+    pub fn shutdown_if_idle(&mut self, busy: bool) -> Result<bool> {
+        if busy {
+            self.policy.defer_idle_shutdown(Instant::now());
+            return Ok(false);
+        }
         if self
             .policy
             .idle_action(Instant::now(), self.config.idle_timeout)

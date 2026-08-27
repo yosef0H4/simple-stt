@@ -1,10 +1,12 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
 use simple_stt::config::{
-    AppConfig, AppDeliveryOverride, LinuxAutomationBackend, LinuxDeliveryChoice, TextDeliveryMode,
+    replace_file_atomic, unique_atomic_temp_path, AppConfig, AppDeliveryOverride,
+    LinuxAutomationBackend, LinuxDeliveryChoice, LinuxHotkeyBackend, TextDeliveryMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{Arc, Mutex};
@@ -44,6 +46,7 @@ enum LinuxCommand {
     UnloadModel,
     Shutdown,
     Status,
+    Launch,
     Settings,
     ConfigureShortcuts,
     CycleDelivery,
@@ -76,6 +79,37 @@ struct SessionState {
     updated_at: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordingSource {
+    Command,
+    Tray,
+    Hotkey,
+}
+
+impl RecordingSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Command => "command",
+            Self::Tray => "tray",
+            Self::Hotkey => "hotkey",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecordingTransition {
+    Start,
+    Stop,
+}
+
+fn recording_transition(recording: bool) -> RecordingTransition {
+    if recording {
+        RecordingTransition::Stop
+    } else {
+        RecordingTransition::Start
+    }
+}
+
 fn main() -> Result<()> {
     match Args::parse().command {
         LinuxCommand::Daemon { config } => daemon(config),
@@ -91,6 +125,7 @@ fn main() -> Result<()> {
         LinuxCommand::UnloadModel => unload_model(),
         LinuxCommand::Shutdown => shutdown(),
         LinuxCommand::Status => status(),
+        LinuxCommand::Launch => launch(),
         LinuxCommand::Settings => settings(),
         LinuxCommand::ConfigureShortcuts => configure_shortcuts(),
         LinuxCommand::CycleDelivery => toggle_linux_delivery_mode(),
@@ -101,6 +136,8 @@ fn main() -> Result<()> {
 
 fn daemon(config: Option<PathBuf>) -> Result<()> {
     ensure_dirs()?;
+    #[cfg(target_os = "linux")]
+    wait_for_graphical_environment(Duration::from_secs(60));
     let capture = find_exe("simple-stt-capture")?;
     let mut cmd = ProcessCommand::new(capture);
     cmd.arg("--token")
@@ -124,17 +161,14 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
         .unwrap_or(0);
     fs::write(pid_file(), format!("{}\n", std::process::id()))
         .context("writing linux daemon pid file")?;
+    let _runtime_markers = RuntimeMarkerGuard;
     println!("[{APP}] capture service pid={child_pid}");
 
     #[cfg(target_os = "linux")]
     let _tray_handle = start_linux_tray();
 
     #[cfg(target_os = "linux")]
-    std::thread::spawn(|| {
-        if let Err(error) = futures_lite::future::block_on(portal_shortcuts_loop()) {
-            eprintln!("[{APP}] GlobalShortcuts portal unavailable: {error:#}");
-        }
-    });
+    start_linux_hotkeys()?;
 
     let shutdown_child = Arc::clone(&child);
     ctrlc::set_handler(move || {
@@ -143,6 +177,7 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
             let _ = child.kill();
             let _ = child.wait();
         }
+        cleanup_runtime_markers();
         std::process::exit(0);
     })
     .context("installing signal handler")?;
@@ -158,6 +193,159 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
         Ok(())
     } else {
         bail!("capture service exited with {status}")
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn start_linux_hotkeys() -> Result<()> {
+    let requested = AppConfig::load()?.general.linux_hotkey_backend;
+    write_hotkey_backend_state(requested, requested, "starting", None)?;
+    std::thread::spawn(move || hotkey_supervisor(requested));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn hotkey_supervisor(requested: LinuxHotkeyBackend) {
+    let mut retry = Duration::from_secs(1);
+    loop {
+        refresh_graphical_environment();
+        let wayland = is_wayland_session();
+        let has_x11 = std::env::var_os("DISPLAY").is_some();
+        let resolved = match requested {
+            LinuxHotkeyBackend::Auto if wayland => LinuxHotkeyBackend::Portal,
+            LinuxHotkeyBackend::Auto if has_x11 => LinuxHotkeyBackend::X11,
+            LinuxHotkeyBackend::Auto => {
+                let _ = write_hotkey_backend_state(
+                    requested,
+                    LinuxHotkeyBackend::Auto,
+                    "waiting_for_desktop",
+                    Some("Waiting for the graphical session environment"),
+                );
+                std::thread::sleep(Duration::from_secs(1));
+                continue;
+            }
+            other => other,
+        };
+        eprintln!(
+            "[{APP}] shortcut backend={} session={} desktop={}",
+            hotkey_backend_label(resolved),
+            std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".to_owned()),
+            std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "unknown".to_owned())
+        );
+        let result = match resolved {
+            LinuxHotkeyBackend::Portal => futures_lite::future::block_on(portal_shortcuts_loop()),
+            LinuxHotkeyBackend::X11 if wayland => {
+                let message = "Native X11 shortcuts cannot observe native Wayland applications";
+                let _ = write_hotkey_backend_state(
+                    requested,
+                    LinuxHotkeyBackend::Desktop,
+                    "needs_setup",
+                    Some(message),
+                );
+                return;
+            }
+            LinuxHotkeyBackend::X11 => x11_shortcuts_loop(),
+            LinuxHotkeyBackend::Desktop => {
+                let _ = write_hotkey_backend_state(requested, resolved, "needs_setup", None);
+                return;
+            }
+            LinuxHotkeyBackend::Auto => unreachable!(),
+        };
+        let error = match result {
+            Ok(()) => "shortcut listener exited unexpectedly".to_owned(),
+            Err(error) => format!("{error:#}"),
+        };
+        eprintln!(
+            "[{APP}] {} shortcut listener unavailable; retrying in {}s: {error}",
+            hotkey_backend_label(resolved),
+            retry.as_secs()
+        );
+        let _ = write_hotkey_backend_state(requested, resolved, "retrying", Some(&error));
+        std::thread::sleep(retry);
+        retry = (retry * 2).min(Duration::from_secs(30));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn hotkey_backend_label(backend: LinuxHotkeyBackend) -> &'static str {
+    match backend {
+        LinuxHotkeyBackend::Auto => "automatic",
+        LinuxHotkeyBackend::Portal => "portal",
+        LinuxHotkeyBackend::X11 => "X11",
+        LinuxHotkeyBackend::Desktop => "desktop-managed",
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn is_wayland_session() -> bool {
+    std::env::var("XDG_SESSION_TYPE").is_ok_and(|value| value.eq_ignore_ascii_case("wayland"))
+        || std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+#[cfg(target_os = "linux")]
+fn wait_for_graphical_environment(timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    loop {
+        refresh_graphical_environment();
+        if is_wayland_session() || std::env::var_os("DISPLAY").is_some() {
+            return;
+        }
+        if Instant::now() >= deadline {
+            eprintln!("[{APP}] graphical environment was not ready after {timeout:?}; shortcut registration will keep retrying");
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn refresh_graphical_environment() {
+    let Some(output) =
+        command_output(ProcessCommand::new("systemctl").args(["--user", "show-environment"]))
+    else {
+        return;
+    };
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if matches!(
+            key,
+            "DISPLAY"
+                | "WAYLAND_DISPLAY"
+                | "XDG_SESSION_TYPE"
+                | "XDG_CURRENT_DESKTOP"
+                | "DBUS_SESSION_BUS_ADDRESS"
+        ) && !value.is_empty()
+        {
+            std::env::set_var(key, value);
+        }
+    }
+}
+
+struct RuntimeMarkerGuard;
+
+impl Drop for RuntimeMarkerGuard {
+    fn drop(&mut self) {
+        cleanup_runtime_markers();
+    }
+}
+
+fn cleanup_runtime_markers() {
+    for path in [
+        pid_file(),
+        state_file(),
+        shortcut_request_file(),
+        shortcut_result_file(),
+    ] {
+        let _ = fs::remove_file(path);
+    }
+    if let Ok(previous) = read_session() {
+        let _ = write_session(&SessionState {
+            recording: false,
+            session_id: previous.session_id,
+            updated_at: now_secs(),
+        });
     }
 }
 
@@ -210,9 +398,11 @@ impl ksni::Tray for LinuxTray {
                 .to_owned(),
                 icon_name: "media-record".to_owned(),
                 activate: Box::new(|_| {
-                    if let Err(error) = toggle(90.0, false) {
-                        eprintln!("[{APP}] tray recording action failed: {error:#}");
-                    }
+                    std::thread::spawn(|| {
+                        if let Err(error) = toggle_recording(RecordingSource::Tray, 90.0, false) {
+                            eprintln!("[{APP}] tray recording action failed: {error:#}");
+                        }
+                    });
                 }),
                 ..Default::default()
             }
@@ -268,33 +458,50 @@ fn start_linux_tray() -> Option<ksni::blocking::Handle<LinuxTray>> {
 }
 
 fn toggle(timeout_s: f64, shift_insert: bool) -> Result<()> {
-    let _action = DICTATION_ACTION_LOCK
+    toggle_recording(RecordingSource::Command, timeout_s, shift_insert)
+}
+
+fn toggle_recording(source: RecordingSource, timeout_s: f64, shift_insert: bool) -> Result<()> {
+    let action = DICTATION_ACTION_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     ensure_service()?;
     let state = read_session()?;
-    if state.recording {
-        stop_recording(state.session_id, timeout_s, shift_insert)
-    } else {
-        let session_id = next_session_id(state.session_id);
-        let result = run_ctl(
-            ["start-recording", "--session-id", &session_id.to_string()],
-            Duration::from_secs(35),
-            true,
-        )?;
-        write_session(&SessionState {
-            recording: true,
-            session_id,
-            updated_at: now_secs(),
-        })?;
-        write_seq(read_seq()?.max(max_event_seq(&result.events)))?;
-        println!("[{APP}] recording started session={session_id}");
-        Ok(())
+    match recording_transition(state.recording) {
+        RecordingTransition::Stop => {
+            println!(
+                "[{APP}] recording stop requested source={} session={}",
+                source.label(),
+                state.session_id
+            );
+            let pending = request_stop_recording(state.session_id)?;
+            drop(action);
+            finish_stop_recording(pending, timeout_s, shift_insert)
+        }
+        RecordingTransition::Start => {
+            let session_id = next_session_id(state.session_id);
+            let result = run_ctl(
+                ["start-recording", "--session-id", &session_id.to_string()],
+                Duration::from_secs(35),
+                true,
+            )?;
+            write_session(&SessionState {
+                recording: true,
+                session_id,
+                updated_at: now_secs(),
+            })?;
+            write_seq(read_seq()?.max(max_event_seq(&result.events)))?;
+            println!(
+                "[{APP}] recording started source={} session={session_id}",
+                source.label()
+            );
+            Ok(())
+        }
     }
 }
 
 fn stop(timeout_s: f64, shift_insert: bool) -> Result<()> {
-    let _action = DICTATION_ACTION_LOCK
+    let action = DICTATION_ACTION_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     ensure_service()?;
@@ -304,10 +511,26 @@ fn stop(timeout_s: f64, shift_insert: bool) -> Result<()> {
     } else {
         state.session_id
     };
-    stop_recording(session_id, timeout_s, shift_insert)
+    let pending = request_stop_recording(session_id)?;
+    drop(action);
+    finish_stop_recording(pending, timeout_s, shift_insert)
 }
 
-fn stop_recording(session_id: u64, timeout_s: f64, shift_insert: bool) -> Result<()> {
+#[derive(Debug)]
+struct PendingTranscript {
+    session_id: u64,
+    after: u64,
+    initial: TranscriptOutcome,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TranscriptOutcome {
+    Pending,
+    Transcript(String),
+    Terminal,
+}
+
+fn request_stop_recording(session_id: u64) -> Result<PendingTranscript> {
     let after = read_seq()?;
     let result = run_ctl(
         ["stop-recording", "--session-id", &session_id.to_string()],
@@ -320,11 +543,33 @@ fn stop_recording(session_id: u64, timeout_s: f64, shift_insert: bool) -> Result
         updated_at: now_secs(),
     })?;
     let after = after.max(max_event_seq(&result.events));
-    let transcript = wait_for_transcript(session_id, after, timeout_s)?;
-    if transcript.is_empty() {
-        println!("[{APP}] no transcript produced for session={session_id}");
+    let initial = transcript_outcome(&result.events, session_id);
+    write_seq(after)?;
+    Ok(PendingTranscript {
+        session_id,
+        after,
+        initial,
+    })
+}
+
+fn finish_stop_recording(
+    pending: PendingTranscript,
+    timeout_s: f64,
+    shift_insert: bool,
+) -> Result<()> {
+    let outcome = match pending.initial {
+        TranscriptOutcome::Pending => {
+            wait_for_transcript(pending.session_id, pending.after, timeout_s)?
+        }
+        outcome => outcome,
+    };
+    let TranscriptOutcome::Transcript(transcript) = outcome else {
+        println!(
+            "[{APP}] no transcript produced for session={}",
+            pending.session_id
+        );
         return Ok(());
-    }
+    };
     let text = transform_text(&transcript)?;
     let action = deliver_text(&text, shift_insert)?;
     println!("[{APP}] {action} transcript chars={}", text.chars().count());
@@ -392,6 +637,7 @@ fn print_shortcut_commands() -> Result<()> {
     let exe = find_exe("simple-stt-linux").unwrap_or_else(|_| std::env::current_exe().unwrap());
     println!("Toggle dictation: {} toggle", exe.display());
     println!("Cancel dictation: {} cancel", exe.display());
+    println!("Switch delivery:  {} cycle-delivery", exe.display());
     println!("Unload model:     {} unload-model", exe.display());
     println!("Start program:    systemctl --user start simple-stt-linux.service");
     println!("Close program:    {} shutdown", exe.display());
@@ -411,8 +657,37 @@ fn settings() -> Result<()> {
     Ok(())
 }
 
+fn launch() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = ProcessCommand::new("systemctl")
+            .args(["--user", "start", "simple-stt-linux.service"])
+            .status()
+            .context("starting the Simple STT user service")?;
+        anyhow::ensure!(status.success(), "systemd could not start Simple STT");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if run_ctl(["ping"], Duration::from_secs(1), false).is_ok() {
+                return settings();
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        bail!("Simple STT started, but capture did not become ready within 10 seconds")
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        settings()
+    }
+}
+
 fn configure_shortcuts() -> Result<()> {
-    if pid_file().exists() {
+    let config = AppConfig::load()?;
+    let wayland = std::env::var("XDG_SESSION_TYPE")
+        .is_ok_and(|value| value.eq_ignore_ascii_case("wayland"))
+        || std::env::var_os("WAYLAND_DISPLAY").is_some();
+    let uses_portal = config.general.linux_hotkey_backend == LinuxHotkeyBackend::Portal
+        || (config.general.linux_hotkey_backend == LinuxHotkeyBackend::Auto && wayland);
+    if uses_portal && pid_file().exists() {
         let request = shortcut_request_file();
         let result = shortcut_result_file();
         let _ = fs::remove_file(&result);
@@ -492,6 +767,8 @@ async fn portal_shortcuts_loop() -> Result<()> {
             .map(|item| (item.id().to_owned(), item.trigger_description().to_owned()))
             .collect(),
     )?;
+    let requested = AppConfig::load()?.general.linux_hotkey_backend;
+    write_hotkey_backend_state(requested, LinuxHotkeyBackend::Portal, "active", None)?;
     let mut activated = portal.receive_activated().await?;
     let mut deactivated = portal.receive_deactivated().await?;
     let mut changed = portal.receive_shortcuts_changed().await?;
@@ -541,14 +818,10 @@ async fn portal_shortcuts_loop() -> Result<()> {
                     continue;
                 }
                 eprintln!("[{APP}] portal shortcut activated id={id}");
-                if let Err(error) = handle_portal_activation(&id) {
-                    eprintln!("[{APP}] portal shortcut {id} failed: {error:#}");
-                }
+                dispatch_shortcut_activation(id);
             }
             PortalEvent::Deactivated(id) => {
-                if let Err(error) = handle_portal_deactivation(&id) {
-                    eprintln!("[{APP}] portal shortcut release {id} failed: {error:#}");
-                }
+                dispatch_shortcut_deactivation(id);
             }
             PortalEvent::Changed(shortcuts) => write_shortcut_state(shortcuts)?,
             PortalEvent::Closed => bail!("GlobalShortcuts portal session closed"),
@@ -583,6 +856,213 @@ async fn portal_shortcuts_loop() -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+struct X11Shortcut {
+    id: &'static str,
+    keycode: u8,
+    modifiers: u16,
+    label: String,
+}
+
+#[cfg(target_os = "linux")]
+fn x11_shortcuts_loop() -> Result<()> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, EventMask, GrabMode, ModMask};
+    use x11rb::protocol::Event;
+
+    let (connection, screen_index) =
+        x11rb::connect(None).context("connecting to the X11 server")?;
+    let root = connection.setup().roots[screen_index].root;
+    let config = AppConfig::load()?;
+    let shortcuts = [
+        ("record", config.general.record_hotkey.as_str()),
+        ("cancel", config.general.cancel_hotkey.as_str()),
+        ("delivery", config.general.toggle_delivery_hotkey.as_str()),
+    ]
+    .into_iter()
+    .map(|(id, chord)| parse_x11_shortcut(&connection, id, chord))
+    .collect::<Result<Vec<_>>>()?;
+
+    // Lock modifiers must not make an otherwise valid shortcut stop working.
+    let lock_variants = [
+        0_u16,
+        u16::from(ModMask::LOCK),
+        u16::from(ModMask::M2),
+        u16::from(ModMask::LOCK | ModMask::M2),
+    ];
+    for shortcut in &shortcuts {
+        for locks in lock_variants {
+            connection
+                .grab_key(
+                    false,
+                    root,
+                    ModMask::from(shortcut.modifiers | locks),
+                    shortcut.keycode,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                )?
+                .check()
+                .with_context(|| {
+                    format!(
+                        "shortcut {} conflicts with another X11 application",
+                        shortcut.label
+                    )
+                })?;
+        }
+    }
+    connection.change_window_attributes(
+        root,
+        &x11rb::protocol::xproto::ChangeWindowAttributesAux::new()
+            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+    )?;
+    connection.flush()?;
+    write_shortcut_state(
+        shortcuts
+            .iter()
+            .map(|item| (item.id.to_owned(), item.label.clone()))
+            .collect(),
+    )?;
+    write_hotkey_backend_state(
+        config.general.linux_hotkey_backend,
+        LinuxHotkeyBackend::X11,
+        "active",
+        None,
+    )?;
+
+    loop {
+        match connection.wait_for_event()? {
+            Event::KeyPress(event) => {
+                if let Some(shortcut) = shortcuts.iter().find(|item| {
+                    item.keycode == event.detail
+                        && modifiers_match(item.modifiers, event.state.into())
+                }) {
+                    if portal_activation_allowed(shortcut.id) {
+                        dispatch_shortcut_activation(shortcut.id.to_owned());
+                    }
+                }
+            }
+            Event::KeyRelease(event) => {
+                if let Some(shortcut) = shortcuts.iter().find(|item| {
+                    item.keycode == event.detail
+                        && modifiers_match(item.modifiers, event.state.into())
+                }) {
+                    dispatch_shortcut_deactivation(shortcut.id.to_owned());
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn modifiers_match(expected: u16, actual: u16) -> bool {
+    use x11rb::protocol::xproto::ModMask;
+    let ignored = u16::from(ModMask::LOCK | ModMask::M2);
+    actual & !ignored == expected
+}
+
+#[cfg(target_os = "linux")]
+fn parse_x11_shortcut<C: x11rb::connection::Connection>(
+    connection: &C,
+    id: &'static str,
+    chord: &str,
+) -> Result<X11Shortcut> {
+    use x11rb::protocol::xproto::{ConnectionExt, ModMask};
+    let mut modifiers = 0_u16;
+    let mut key = None;
+    for part in chord
+        .split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        match part.to_ascii_lowercase().as_str() {
+            "shift" => modifiers |= u16::from(ModMask::SHIFT),
+            "ctrl" | "control" => modifiers |= u16::from(ModMask::CONTROL),
+            "alt" => modifiers |= u16::from(ModMask::M1),
+            "meta" | "super" | "win" => modifiers |= u16::from(ModMask::M4),
+            "capslock" | "caps_lock" => bail!(
+                "Caps Lock cannot be used safely as an X11 chord modifier; use Meta, Ctrl, Alt, or Shift"
+            ),
+            value if key.replace(value.to_owned()).is_some() => {
+                bail!("hotkey {chord:?} contains more than one non-modifier key")
+            }
+            _ => {}
+        }
+    }
+    let key = key.context("hotkey must contain one non-modifier key")?;
+    let keysym = x11_keysym(&key).with_context(|| format!("unsupported X11 key {key:?}"))?;
+    let setup = connection.setup();
+    let count = setup.max_keycode - setup.min_keycode + 1;
+    let reply = connection
+        .get_keyboard_mapping(setup.min_keycode, count)?
+        .reply()?;
+    let per = usize::from(reply.keysyms_per_keycode);
+    let keycode = reply
+        .keysyms
+        .chunks(per)
+        .position(|symbols| symbols.contains(&keysym))
+        .map(|offset| setup.min_keycode + offset as u8)
+        .with_context(|| format!("key {key:?} is not present in the active X11 keyboard layout"))?;
+    Ok(X11Shortcut {
+        id,
+        keycode,
+        modifiers,
+        label: chord.to_owned(),
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn x11_keysym(key: &str) -> Option<u32> {
+    let lower = key.to_ascii_lowercase();
+    if lower.chars().count() == 1 {
+        return lower.chars().next().map(u32::from);
+    }
+    match lower.as_str() {
+        "space" => Some(0x20),
+        "tab" => Some(0xff09),
+        "enter" | "return" => Some(0xff0d),
+        "escape" | "esc" => Some(0xff1b),
+        "backspace" => Some(0xff08),
+        "insert" => Some(0xff63),
+        "delete" => Some(0xffff),
+        "home" => Some(0xff50),
+        "end" => Some(0xff57),
+        "pageup" => Some(0xff55),
+        "pagedown" => Some(0xff56),
+        "left" => Some(0xff51),
+        "up" => Some(0xff52),
+        "right" => Some(0xff53),
+        "down" => Some(0xff54),
+        value if value.starts_with('f') => value[1..]
+            .parse::<u32>()
+            .ok()
+            .filter(|n| (1..=35).contains(n))
+            .map(|n| 0xffbd + n),
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn write_hotkey_backend_state(
+    requested: LinuxHotkeyBackend,
+    active: LinuxHotkeyBackend,
+    status: &str,
+    error: Option<&str>,
+) -> Result<()> {
+    let value = serde_json::json!({
+        "requested": format!("{requested:?}").to_ascii_lowercase(),
+        "active": format!("{active:?}").to_ascii_lowercase(),
+        "status": status,
+        "error": error,
+    });
+    fs::write(
+        hotkey_backend_state_file(),
+        serde_json::to_string_pretty(&value)? + "\n",
+    )?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn portal_activation_allowed(id: &str) -> bool {
     static LAST: std::sync::OnceLock<Mutex<BTreeMap<String, Instant>>> = std::sync::OnceLock::new();
     let now = Instant::now();
@@ -601,6 +1081,24 @@ fn portal_activation_allowed(id: &str) -> bool {
 }
 
 #[cfg(target_os = "linux")]
+fn dispatch_shortcut_activation(id: String) {
+    std::thread::spawn(move || {
+        if let Err(error) = handle_portal_activation(&id) {
+            eprintln!("[{APP}] shortcut {id} failed: {error:#}");
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn dispatch_shortcut_deactivation(id: String) {
+    std::thread::spawn(move || {
+        if let Err(error) = handle_portal_deactivation(&id) {
+            eprintln!("[{APP}] shortcut release {id} failed: {error:#}");
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
 fn handle_portal_activation(id: &str) -> Result<()> {
     match id {
         "record" => {
@@ -610,7 +1108,7 @@ fn handle_portal_activation(id: &str) -> Result<()> {
             {
                 Ok(())
             } else {
-                toggle(90.0, false)
+                toggle_recording(RecordingSource::Hotkey, 90.0, false)
             }
         }
         "cancel" => cancel(),
@@ -718,7 +1216,8 @@ fn install_user_service() -> Result<()> {
     let exe = std::env::current_exe().context("resolving current executable")?;
     let unit = unit_dir.join("simple-stt-linux.service");
     let body = format!(
-        "[Unit]\nDescription=Simple STT Linux capture daemon\nAfter=graphical-session.target\n\n[Service]\nType=simple\nExecStart={} daemon\nRestart=on-failure\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+        "[Unit]\nDescription=Simple STT Linux capture daemon\nAfter=graphical-session.target xdg-desktop-portal.service\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart={} daemon\nExecStop={} shutdown\nRestart=on-failure\nRestartSec=2\nTimeoutStopSec=15\n\n[Install]\nWantedBy=graphical-session.target\n",
+        exe.display(),
         exe.display()
     );
     fs::write(&unit, body).with_context(|| format!("writing {}", unit.display()))?;
@@ -737,7 +1236,7 @@ fn install_desktop_entries(exe: &Path) -> Result<()> {
         (
             "io.github.yosef0H4.simple_stt.desktop",
             "Simple STT",
-            "settings",
+            "launch",
         ),
         (
             "simple-stt-settings.desktop",
@@ -777,7 +1276,7 @@ fn ensure_service() -> Result<()> {
     }
 }
 
-fn wait_for_transcript(session_id: u64, after: u64, timeout_s: f64) -> Result<String> {
+fn wait_for_transcript(session_id: u64, after: u64, timeout_s: f64) -> Result<TranscriptOutcome> {
     let deadline = std::time::Instant::now() + Duration::from_secs_f64(timeout_s.max(1.0));
     let mut seq = after;
     while std::time::Instant::now() < deadline {
@@ -809,17 +1308,41 @@ fn wait_for_transcript(session_id: u64, after: u64, timeout_s: f64) -> Result<St
         }
         seq = seq.max(max_event_seq(&result.events));
         write_seq(seq)?;
-        for event in result.events {
-            if event.kind == "transcript" && event.session_id == session_id.to_string() {
-                return Ok(event.text);
-            }
-            if event.kind == "notice" && event.session_id == session_id.to_string() {
-                eprintln!("[{APP}] {}: {}", event.level, event.text);
-            }
+        let outcome = transcript_outcome(&result.events, session_id);
+        if outcome != TranscriptOutcome::Pending {
+            return Ok(outcome);
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    Ok(String::new())
+    eprintln!("[{APP}] transcript wait timed out for session={session_id}");
+    Ok(TranscriptOutcome::Terminal)
+}
+
+fn transcript_outcome(events: &[CtlEvent], session_id: u64) -> TranscriptOutcome {
+    let expected = session_id.to_string();
+    for event in events {
+        if event.session_id != expected {
+            continue;
+        }
+        if event.kind == "transcript" {
+            return TranscriptOutcome::Transcript(event.text.clone());
+        }
+        if event.kind == "notice" {
+            eprintln!("[{APP}] {}: {}", event.level, event.text);
+            if terminal_transcription_notice(&event.text) {
+                return TranscriptOutcome::Terminal;
+            }
+        }
+    }
+    TranscriptOutcome::Pending
+}
+
+fn terminal_transcription_notice(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    text.contains("no speech detected")
+        || text.contains("recording too short")
+        || text.contains("speech engine failed")
+        || text.contains("speech model is missing")
 }
 
 fn transform_text(text: &str) -> Result<String> {
@@ -1426,13 +1949,26 @@ fn read_session() -> Result<SessionState> {
             updated_at: 0.0,
         });
     }
-    Ok(serde_json::from_str(&fs::read_to_string(session_file())?)?)
+    let raw = fs::read_to_string(session_file())?;
+    match serde_json::from_str(&raw) {
+        Ok(state) => Ok(state),
+        Err(error) => {
+            eprintln!("[{APP}] ignoring invalid recording-session state: {error}");
+            Ok(SessionState {
+                recording: false,
+                session_id: 0,
+                updated_at: 0.0,
+            })
+        }
+    }
 }
 
 fn write_session(state: &SessionState) -> Result<()> {
     ensure_dirs()?;
-    fs::write(session_file(), serde_json::to_string_pretty(state)? + "\n")?;
-    Ok(())
+    write_runtime_state(
+        &session_file(),
+        &(serde_json::to_string_pretty(state)? + "\n"),
+    )
 }
 
 fn read_seq() -> Result<u64> {
@@ -1444,8 +1980,16 @@ fn read_seq() -> Result<u64> {
 
 fn write_seq(seq: u64) -> Result<()> {
     ensure_dirs()?;
-    fs::write(seq_file(), format!("{seq}\n"))?;
-    Ok(())
+    write_runtime_state(&seq_file(), &format!("{seq}\n"))
+}
+
+fn write_runtime_state(path: &Path, body: &str) -> Result<()> {
+    let temp = unique_atomic_temp_path(path);
+    let mut file = fs::File::create(&temp)?;
+    file.write_all(body.as_bytes())?;
+    file.flush()?;
+    file.sync_all()?;
+    replace_file_atomic(&temp, path)
 }
 
 fn next_session_id(current: u64) -> u64 {
@@ -1579,6 +2123,10 @@ fn shortcut_state_file() -> PathBuf {
     data_dir().join("linux-shortcuts.json")
 }
 
+fn hotkey_backend_state_file() -> PathBuf {
+    data_dir().join("linux-hotkey-backend.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1596,6 +2144,45 @@ mod tests {
     #[test]
     fn next_session_id_is_monotonic() {
         assert!(next_session_id(42) >= 43);
+    }
+
+    #[test]
+    fn tray_hotkey_and_command_share_toggle_state() {
+        for source in [
+            RecordingSource::Tray,
+            RecordingSource::Hotkey,
+            RecordingSource::Command,
+        ] {
+            assert!(!source.label().is_empty());
+            assert_eq!(recording_transition(false), RecordingTransition::Start);
+            assert_eq!(recording_transition(true), RecordingTransition::Stop);
+        }
+    }
+
+    #[test]
+    fn terminal_transcription_events_end_wait_immediately() {
+        let no_speech = CtlEvent {
+            seq: 1,
+            kind: "notice".to_owned(),
+            session_id: "42".to_owned(),
+            level: "warning".to_owned(),
+            text: "No speech detected".to_owned(),
+        };
+        assert_eq!(
+            transcript_outcome(&[no_speech], 42),
+            TranscriptOutcome::Terminal
+        );
+        let transcript = CtlEvent {
+            seq: 2,
+            kind: "transcript".to_owned(),
+            session_id: "42".to_owned(),
+            level: "info".to_owned(),
+            text: "hello".to_owned(),
+        };
+        assert_eq!(
+            transcript_outcome(&[transcript], 42),
+            TranscriptOutcome::Transcript("hello".to_owned())
+        );
     }
 
     #[test]
@@ -1631,6 +2218,55 @@ mod tests {
         let id = format!("test-{}", std::process::id());
         assert!(portal_activation_allowed(&id));
         assert!(!portal_activation_allowed(&id));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_global_shortcut_end_to_end() {
+        if std::env::var_os("SIMPLE_STT_X11_E2E").is_none() {
+            return;
+        }
+        use x11rb::connection::Connection;
+        use x11rb::protocol::xproto::{ConnectionExt, GrabMode, ModMask};
+        use x11rb::protocol::Event;
+
+        let (connection, screen_index) = x11rb::connect(None).expect("connect to test X server");
+        let root = connection.setup().roots[screen_index].root;
+        let shortcut = parse_x11_shortcut(&connection, "record", "Meta+Z").unwrap();
+        connection
+            .grab_key(
+                false,
+                root,
+                ModMask::from(shortcut.modifiers),
+                shortcut.keycode,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+            )
+            .unwrap()
+            .check()
+            .unwrap();
+        connection.flush().unwrap();
+        let status = ProcessCommand::new("xdotool")
+            .args(["key", "super+z"])
+            .status()
+            .expect("run xdotool");
+        assert!(status.success());
+        loop {
+            if let Event::KeyPress(event) = connection.wait_for_event().unwrap() {
+                assert_eq!(event.detail, shortcut.keycode);
+                assert!(modifiers_match(shortcut.modifiers, event.state.into()));
+                break;
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_keysym_supports_named_and_function_keys() {
+        assert_eq!(x11_keysym("Z"), Some(u32::from('z')));
+        assert_eq!(x11_keysym("Escape"), Some(0xff1b));
+        assert_eq!(x11_keysym("F12"), Some(0xffc9));
+        assert_eq!(x11_keysym("F36"), None);
     }
 
     #[test]

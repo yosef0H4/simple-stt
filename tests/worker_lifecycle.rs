@@ -75,7 +75,27 @@ fn worker_exits_after_idle_timeout() {
     ));
     worker.transcribe_pcm(1, &[1]).unwrap();
     thread::sleep(Duration::from_millis(60));
-    assert!(worker.shutdown_if_idle().unwrap());
+    assert!(worker.shutdown_if_idle(false).unwrap());
+    assert_eq!(worker.worker_pid(), None);
+}
+
+#[test]
+fn active_work_defers_worker_idle_timeout() {
+    let mut worker = WorkerSupervisor::new(worker_config(
+        "normal.gguf",
+        Duration::from_millis(20),
+        Duration::from_millis(300),
+    ));
+    worker.transcribe_pcm(1, &[1]).unwrap();
+    let warm_pid = worker.worker_pid();
+    thread::sleep(Duration::from_millis(60));
+    assert!(!worker.shutdown_if_idle(true).unwrap());
+    assert_eq!(worker.worker_pid(), warm_pid);
+    thread::sleep(Duration::from_millis(10));
+    assert!(!worker.shutdown_if_idle(false).unwrap());
+    assert_eq!(worker.worker_pid(), warm_pid);
+    thread::sleep(Duration::from_millis(30));
+    assert!(worker.shutdown_if_idle(false).unwrap());
     assert_eq!(worker.worker_pid(), None);
 }
 

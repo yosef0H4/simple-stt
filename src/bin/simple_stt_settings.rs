@@ -332,6 +332,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "platform":if cfg!(windows){"windows"}else if cfg!(target_os="linux"){"linux"}else{"other"},
             "service_online":service_online,
             "shortcut_state":shortcut_state,
+            "linux_hotkeys":linux_hotkey_backend_state(),
             "linux_automation":linux_automation_state(),
             "microphones":microphones,
             "models":models
@@ -346,6 +347,14 @@ fn linux_shortcut_state() -> Value {
         .ok()
         .and_then(|raw| serde_json::from_slice(&raw).ok())
         .unwrap_or_else(|| json!({}))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_hotkey_backend_state() -> Value {
+    fs::read(AppConfig::local_data_dir().join("linux-hotkey-backend.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_else(|| json!({"status":"not_started"}))
 }
 
 #[cfg(target_os = "linux")]
@@ -416,6 +425,11 @@ fn linux_automation_state() -> Value {
 
 #[cfg(not(target_os = "linux"))]
 fn linux_shortcut_state() -> Value {
+    json!({})
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_hotkey_backend_state() -> Value {
     json!({})
 }
 

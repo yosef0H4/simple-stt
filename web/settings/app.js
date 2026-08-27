@@ -189,6 +189,40 @@ function commandShortcutField(parent, label, description, command) {
   wrap.append(control);
   parent.append(wrap);
 }
+function linuxHotkeyGuide(parent, backend, tools) {
+  const desktop = String(tools.desktop || "Unknown desktop");
+  const session = String(tools.session || "Unknown session");
+  const resolved = backend === "auto" ? (session === "X11" ? "x11" : "portal") : backend;
+  const guide = document.createElement("details");
+  guide.className = "automation-guide";
+  const summary = document.createElement("summary");
+  summary.textContent = `Shortcut setup guide · ${desktop} (${session})`;
+  const body = document.createElement("div");
+  body.className = "automation-guide-body";
+  const note = document.createElement("p");
+  note.innerHTML = "<strong>Compatibility note:</strong> Linux desktop support is experimental. KDE Plasma on Fedora Wayland is the only environment tested on real hardware so far.";
+  const intro = document.createElement("p");
+  if (resolved === "portal") {
+    intro.textContent = "The desktop portal owns these shortcuts. Select Configure, approve the request once, then assign Record, Cancel, and Switch delivery in the system dialog.";
+  } else if (resolved === "x11") {
+    intro.textContent = "Simple STT registers these chords directly with the X11 server. Enter each chord here, Save, then restart Simple STT. If another application owns a chord, Simple STT reports a conflict instead of replacing it.";
+  } else {
+    intro.textContent = "Your Wayland compositor does not provide the Global Shortcuts portal. Bind the commands below in the compositor configuration, then reload its configuration.";
+  }
+  const install = document.createElement("p");
+  install.innerHTML = "<strong>Add Simple STT to your desktop:</strong> run <code>simple-stt-linux install-user-service</code>, then <code>systemctl --user enable --now simple-stt-linux.service</code>. This installs its app launchers and starts it automatically for your user.";
+  body.append(note, install, intro);
+  if (resolved === "desktop") {
+    const examples = document.createElement("ul");
+    examples.innerHTML = `<li><strong>Hyprland</strong> — add <code>bind = SUPER, Z, exec, simple-stt-linux toggle</code>, <code>bind = SUPER, X, exec, simple-stt-linux cancel</code>, and <code>bind = SUPER, D, exec, simple-stt-linux cycle-delivery</code> to <code>~/.config/hypr/hyprland.conf</code>, then run <code>hyprctl reload</code>.</li><li><strong>Sway</strong> — add <code>bindsym $mod+z exec simple-stt-linux toggle</code>, equivalent Cancel and Cycle bindings to <code>~/.config/sway/config</code>, then run <code>swaymsg reload</code>.</li><li><strong>Other compositors</strong> — create three global key bindings that run the Toggle, Cancel, and Switch delivery commands shown above. Use the full executable path if <code>simple-stt-linux</code> is not on PATH.</li>`;
+    body.append(examples);
+  }
+  const caps = document.createElement("small");
+  caps.textContent = resolved === "x11" ? "Use ordinary modifier chords such as Ctrl+Alt+R or Meta+Z. Caps Lock custom chords are desktop-dependent on X11." : "Start and Close are separate commands because they must work while the app is not running.";
+  body.append(caps);
+  guide.append(summary, body);
+  parent.append(guide);
+}
 function linuxDeliveryChooser(parent, tools) {
   const backends = [
     ["auto", "Automatic", true],
@@ -590,26 +624,38 @@ function build() {
     type: "checkbox",
   });
   if (state.platform === "linux") {
-    portalShortcutField(
-      shortcuts,
-      "Record",
-      "Wayland portal assignment.",
-      "record",
-    );
-    portalShortcutField(
-      shortcuts,
-      "Cancel",
-      "Wayland portal assignment.",
-      "cancel",
-    );
-    portalShortcutField(
-      shortcuts,
-      "Switch delivery",
-      "Wayland portal assignment.",
-      "delivery",
-    );
-    commandShortcutField(shortcuts, "Start program", "Bind this command in KDE or GNOME shortcuts; it works while Simple STT is closed.", state.linux_automation?.start_command || "systemctl --user start simple-stt-linux.service");
-    commandShortcutField(shortcuts, "Close program", "Bind this command in KDE or GNOME shortcuts.", state.linux_automation?.stop_command || "simple-stt-linux shutdown");
+    const tools = state.linux_automation || {};
+    const hotkeyBackend = field(shortcuts, {
+      label: "Shortcut system",
+      description: "Automatic uses the portal on Wayland and native grabs on X11.",
+      path: "general.linux_hotkey_backend",
+      type: "select",
+      options: [["auto", "Automatic (recommended)"], ["portal", "Desktop portal"], ["x11", "Native X11 (X11 sessions only)"], ["desktop", "Desktop-managed commands"]],
+    });
+    hotkeyBackend.onchange = () => {
+      set("general.linux_hotkey_backend", hotkeyBackend.value);
+      build();
+    };
+    const selected = config.general.linux_hotkey_backend || "auto";
+    const detected = state.linux_hotkeys?.requested === selected ? state.linux_hotkeys?.active : "";
+    const resolved = detected || (selected === "auto" ? (tools.session === "X11" ? "x11" : "portal") : selected);
+    commandShortcutField(shortcuts, "Active system", `Status: ${state.linux_hotkeys?.status || "not started"}`, `${resolved === "portal" ? "Desktop portal" : resolved === "x11" ? "Native X11" : "Desktop-managed commands"}${state.linux_hotkeys?.error ? " · setup required" : ""}`);
+    if (resolved === "portal") {
+      portalShortcutField(shortcuts, "Record", "Assigned by your Wayland desktop.", "record");
+      portalShortcutField(shortcuts, "Cancel", "Assigned by your Wayland desktop.", "cancel");
+      portalShortcutField(shortcuts, "Switch delivery", "Assigned by your Wayland desktop.", "delivery");
+    } else if (resolved === "x11") {
+      field(shortcuts, { label: "Record", description: "Native X11 global chord.", path: "general.record_hotkey", type: "text" });
+      field(shortcuts, { label: "Cancel", description: "Native X11 global chord.", path: "general.cancel_hotkey", type: "text" });
+      field(shortcuts, { label: "Switch delivery", description: "Native X11 global chord.", path: "general.toggle_delivery_hotkey", type: "text" });
+    } else {
+      commandShortcutField(shortcuts, "Record / stop", "Bind this command in your compositor.", "simple-stt-linux toggle");
+      commandShortcutField(shortcuts, "Cancel", "Bind this command in your compositor.", "simple-stt-linux cancel");
+      commandShortcutField(shortcuts, "Switch delivery", "Bind this command in your compositor.", "simple-stt-linux cycle-delivery");
+    }
+    commandShortcutField(shortcuts, "Start program", "Bind this in your desktop or compositor shortcuts; it works while Simple STT is closed.", state.linux_automation?.start_command || "systemctl --user start simple-stt-linux.service");
+    commandShortcutField(shortcuts, "Close program", "Bind this in your desktop or compositor shortcuts.", state.linux_automation?.stop_command || "simple-stt-linux shutdown");
+    linuxHotkeyGuide(shortcuts, resolved, tools);
     const shortcutActions = document.createElement("div");
     shortcutActions.className = "group-actions";
     const sync = document.createElement("button");
@@ -635,7 +681,7 @@ function build() {
       })
         .then(refreshState)
         .catch((error) => notice(error.message, "error"));
-    shortcutActions.append(sync, configure);
+    if (resolved !== "x11") shortcutActions.append(sync, configure);
     const shortcutHead = shortcuts.querySelector(".group-head");
     shortcutHead.insertBefore(shortcutActions, shortcutHead.querySelector(".group-reset"));
   } else {

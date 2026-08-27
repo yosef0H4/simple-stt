@@ -1,5 +1,5 @@
 use crate::common::shell_protocol::SHELL_PROTOCOL_VERSION;
-use crate::config::replace_file_atomic;
+use crate::config::{replace_file_atomic, unique_atomic_temp_path};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -36,7 +36,7 @@ impl ServiceState {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        let temp = path.with_extension("json.tmp");
+        let temp = unique_atomic_temp_path(path);
         {
             let mut file =
                 fs::File::create(&temp).with_context(|| format!("creating {}", temp.display()))?;

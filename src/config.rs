@@ -4,8 +4,19 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const CONFIG_SCHEMA_VERSION: u32 = 5;
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+pub fn unique_atomic_temp_path(path: &Path) -> PathBuf {
+    let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("data");
+    path.with_file_name(format!(".{name}.{}.{}.tmp", std::process::id(), sequence))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +77,16 @@ pub enum LinuxAutomationBackend {
     Ydotool,
     Xdotool,
     ClipboardOnly,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LinuxHotkeyBackend {
+    #[default]
+    Auto,
+    Portal,
+    X11,
+    Desktop,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -211,6 +232,7 @@ pub struct GeneralConfig {
     pub record_hotkey: String,
     pub toggle_delivery_hotkey: String,
     pub cancel_hotkey: String,
+    pub linux_hotkey_backend: LinuxHotkeyBackend,
     pub capslock_behavior: CapsLockBehavior,
     pub start_at_login: bool,
     pub ui_theme: UiTheme,
@@ -264,9 +286,25 @@ impl Default for AppConfig {
                 } else {
                     RecordingMode::Hold
                 },
-                record_hotkey: "CapsLock+S".to_owned(),
-                toggle_delivery_hotkey: "CapsLock+D".to_owned(),
-                cancel_hotkey: "CapsLock+A".to_owned(),
+                record_hotkey: if cfg!(target_os = "linux") {
+                    "Meta+Z"
+                } else {
+                    "CapsLock+S"
+                }
+                .to_owned(),
+                toggle_delivery_hotkey: if cfg!(target_os = "linux") {
+                    "Meta+D"
+                } else {
+                    "CapsLock+D"
+                }
+                .to_owned(),
+                cancel_hotkey: if cfg!(target_os = "linux") {
+                    "Meta+X"
+                } else {
+                    "CapsLock+A"
+                }
+                .to_owned(),
+                linux_hotkey_backend: LinuxHotkeyBackend::Auto,
                 capslock_behavior: CapsLockBehavior::PreserveTap,
                 start_at_login: false,
                 ui_theme: UiTheme::Auto,
@@ -560,7 +598,7 @@ impl AppConfig {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
         }
-        let temp = path.with_extension("json.tmp");
+        let temp = unique_atomic_temp_path(path);
         {
             let mut file =
                 fs::File::create(&temp).with_context(|| format!("creating {}", temp.display()))?;
@@ -771,6 +809,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn concurrent_atomic_writes_use_distinct_temp_paths() {
+        let target = Path::new("/tmp/simple-stt-config.json");
+        let first = unique_atomic_temp_path(target);
+        let second = unique_atomic_temp_path(target);
+        assert_ne!(first, second);
+        assert_eq!(first.parent(), target.parent());
+        assert_eq!(second.parent(), target.parent());
+    }
+
+    #[test]
     fn default_config_is_valid() {
         let config = AppConfig::default();
         config.validate().unwrap();
@@ -783,8 +831,22 @@ mod tests {
                 RecordingMode::Hold
             }
         );
-        assert_eq!(config.general.toggle_delivery_hotkey, "CapsLock+D");
-        assert_eq!(config.general.cancel_hotkey, "CapsLock+A");
+        assert_eq!(
+            config.general.toggle_delivery_hotkey,
+            if cfg!(target_os = "linux") {
+                "Meta+D"
+            } else {
+                "CapsLock+D"
+            }
+        );
+        assert_eq!(
+            config.general.cancel_hotkey,
+            if cfg!(target_os = "linux") {
+                "Meta+X"
+            } else {
+                "CapsLock+A"
+            }
+        );
         assert!(!config.output.remove_punctuation);
         assert!(!config.output.lowercase);
         assert_eq!(config.speech.inference_device, InferenceDevice::Auto);

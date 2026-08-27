@@ -53,6 +53,7 @@ simple-stt-infer.exe
 | Feature | Owner | Notes |
 | --- | --- | --- |
 | Tray icon/menu | AHK shell | `A_TrayMenu`, menu object APIs, `TraySetIcon()`. |
+| Linux global shortcuts | `simple-stt-linux` | Automatic backend selection uses GlobalShortcuts on Wayland, native X11 passive grabs on X11, and documented compositor commands when no Wayland portal exists. KDE Plasma on Fedora Wayland is the only real-hardware-tested Linux environment; other desktops remain experimental. |
 | Settings UI | `simple-stt-settings` | Cross-platform browser UI; no webview, Node, or frontend framework. |
 | User hotkeys | AHK shell | Runtime `Hotkey()` bindings; CapsLock custom combination path. |
 | Final typing | AHK shell | Variable-paced per-character `SendText()`; target HWND checked before every character. |

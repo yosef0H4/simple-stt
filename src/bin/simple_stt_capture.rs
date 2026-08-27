@@ -349,11 +349,12 @@ fn main() -> Result<()> {
                 if nonzero_pid(&worker_pid).is_some()
                     && !idle_check_running.swap(true, Ordering::SeqCst)
                 {
+                    let busy = active.is_some() || !transcribing.is_empty() || !warming.is_empty();
                     let worker = Arc::clone(&worker);
                     let background_tx = background_tx.clone();
                     let idle_check_running = Arc::clone(&idle_check_running);
                     std::thread::spawn(move || {
-                        match worker.lock().unwrap().shutdown_if_idle() {
+                        match worker.lock().unwrap().shutdown_if_idle(busy) {
                             Ok(true) => { let _ = background_tx.send(BackgroundResult::ModelUnloaded { result: Ok(()) }); }
                             Ok(false) => {}
                             Err(error) => { let _ = background_tx.send(BackgroundResult::ModelUnloaded { result: Err(error.to_string()) }); }

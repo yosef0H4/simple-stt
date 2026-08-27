@@ -127,6 +127,17 @@ state-file reconnect after simulated service restart
 
 Browser automation covers all five pages, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
 
+## Linux X11 shortcut E2E
+
+The native X11 shortcut listener has an opt-in end-to-end test. It needs `Xvfb`, `xdpyinfo`, and `xdotool`:
+
+```bash
+Xvfb :99 -screen 0 1024x768x24 -nolisten tcp
+DISPLAY=:99 SIMPLE_STT_X11_E2E=1 cargo test --bin simple-stt-linux x11_global_shortcut_end_to_end -- --nocapture
+```
+
+The test registers `Meta+Z` through the production X11 parser and passive-grab path, synthesizes the chord with `xdotool`, and requires the corresponding X11 key event. The ordinary test suite skips external X-server interaction unless `SIMPLE_STT_X11_E2E` is set.
+
 ## Run AutoHotkey validation and runtime smoke only
 
 ```bat
