@@ -4,7 +4,7 @@ use crate::common::shell_protocol::{
 use anyhow::{Context, Result};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
@@ -74,6 +74,7 @@ fn handle_client(
             tracing::debug!("shell IPC handshake accepted");
         }
         ClientMessage::Hello { protocol, .. } if protocol != SHELL_PROTOCOL_VERSION => {
+            drop(reader);
             write_json_line(
                 &mut stream,
                 &ServerMessage::Error {
@@ -81,9 +82,11 @@ fn handle_client(
                     message: format!("expected protocol {SHELL_PROTOCOL_VERSION}, got {protocol}"),
                 },
             )?;
-            anyhow::bail!("shell protocol mismatch");
+            stream.shutdown(Shutdown::Both)?;
+            return Ok(());
         }
         _ => {
+            drop(reader);
             write_json_line(
                 &mut stream,
                 &ServerMessage::Error {
@@ -91,7 +94,8 @@ fn handle_client(
                     message: "invalid handshake token".into(),
                 },
             )?;
-            anyhow::bail!("shell IPC handshake rejected");
+            stream.shutdown(Shutdown::Both)?;
+            return Ok(());
         }
     }
     loop {

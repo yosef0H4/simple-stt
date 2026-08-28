@@ -168,8 +168,9 @@ class SimpleSttShell {
         ; The settings service serializes each override as two JSON strings.
         ; Match the executable case-insensitively without introducing a JSON
         ; dependency into the always-running Windows shell.
-        escaped := StrReplace(StrReplace(appId, "\", "\\"), '"', '\"')
-        pattern := 'i)\{"app_id"\s*:\s*"' . escaped . '"\s*,\s*"mode"\s*:\s*"([a-z_]+)"\}'
+        ; \Q...\E keeps valid executable characters such as +, (, and [ from
+        ; becoming regular-expression operators.
+        pattern := 'i)\{"app_id"\s*:\s*"\Q' . appId . '\E"\s*,\s*"mode"\s*:\s*"([a-z_]+)"\}'
         return RegExMatch(raw, pattern, &match) ? match[1] : configured
     }
 

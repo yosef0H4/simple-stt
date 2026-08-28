@@ -567,10 +567,11 @@ impl AppConfig {
         for entry in &mut normalized.output.app_overrides {
             entry.app_id = entry.app_id.trim().to_owned();
         }
+        let mut seen_app_ids = std::collections::HashSet::new();
         normalized
             .output
             .app_overrides
-            .dedup_by(|left, right| left.app_id.eq_ignore_ascii_case(&right.app_id));
+            .retain(|entry| seen_app_ids.insert(entry.app_id.to_ascii_lowercase()));
         if normalized.speech.idle_worker_timeout_secs == 0 {
             normalized.speech.idle_worker_timeout_secs = defaults.speech.idle_worker_timeout_secs;
         }
@@ -872,6 +873,7 @@ mod tests {
         value["output"]["app_overrides"] = serde_json::json!([
             {"app_id":"  kitty  ","mode":"paste_ctrl_shift_v"},
             {"app_id":"ExampleGame.exe","mode":"type"},
+            {"app_id":"KITTY","mode":"clipboard"},
             {"app_id":"","mode":"clipboard"}
         ]);
         let config = AppConfig::normalize_json(&value);

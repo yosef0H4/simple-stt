@@ -1,8 +1,10 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+#[cfg(target_os = "linux")]
+use simple_stt::config::LinuxDeliveryChoice;
 use simple_stt::config::{
     replace_file_atomic, unique_atomic_temp_path, AppConfig, AppDeliveryOverride,
-    LinuxAutomationBackend, LinuxDeliveryChoice, LinuxHotkeyBackend, TextDeliveryMode,
+    LinuxAutomationBackend, LinuxHotkeyBackend, TextDeliveryMode,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -10,7 +12,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const APP: &str = "simple-stt-linux";
 static DICTATION_ACTION_LOCK: Mutex<()> = Mutex::new(());
@@ -82,7 +86,9 @@ struct SessionState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RecordingSource {
     Command,
+    #[cfg(any(target_os = "linux", test))]
     Tray,
+    #[cfg(any(target_os = "linux", test))]
     Hotkey,
 }
 
@@ -90,7 +96,9 @@ impl RecordingSource {
     fn label(self) -> &'static str {
         match self {
             Self::Command => "command",
+            #[cfg(any(target_os = "linux", test))]
             Self::Tray => "tray",
+            #[cfg(any(target_os = "linux", test))]
             Self::Hotkey => "hotkey",
         }
     }
@@ -1170,6 +1178,12 @@ fn toggle_linux_delivery_mode() -> Result<()> {
     Ok(())
 }
 
+#[cfg(not(target_os = "linux"))]
+fn toggle_linux_delivery_mode() -> Result<()> {
+    bail!("delivery cycling is only available on Linux")
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn automation_backend_label(backend: LinuxAutomationBackend) -> &'static str {
     match backend {
         LinuxAutomationBackend::Auto => "Automatic",
@@ -1181,6 +1195,7 @@ fn automation_backend_label(backend: LinuxAutomationBackend) -> &'static str {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn delivery_mode_label(mode: TextDeliveryMode) -> &'static str {
     match mode {
         TextDeliveryMode::Type => "Type",
@@ -1192,6 +1207,7 @@ fn delivery_mode_label(mode: TextDeliveryMode) -> &'static str {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
 fn delivery_mode_supported(backend: LinuxAutomationBackend, mode: TextDeliveryMode) -> bool {
     match backend {
         LinuxAutomationBackend::ClipboardOnly => mode == TextDeliveryMode::Clipboard,
@@ -1698,13 +1714,13 @@ fn run_native_paste(helper: &Path, key: PasteKey) -> bool {
 
 fn write_private_restore_token(path: &Path, token: &str) -> std::io::Result<()> {
     use std::io::Write;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(0o600)
-        .open(path)?;
+    let mut options = fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(path)?;
     file.write_all(token.as_bytes())
 }
 
@@ -2123,6 +2139,7 @@ fn shortcut_state_file() -> PathBuf {
     data_dir().join("linux-shortcuts.json")
 }
 
+#[cfg(target_os = "linux")]
 fn hotkey_backend_state_file() -> PathBuf {
     data_dir().join("linux-hotkey-backend.json")
 }

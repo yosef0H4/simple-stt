@@ -89,12 +89,7 @@ pub fn init_component(component: &str, path: &Path, level: &LogLevel) -> Result<
     let oversized = fs::metadata(path)
         .map(|metadata| metadata.len() >= MAX_LOG_BYTES)
         .unwrap_or(false);
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .truncate(stale || oversized)
-        .write(true)
-        .open(path)
+    let file = open_log_file(path, stale || oversized)
         .with_context(|| format!("opening {}", path.display()))?;
     let bytes = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
     let prefix = format!("component={component} pid={} ", std::process::id()).into_bytes();
@@ -119,6 +114,17 @@ pub fn init_component(component: &str, path: &Path, level: &LogLevel) -> Result<
         .ok();
     tracing::info!(log = %path.display(), "component logging initialized");
     Ok(())
+}
+
+fn open_log_file(path: &Path, reset: bool) -> std::io::Result<fs::File> {
+    let mut options = OpenOptions::new();
+    options.create(true);
+    if reset {
+        options.write(true).truncate(true);
+    } else {
+        options.append(true);
+    }
+    options.open(path)
 }
 
 #[cfg(test)]
@@ -150,6 +156,7 @@ mod tests {
             .create(true)
             .read(true)
             .write(true)
+            .truncate(true)
             .open(&path)
             .unwrap();
         let mut log = BoundedLogFile { file, bytes: 0 };
@@ -157,5 +164,16 @@ mod tests {
         log.write_all(b"newest").unwrap();
         log.file.flush().unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"newest");
+    }
+
+    #[test]
+    fn stale_log_is_reopened_for_truncation_without_append_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("stale.log");
+        fs::write(&path, b"old content").unwrap();
+        let mut file = open_log_file(&path, true).unwrap();
+        file.write_all(b"fresh").unwrap();
+        file.flush().unwrap();
+        assert_eq!(fs::read(path).unwrap(), b"fresh");
     }
 }

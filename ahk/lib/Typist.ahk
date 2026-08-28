@@ -180,7 +180,7 @@ class Typist {
                 ; the target application receives the paste shortcut.
                 Sleep(60)
                 if this.deliveryMode = "paste_shift_insert"
-                    Send("+{Insert}")
+                    SendEvent("{Shift down}{Insert}{Shift up}")
                 else if this.deliveryMode = "paste_ctrl_shift_v"
                     Send("^+v")
                 else
