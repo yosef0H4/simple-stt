@@ -49,4 +49,12 @@ There are no version migrations or migration backups. Every parseable file is no
 
 Writes use a temporary file, flush it, and atomically replace the destination. Relative runtime/model paths are preserved in JSON and resolved against the runtime root only when used. An unavailable `audio.preferred_device_id` is retained while capture temporarily follows the system default.
 
+`output.delivery_mode` is the method used immediately. On Windows,
+`output.enabled_delivery_modes` is the ordered list advanced by the delivery-cycle
+hotkey. On Linux, `output.linux_delivery_cycle` is the ordered list because each
+choice includes both an automation backend and a delivery method. The active
+choice does not have to be part of either cycle. Smart Paste, typing, clipboard
+only, and every advanced paste shortcut can be included; both cycle lists must
+contain at least one choice.
+
 The settings server detects external edits with a content hash before Save. A successful Save asks the capture service to reload and emits `configuration_reloaded`; Windows AHK then reapplies its owned hotkeys, startup registration, transforms, and delivery settings.

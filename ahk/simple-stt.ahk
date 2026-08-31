@@ -230,10 +230,11 @@ class SimpleSttShell {
 
     ToggleDeliveryModeHotkey() {
         current := this.config.Get("text_delivery_mode", "smart_paste")
-        next := current = "type" ? "smart_paste" : "type"
+        next := SimpleSttNextDeliveryMode(current, this.config.Get("enabled_delivery_modes", "smart_paste,type"))
         this.config.Set("text_delivery_mode", next)
         try {
             this.config.SaveSync()
+            this.PublishRuntimeConfigChange()
             this.ShowDeliveryModeTooltip(next)
             this.logger.Write("info", "delivery mode toggled mode=" . next)
         } catch Error as err {
@@ -243,7 +244,15 @@ class SimpleSttShell {
     }
 
     ShowDeliveryModeTooltip(mode) {
-        message := mode = "type" ? "🎙 Typing mode" : "🎙 Paste mode"
+        labels := Map(
+            "smart_paste", "Smart Paste",
+            "type", "Typing",
+            "clipboard", "Clipboard only",
+            "paste_shift_insert", "Shift+Insert",
+            "paste_ctrl_shift_v", "Ctrl+Shift+V",
+            "paste_ctrl_v", "Ctrl+V"
+        )
+        message := "🎙 Delivery: " . (labels.Has(mode) ? labels[mode] : mode)
         ToolTip(message)
         SetTimer(this.modeTooltipTimer, -1200)
     }
@@ -257,6 +266,7 @@ class SimpleSttShell {
         this.config.Set("hotkey_enabled", SimpleSttBoolText(enabled))
         try {
             this.config.SaveSync()
+            this.PublishRuntimeConfigChange()
             this.hotkeys.SetEnabled(enabled)
             this.tray.Rebuild()
             this.logger.Write("info", "hotkey enabled=" . SimpleSttBoolText(enabled))
@@ -264,6 +274,11 @@ class SimpleSttShell {
         } catch Error as err {
             MsgBox(err.Message, "SimpleStt settings error", "Iconx")
         }
+    }
+
+    PublishRuntimeConfigChange() {
+        if this.ipc.ready
+            this.ipc.CallService("reload-config", ObjBindMethod(this, "ReloadServiceComplete"))
     }
 
     ReloadSettings(*) {
@@ -288,7 +303,7 @@ class SimpleSttShell {
             this.ApplyHotkeyConfig()
             this.ApplyStartupRegistration()
             this.tray.Rebuild()
-            this.logger.Write("info", "settings applied from browser")
+            this.logger.Write("info", "settings applied from config reload")
         } catch Error as err {
             this.logger.Write("error", "browser settings apply failed: " . err.Message)
             this.Notice("Settings saved, but Windows hotkeys could not reload", "error")

@@ -439,10 +439,8 @@ impl AppConfig {
             "enabled_delivery_modes must not be empty"
         );
         anyhow::ensure!(
-            self.output
-                .enabled_delivery_modes
-                .contains(&self.output.delivery_mode),
-            "delivery_mode must be included in enabled_delivery_modes"
+            !self.output.linux_delivery_cycle.is_empty(),
+            "linux_delivery_cycle must not be empty"
         );
         for app_override in &self.output.app_overrides {
             anyhow::ensure!(
@@ -550,15 +548,9 @@ impl AppConfig {
         if normalized.output.enabled_delivery_modes.is_empty() {
             normalized.output.enabled_delivery_modes = defaults.output.enabled_delivery_modes;
         }
-        if !normalized
-            .output
-            .enabled_delivery_modes
-            .contains(&normalized.output.delivery_mode)
-        {
-            normalized
-                .output
-                .enabled_delivery_modes
-                .push(normalized.output.delivery_mode);
+        normalized.output.linux_delivery_cycle.dedup();
+        if normalized.output.linux_delivery_cycle.is_empty() {
+            normalized.output.linux_delivery_cycle = defaults.output.linux_delivery_cycle;
         }
         normalized
             .output
@@ -865,6 +857,28 @@ mod tests {
         config.output.typing_speed_wpm = 72;
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path).unwrap(), config);
+    }
+
+    #[test]
+    fn active_delivery_mode_is_independent_from_cycle_choices() {
+        let mut config = AppConfig::default();
+        config.output.delivery_mode = TextDeliveryMode::Clipboard;
+        assert!(!config
+            .output
+            .enabled_delivery_modes
+            .contains(&TextDeliveryMode::Clipboard));
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn empty_delivery_cycles_restore_defaults_during_normalization() {
+        let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+        value["output"]["enabled_delivery_modes"] = serde_json::json!([]);
+        value["output"]["linux_delivery_cycle"] = serde_json::json!([]);
+        let config = AppConfig::normalize_json(&value);
+        assert!(!config.output.enabled_delivery_modes.is_empty());
+        assert!(!config.output.linux_delivery_cycle.is_empty());
+        config.validate().unwrap();
     }
 
     #[test]

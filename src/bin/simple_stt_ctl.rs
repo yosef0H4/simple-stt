@@ -286,6 +286,23 @@ fn config_show() -> Result<ShellResponse> {
         .into(),
     );
     response.values.insert(
+        "enabled_delivery_modes".into(),
+        config
+            .output
+            .enabled_delivery_modes
+            .iter()
+            .map(|mode| match mode {
+                TextDeliveryMode::Type => "type",
+                TextDeliveryMode::SmartPaste => "smart_paste",
+                TextDeliveryMode::PasteShiftInsert => "paste_shift_insert",
+                TextDeliveryMode::PasteCtrlV => "paste_ctrl_v",
+                TextDeliveryMode::PasteCtrlShiftV => "paste_ctrl_shift_v",
+                TextDeliveryMode::Clipboard => "clipboard",
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    );
+    response.values.insert(
         "app_delivery_overrides".into(),
         serde_json::to_string(&config.output.app_overrides).unwrap_or_else(|_| "[]".into()),
     );

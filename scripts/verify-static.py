@@ -164,13 +164,16 @@ need("ahk/lib/Utils.ahk", 'DllCall("advapi32\\SystemFunction036"')
 need("ahk/hotkey-recorder.ahk", "#Requires AutoHotkey v2.0", "#SingleInstance Force", '#Include lib\\Utils.ahk', 'InputHook("L1")', 'Hotkey("*CapsLock", CaptureCapsDown, "On")', 'Hotkey("*CapsLock up", CaptureCapsUp, "On")', 'modifier = "CapsLock" && capsHeld', "HotkeySpec.Parse")
 typist = need("ahk/lib/Typist.ahk", "SendText(", "paced_typing_enabled", "TypingDelay", "TransitionFactor", "BoundaryFactor", "GetFinger", "ClipboardAll()", 'A_Clipboard := this.text', 'deliveryMode != "smart_paste"', 'SendEvent("{Shift down}{Insert}{Shift up}")', 'Send("^+v")', 'Send("^v")', "RestoreClipboardIfOwned", "GetClipboardSequenceNumber", "WinActive(\"A\") != this.targetWindow", "AnyPhysicalModifierDown")
 need("web/settings/app.js", "output.paced_typing_enabled", "output.typing_speed_wpm", "output.linux_delivery_cycle", "output.app_overrides", 'label: "Speed"', "min: 50", "max: 850", "range-value", '"installed downloaded local"', '"recommended"', '"selected"', 'more.textContent = "View more"', "visibleModelLimit += 8", 'class="group-reset"', 'Reset group', 'Refresh tools', 'Search tools and delivery methods', 'Smart Paste', 'Advanced paste shortcuts', 'Add current app', 'Add manually', 'Clipboard only', 'paste_shift_insert', 'delivery-picker-cycle', 'e.kind === "configuration_reloaded"', 'refreshState(true)', 'className = "shortcut-refresh"', 'reset to defaults. Save to apply it.')
+need("web/settings/app.js", "baselineConfig", "changedConfigPaths", 'new Set(["general.enabled", "output.delivery_mode"])', "return save(true)")
+need("ahk/simple-stt.ahk", "PublishRuntimeConfigChange()", 'this.ipc.CallService("reload-config"')
 forbid("src/config.rs", "typing_chunk_chars", "typing_interval_ms")
 checks.append("AHK owns tray, hotkeys, full-format clipboard-preserving paste modes, and foreground-safe Unicode typing; browser settings owns configuration UI")
 
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
 ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])', '"missing_since"', "A_TickCount - job[\"missing_since\"] < 250")
 supervisor_ahk = need("ahk/lib/ProcessSupervisor.ahk", "Run(command", "ProcessWaitClose", "ProcessClose", "SimpleSttRandomToken", "ResetServiceSession", "readyProbeInFlight", "this.startTimer")
-need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "CancelAll", "cancelHotkey", 'CallService("cancel")', "ToggleDeliveryModeHotkey", "deliveryToggleHotkey")
+need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "CancelAll", "cancelHotkey", 'CallService("cancel")', "ToggleDeliveryModeHotkey", "deliveryToggleHotkey", "enabled_delivery_modes", "SimpleSttNextDeliveryMode")
+need("ahk/lib/Utils.ahk", "SimpleSttNextDeliveryMode", "StrSplit(configured", "Mod(index, modes.Length)")
 if "RunWait(command" in ipc_ahk:
     errors.append("IpcClient.ahk service calls must be asynchronous")
 checks.append("AHK helper IPC is asynchronous, token-rotated, sequenced, and reconnectable")

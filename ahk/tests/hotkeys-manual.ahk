@@ -62,5 +62,15 @@ toggleManager.DisableBindings()
 if capsController.count != 0
     Fail("shared CapsLock controller should unregister all bindings")
 
+cycle := "smart_paste,paste_ctrl_shift_v,clipboard"
+if SimpleSttNextDeliveryMode("smart_paste", cycle) != "paste_ctrl_shift_v"
+    Fail("delivery cycle should include advanced paste modes")
+if SimpleSttNextDeliveryMode("paste_ctrl_shift_v", cycle) != "clipboard"
+    Fail("delivery cycle should preserve configured order")
+if SimpleSttNextDeliveryMode("clipboard", cycle) != "smart_paste"
+    Fail("delivery cycle should wrap")
+if SimpleSttNextDeliveryMode("type", cycle) != "smart_paste"
+    Fail("delivery cycle should start at the first choice when current mode is outside the cycle")
+
 SimpleSttConsoleLine("PASS: hotkey parser and binding smoke")
 ExitApp(0)

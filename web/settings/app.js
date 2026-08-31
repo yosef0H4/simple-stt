@@ -3,6 +3,7 @@ const token = new URLSearchParams(location.hash.slice(1)).get("token");
 let state,
   config,
   baseline,
+  baselineConfig,
   dirty = false,
   lastSeq = 0,
   streaming = true,
@@ -249,11 +250,41 @@ function linuxDeliveryChooser(parent, tools) {
   const root = document.createElement("div");
   root.className = "delivery-picker";
   root.dataset.settingPath = "output.linux_delivery_cycle";
+  const current = document.createElement("label");
+  current.className = "delivery-picker-current";
+  current.innerHTML = "<strong>Use now</strong>";
+  const currentSelect = document.createElement("select");
+  currentSelect.setAttribute("aria-label", "Current Linux delivery method");
+  for (const [mode, modeLabel] of modes) {
+    const group = document.createElement("optgroup");
+    group.label = modeLabel;
+    for (const [backend, backendLabel, installed] of backends) {
+      if (!supported(backend, mode)) continue;
+      const option = document.createElement("option");
+      option.value = `${backend}|${mode}`;
+      option.textContent = `${modeLabel} · ${backendLabel}${installed ? "" : " · Not installed"}`;
+      option.selected = config.output.linux_automation_backend === backend && config.output.delivery_mode === mode;
+      group.append(option);
+    }
+    currentSelect.append(group);
+  }
+  currentSelect.onchange = () => {
+    const [backend, mode] = currentSelect.value.split("|");
+    config.output.linux_automation_backend = backend;
+    config.output.delivery_mode = mode;
+    const tool = backends.find(([value]) => value === backend);
+    if (tool && !tool[2]) notice(`${tool[1]} is not ready. Install it before using this option.`, "error");
+    markDirty();
+  };
+  current.append(currentSelect);
   const search = document.createElement("input");
   search.type = "search";
   search.className = "delivery-picker-search";
   search.placeholder = "Search tools and delivery methods…";
   search.setAttribute("aria-label", "Search Linux delivery options");
+  const cycleHeading = document.createElement("strong");
+  cycleHeading.className = "delivery-picker-cycle-heading";
+  cycleHeading.textContent = "Cycle between";
   const results = document.createElement("div");
   results.className = "delivery-picker-results";
   const same = (choice, backend, mode) => choice.backend === backend && choice.mode === mode;
@@ -265,8 +296,10 @@ function linuxDeliveryChooser(parent, tools) {
     const advancedSummary = document.createElement("summary");
     advancedSummary.textContent = "Advanced paste shortcuts";
     advanced.append(advancedSummary);
+    const advancedBody = document.createElement("div");
+    advancedBody.className = "delivery-picker-advanced-body";
     for (const [mode, modeLabel, detail, isAdvanced] of modes) {
-      const target = isAdvanced ? advanced : results;
+      const target = isAdvanced ? advancedBody : results;
       const matches = backends.filter(([backend, backendLabel]) =>
         supported(backend, mode) && `${backendLabel} ${modeLabel} ${detail}`.toLowerCase().includes(query));
       if (!matches.length) continue;
@@ -275,22 +308,11 @@ function linuxDeliveryChooser(parent, tools) {
       target.append(heading);
       for (const [backend, backendLabel, installed] of matches) {
         const row = document.createElement("div");
-        const current = config.output.linux_automation_backend === backend && config.output.delivery_mode === mode;
         const cycling = config.output.linux_delivery_cycle.some((choice) => same(choice, backend, mode));
         row.className = "delivery-picker-row";
-        row.classList.toggle("selected", current);
-        const choose = document.createElement("button");
-        choose.type = "button";
-        choose.className = "delivery-picker-select";
-        choose.innerHTML = `<span><strong>${backendLabel}</strong><small>${installed ? "Installed" : "Not installed"}${current ? " · Current" : ""}</small></span>`;
-        choose.onclick = () => {
-          config.output.linux_automation_backend = backend;
-          config.output.delivery_mode = mode;
-          if (!config.output.enabled_delivery_modes.includes(mode)) config.output.enabled_delivery_modes.push(mode);
-          if (!installed) notice(`${backendLabel} is not ready. Install it before using this option.`, "error");
-          markDirty();
-          draw();
-        };
+        const copy = document.createElement("span");
+        copy.className = "delivery-picker-copy";
+        copy.innerHTML = `<strong>${backendLabel}</strong><small>${installed ? "Installed" : "Not installed"}</small>`;
         const cycle = document.createElement("label");
         cycle.className = "delivery-picker-cycle";
         const checkbox = document.createElement("input");
@@ -301,22 +323,28 @@ function linuxDeliveryChooser(parent, tools) {
           if (checkbox.checked) {
             config.output.linux_delivery_cycle.push({ backend, mode });
           } else {
+            if (config.output.linux_delivery_cycle.length === 1) {
+              checkbox.checked = true;
+              notice("Keep at least one delivery option in the cycle.", "error");
+              return;
+            }
             config.output.linux_delivery_cycle = config.output.linux_delivery_cycle.filter((choice) => !same(choice, backend, mode));
           }
           markDirty();
           draw();
         };
-        row.append(choose, cycle);
+        row.append(copy, cycle);
         target.append(row);
       }
     }
-    if (advanced.childElementCount > 1) {
+    if (advancedBody.childElementCount) {
       if (query || ["paste_shift_insert", "paste_ctrl_shift_v", "paste_ctrl_v"].includes(config.output.delivery_mode)) advanced.open = true;
+      advanced.append(advancedBody);
       results.append(advanced);
     }
   };
   search.oninput = draw;
-  root.append(search, results);
+  root.append(current, cycleHeading, search, results);
   parent.append(root);
   draw();
 }
@@ -423,44 +451,76 @@ function windowsDeliveryChooser(parent) {
     ["type", "Type", "Simulated typing"],
     ["clipboard", "Clipboard", "Manual paste"],
   ];
+  const advancedModes = [
+    ["paste_shift_insert", "Shift+Insert", "Compatibility shortcut"],
+    ["paste_ctrl_shift_v", "Ctrl+Shift+V", "Terminal paste"],
+    ["paste_ctrl_v", "Ctrl+V", "Direct paste shortcut"],
+  ];
   const root = document.createElement("div");
   root.className = "delivery-picker";
-  for (const [value, label, detail] of modes) {
+  root.dataset.settingPath = "output.enabled_delivery_modes";
+  const current = document.createElement("label");
+  current.className = "delivery-picker-current";
+  current.innerHTML = "<strong>Use now</strong>";
+  const currentSelect = document.createElement("select");
+  currentSelect.setAttribute("aria-label", "Current Windows delivery method");
+  for (const [value, label] of [...modes, ...advancedModes]) {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    option.selected = config.output.delivery_mode === value;
+    currentSelect.append(option);
+  }
+  currentSelect.onchange = () => {
+    config.output.delivery_mode = currentSelect.value;
+    markDirty();
+    build();
+  };
+  current.append(currentSelect);
+  const cycleHeading = document.createElement("strong");
+  cycleHeading.className = "delivery-picker-cycle-heading";
+  cycleHeading.textContent = "Cycle between";
+  root.append(current, cycleHeading);
+  const addMode = (target, [value, label, detail]) => {
     const row = document.createElement("div");
     row.className = "delivery-picker-row";
-    row.classList.toggle("selected", config.output.delivery_mode === value);
-    const choose = document.createElement("button");
-    choose.type = "button";
-    choose.className = "delivery-picker-select";
-    choose.innerHTML = `<span><strong>${label}</strong><small>${detail}${config.output.delivery_mode === value ? " · Current" : ""}</small></span>`;
-    choose.onclick = () => {
-      config.output.delivery_mode = value;
-      if (!config.output.enabled_delivery_modes.includes(value)) config.output.enabled_delivery_modes.push(value);
+    const copy = document.createElement("span");
+    copy.className = "delivery-picker-copy";
+    copy.innerHTML = `<strong>${label}</strong><small>${detail}</small>`;
+    const cycle = document.createElement("label");
+    cycle.className = "delivery-picker-cycle";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = config.output.enabled_delivery_modes.includes(value);
+    checkbox.setAttribute("aria-label", `Include ${label} in delivery cycle`);
+    cycle.append(checkbox, document.createTextNode("Cycle"));
+    checkbox.onchange = () => {
+      if (checkbox.checked) {
+        if (!config.output.enabled_delivery_modes.includes(value)) config.output.enabled_delivery_modes.push(value);
+      } else {
+        if (config.output.enabled_delivery_modes.length === 1) {
+          checkbox.checked = true;
+          notice("Keep at least one delivery option in the cycle.", "error");
+          return;
+        }
+        config.output.enabled_delivery_modes = config.output.enabled_delivery_modes.filter((mode) => mode !== value);
+      }
       markDirty();
-      build();
     };
-    row.append(choose);
-    root.append(row);
-  }
+    row.append(copy, cycle);
+    target.append(row);
+  };
+  for (const mode of modes) addMode(root, mode);
   const advanced = document.createElement("details");
   advanced.className = "delivery-picker-advanced";
   const advancedSummary = document.createElement("summary");
   advancedSummary.textContent = "Advanced paste shortcuts";
   advanced.append(advancedSummary);
-  for (const [value, label] of [["paste_shift_insert", "Shift+Insert"], ["paste_ctrl_shift_v", "Ctrl+Shift+V"], ["paste_ctrl_v", "Ctrl+V compatibility"]]) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "delivery-picker-select";
-    button.textContent = label;
-    button.onclick = () => {
-      config.output.delivery_mode = value;
-      if (!config.output.enabled_delivery_modes.includes(value)) config.output.enabled_delivery_modes.push(value);
-      markDirty();
-      build();
-    };
-    advanced.append(button);
-  }
-  if (["paste_shift_insert", "paste_ctrl_shift_v", "paste_ctrl_v"].includes(config.output.delivery_mode)) advanced.open = true;
+  const advancedBody = document.createElement("div");
+  advancedBody.className = "delivery-picker-advanced-body";
+  for (const mode of advancedModes) addMode(advancedBody, mode);
+  advanced.append(advancedBody);
+  if (advancedModes.some(([value]) => value === config.output.delivery_mode || config.output.enabled_delivery_modes.includes(value))) advanced.open = true;
   root.append(advanced);
   parent.append(root);
 }
@@ -1211,7 +1271,10 @@ function notice(message, type = "info") {
 async function load() {
   state = await api("/api/state");
   baseline = state.config_hash;
-  if (state.config) config = structuredClone(state.config);
+  if (state.config) {
+    config = structuredClone(state.config);
+    baselineConfig = structuredClone(state.config);
+  }
   else {
     config = (await api("/api/defaults")).config;
     notice(`Config is malformed and preserved: ${state.config_error}`, "error");
@@ -1224,7 +1287,26 @@ async function load() {
   build();
   if (state.service_online) eventLoop();
 }
-async function save() {
+function changedConfigPaths(before, after, prefix = "") {
+  if (Object.is(before, after)) return [];
+  if (Array.isArray(before) && Array.isArray(after)) {
+    return JSON.stringify(before) === JSON.stringify(after) ? [] : [prefix];
+  }
+  if (
+    before === null ||
+    after === null ||
+    typeof before !== "object" ||
+    typeof after !== "object" ||
+    Array.isArray(before) ||
+    Array.isArray(after)
+  ) return [prefix];
+  const paths = [];
+  for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    paths.push(...changedConfigPaths(before[key], after[key], prefix ? `${prefix}.${key}` : key));
+  }
+  return paths;
+}
+async function save(retriedRuntimeChange = false) {
   try {
     const r = await api("/api/save", {
       method: "POST",
@@ -1232,6 +1314,7 @@ async function save() {
     });
     config = r.config;
     baseline = r.config_hash;
+    baselineConfig = structuredClone(r.config);
     dirty = false;
     $("#savebar").hidden = true;
     notice(
@@ -1240,6 +1323,24 @@ async function save() {
     );
     build();
   } catch (e) {
+    if (
+      !retriedRuntimeChange &&
+      e.message.includes("config changed outside Settings") &&
+      baselineConfig
+    ) {
+      try {
+        const latest = await api("/api/state");
+        const runtimePaths = new Set(["general.enabled", "output.delivery_mode"]);
+        const changed = latest.config
+          ? changedConfigPaths(baselineConfig, latest.config)
+          : [];
+        if (changed.length && changed.every((path) => runtimePaths.has(path))) {
+          baseline = latest.config_hash;
+          baselineConfig = structuredClone(latest.config);
+          return save(true);
+        }
+      } catch {}
+    }
     notice(e.message, "error");
   }
 }
@@ -1313,11 +1414,14 @@ async function refreshState(reloadConfig = false) {
     if (dirty) {
       config.output.linux_automation_backend = nextState.config.output.linux_automation_backend;
       config.output.delivery_mode = nextState.config.output.delivery_mode;
+      config.general.enabled = nextState.config.general.enabled;
       baseline = nextState.config_hash;
+      baselineConfig = structuredClone(nextState.config);
       syncJson();
     } else {
       config = structuredClone(nextState.config);
       baseline = nextState.config_hash;
+      baselineConfig = structuredClone(nextState.config);
     }
   }
   state = nextState;

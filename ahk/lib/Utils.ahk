@@ -52,6 +52,22 @@ SimpleSttBoolText(value) {
     return SimpleSttBool(value) ? "true" : "false"
 }
 
+SimpleSttNextDeliveryMode(current, configured := "smart_paste,type") {
+    modes := []
+    for mode in StrSplit(configured, ",") {
+        mode := Trim(mode)
+        if mode != ""
+            modes.Push(mode)
+    }
+    if !modes.Length
+        modes := ["smart_paste", "type"]
+    for index, mode in modes {
+        if mode = current
+            return modes[Mod(index, modes.Length) + 1]
+    }
+    return modes[1]
+}
+
 SimpleSttWriteStdOut(text := "") {
     try FileAppend(text, "*", "UTF-8")
 }
