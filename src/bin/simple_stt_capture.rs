@@ -7,15 +7,17 @@ use simple_stt::capture::inference_supervisor::{
 };
 use simple_stt::capture::ipc_server::{self, ControlRequest};
 use simple_stt::capture::overlay::{OverlayHandle, OverlayPrimary};
+use simple_stt::capture::screen_context;
 use simple_stt::capture::state::ServiceState;
+use simple_stt::cleanup::{self, CleanupHistoryEntry};
 use simple_stt::common::shell_protocol::{NoticeLevel, ServiceEvent, ShellCommand, ShellResponse};
-use simple_stt::config::AppConfig;
+use simple_stt::config::{AppConfig, CleanupConfig};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
 };
 use std::time::{Duration, Instant};
 
@@ -47,8 +49,44 @@ struct Args {
 #[derive(Debug)]
 struct Recording {
     session_id: u64,
+    screen_context: Arc<ScreenCaptureSlot>,
     samples: Vec<i16>,
     started: Instant,
+}
+
+#[derive(Debug)]
+struct ScreenCaptureSlot {
+    value: Mutex<ScreenCaptureState>,
+    ready: Condvar,
+}
+
+#[derive(Debug)]
+enum ScreenCaptureState {
+    Pending,
+    Complete(Option<cleanup::CleanupImage>),
+}
+
+impl ScreenCaptureSlot {
+    fn complete(&self, image: Option<cleanup::CleanupImage>) {
+        if let Ok(mut value) = self.value.lock() {
+            *value = ScreenCaptureState::Complete(image);
+            self.ready.notify_all();
+        }
+    }
+
+    fn wait(&self, timeout: Duration) -> Option<cleanup::CleanupImage> {
+        let value = self.value.lock().ok()?;
+        let (value, _) = self
+            .ready
+            .wait_timeout_while(value, timeout, |state| {
+                matches!(state, ScreenCaptureState::Pending)
+            })
+            .ok()?;
+        match &*value {
+            ScreenCaptureState::Pending => None,
+            ScreenCaptureState::Complete(image) => image.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -57,6 +95,13 @@ enum BackgroundResult {
         generation: u64,
         session_id: u64,
         result: Result<String, String>,
+        screen_context: Option<cleanup::CleanupImage>,
+    },
+    CleanupFinished {
+        generation: u64,
+        session_id: u64,
+        raw: String,
+        result: Result<cleanup::CleanupResult, String>,
     },
     ModelUnloaded {
         result: Result<(), String>,
@@ -104,6 +149,8 @@ struct ControlContext<'a> {
     active: &'a mut Option<Recording>,
     transcribing: &'a mut HashSet<u64>,
     warming: &'a mut HashSet<u64>,
+    cleaning: &'a mut HashSet<u64>,
+    cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
     shutting_down: &'a mut bool,
 }
 
@@ -111,9 +158,13 @@ struct BackgroundContext<'a> {
     overlay: &'a OverlayHandle,
     events: &'a mut EventBuffer,
     log_transcripts: bool,
+    cleanup_config: &'a CleanupConfig,
+    background_tx: &'a Sender<BackgroundResult>,
     active_recording: bool,
     transcribing: &'a mut HashSet<u64>,
     warming: &'a mut HashSet<u64>,
+    cleaning: &'a mut HashSet<u64>,
+    cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
     cancel_generation: &'a AtomicU64,
 }
 
@@ -201,6 +252,8 @@ fn main() -> Result<()> {
     let mut active: Option<Recording> = None;
     let mut transcribing = HashSet::<u64>::new();
     let mut warming = HashSet::<u64>::new();
+    let mut cleaning = HashSet::<u64>::new();
+    let mut cleanup_history = VecDeque::<CleanupHistoryEntry>::new();
     let mut shutting_down = false;
     let idle_check_running = Arc::new(AtomicBool::new(false));
     let mut preferred_detected_notice_sent = false;
@@ -235,9 +288,13 @@ fn main() -> Result<()> {
                     overlay: &overlay,
                     events: &mut events,
                     log_transcripts: config.diagnostics.log_transcripts,
+                    cleanup_config: &config.cleanup,
+                    background_tx: &background_tx,
                     active_recording: active.is_some(),
                     transcribing: &mut transcribing,
                     warming: &mut warming,
+                    cleaning: &mut cleaning,
+                    cleanup_history: &mut cleanup_history,
                     cancel_generation: &cancel_generation,
                 });
             },
@@ -259,6 +316,8 @@ fn main() -> Result<()> {
                     active: &mut active,
                     transcribing: &mut transcribing,
                     warming: &mut warming,
+                    cleaning: &mut cleaning,
+                    cleanup_history: &mut cleanup_history,
                     shutting_down: &mut shutting_down,
                 });
                 let _ = request.reply.send(response);
@@ -349,7 +408,7 @@ fn main() -> Result<()> {
                 if nonzero_pid(&worker_pid).is_some()
                     && !idle_check_running.swap(true, Ordering::SeqCst)
                 {
-                    let busy = active.is_some() || !transcribing.is_empty() || !warming.is_empty();
+                    let busy = active.is_some() || !transcribing.is_empty() || !warming.is_empty() || !cleaning.is_empty();
                     let worker = Arc::clone(&worker);
                     let background_tx = background_tx.clone();
                     let idle_check_running = Arc::clone(&idle_check_running);
@@ -486,6 +545,8 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         active,
         transcribing,
         warming,
+        cleaning,
+        cleanup_history,
         shutting_down,
     } = context;
     match command {
@@ -499,7 +560,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             response
         }
-        ShellCommand::StartRecording { session_id } => {
+        ShellCommand::StartRecording {
+            session_id,
+            target_window,
+        } => {
             if active.is_some() {
                 return ShellResponse::error("a recording is already active");
             }
@@ -523,10 +587,57 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             recording_active.store(true, Ordering::Relaxed);
             *active = Some(Recording {
                 session_id,
+                screen_context: Arc::new(ScreenCaptureSlot {
+                    value: Mutex::new(
+                        if config.cleanup.enabled && config.cleanup.screenshot.enabled {
+                            ScreenCaptureState::Pending
+                        } else {
+                            ScreenCaptureState::Complete(None)
+                        },
+                    ),
+                    ready: Condvar::new(),
+                }),
                 samples: Vec::new(),
                 started: Instant::now(),
             });
-            overlay.start_recording(0);
+            overlay.start_recording(
+                target_window.unwrap_or_default() as isize,
+                simple_stt::capture::overlay::RecordingIndicators {
+                    ai_cleanup: config.cleanup.enabled,
+                    screen_context: config.cleanup.enabled && config.cleanup.screenshot.enabled,
+                },
+            );
+            if config.cleanup.enabled && config.cleanup.screenshot.enabled {
+                let screenshot_config = config.cleanup.screenshot.clone();
+                let screen_context = Arc::clone(
+                    &active
+                        .as_ref()
+                        .expect("recording was just created")
+                        .screen_context,
+                );
+                overlay.notify_info("Screen context requested…", Some(Duration::from_secs(2)));
+                events.push(notice_event_for_session(
+                    NoticeLevel::Info,
+                    "Screen context requested",
+                    session_id,
+                ));
+                std::thread::spawn(move || {
+                    match screen_context::capture(&screenshot_config, target_window) {
+                        Ok(Some(image)) => {
+                            screen_context.complete(Some(image));
+                            tracing::info!(session_id, "screen context captured in memory");
+                        }
+                        Ok(None) => {
+                            screen_context.complete(None);
+                            tracing::info!(session_id, "screen context skipped or denied");
+                        }
+                        Err(error) => {
+                            screen_context.complete(None);
+                            tracing::warn!(session_id, %error, "screen context unavailable; continuing text-only")
+                        }
+                    }
+                });
+            }
             if preferred_restored {
                 overlay.notify_info(
                     "🎙 Preferred microphone restored — recording with it now",
@@ -589,6 +700,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             recording_active.store(false, Ordering::Relaxed);
             let duration_ms = recording.started.elapsed().as_millis();
             let samples = recording.samples;
+            let screen_context = Arc::clone(&recording.screen_context);
             tracing::info!(
                 session_id,
                 duration_ms,
@@ -598,7 +710,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             if samples.len() < MIN_RECORDING_SAMPLES {
                 overlay.notify_warning("🎙 Recording too short", Duration::from_secs(2));
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
-                events.push(notice_event_for_session(
+                events.push(terminal_notice_event_for_session(
                     NoticeLevel::Warning,
                     "Recording too short",
                     session_id,
@@ -634,10 +746,16 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     .unwrap()
                     .transcribe_pcm(session_id, &samples)
                     .map_err(|error| error.to_string());
+                let screen_context = if result.is_ok() {
+                    screen_context.wait(Duration::from_secs(15))
+                } else {
+                    None
+                };
                 let _ = tx.send(BackgroundResult::Transcript {
                     generation,
                     session_id,
                     result,
+                    screen_context,
                 });
             });
             ShellResponse::ok("transcription queued")
@@ -647,8 +765,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let had_recording = active.take().is_some();
             let had_transcribing = !transcribing.is_empty();
             let had_warming = !warming.is_empty();
+            let had_cleaning = !cleaning.is_empty();
             transcribing.clear();
             warming.clear();
+            cleaning.clear();
             recording_active.store(false, Ordering::Relaxed);
             overlay.hide();
             events.push(notice_event(NoticeLevel::Warning, "Cancelled"));
@@ -657,6 +777,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 had_recording,
                 had_transcribing,
                 had_warming,
+                had_cleaning,
                 "global cancellation requested"
             );
             if had_transcribing || had_warming {
@@ -679,6 +800,18 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 .values
                 .insert("latest_seq".into(), events.next_seq.to_string());
             response
+        }
+        ShellCommand::ListCleanupHistory => {
+            let mut response = ShellResponse::ok("cleanup history");
+            response.values.insert(
+                "history".into(),
+                serde_json::to_string(cleanup_history).unwrap_or_else(|_| "[]".into()),
+            );
+            response
+        }
+        ShellCommand::ClearCleanupHistory => {
+            cleanup_history.clear();
+            ShellResponse::ok("cleanup history cleared")
         }
         ShellCommand::ReloadConfig => match AppConfig::load() {
             Ok(next) => {
@@ -880,6 +1013,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             generation,
             session_id,
             result,
+            screen_context,
         } => {
             if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
@@ -901,7 +1035,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                         context.active_recording,
                         has_pending_transcript,
                     );
-                    context.events.push(notice_event_for_session(
+                    context.events.push(terminal_notice_event_for_session(
                         NoticeLevel::Warning,
                         "No speech detected",
                         session_id,
@@ -911,20 +1045,35 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     if context.log_transcripts {
                         tracing::info!(target: "simple_stt_privacy", session_id, privacy_opt_in = true, transcript = %text, "transcript content logging enabled by user");
                     }
-                    restore_overlay_after_success(
-                        context.overlay,
-                        context.active_recording,
-                        has_pending_transcript,
-                    );
-                    let mut event = ServiceEvent::simple("transcript");
-                    event.session_id = Some(session_id);
-                    event.text = text;
-                    tracing::info!(target: "simple_stt_privacy",
-                        session_id,
-                        transcript_chars = event.text.chars().count(),
-                        "transcript ready"
-                    );
-                    context.events.push(event);
+                    if context.cleanup_config.enabled {
+                        context.cleaning.insert(session_id);
+                        let heard = truncate_notice(&text, 72);
+                        context.overlay.notify_info(format!("Heard: {heard}"), None);
+                        let mut event = ServiceEvent::simple("cleanup_started");
+                        event.session_id = Some(session_id);
+                        context.events.push(event);
+                        let tx = context.background_tx.clone();
+                        let config = context.cleanup_config.clone();
+                        let raw = text;
+                        std::thread::spawn(move || {
+                            let result =
+                                cleanup::clean_transcript(&config, &raw, screen_context.as_ref())
+                                    .map_err(|error| error.to_string());
+                            let _ = tx.send(BackgroundResult::CleanupFinished {
+                                generation,
+                                session_id,
+                                raw,
+                                result,
+                            });
+                        });
+                    } else {
+                        restore_overlay_after_success(
+                            context.overlay,
+                            context.active_recording,
+                            has_pending_transcript,
+                        );
+                        push_transcript_event(context.events, session_id, text);
+                    }
                 }
                 Err(error) => {
                     tracing::error!(session_id, %error, "speech engine failed");
@@ -936,11 +1085,89 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                         context.active_recording,
                         has_pending_transcript,
                     );
-                    context.events.push(notice_event_for_session(
+                    context.events.push(terminal_notice_event_for_session(
                         NoticeLevel::Error,
                         "Speech engine failed — see log",
                         session_id,
                     ));
+                }
+            }
+        }
+        BackgroundResult::CleanupFinished {
+            generation,
+            session_id,
+            raw,
+            result,
+        } => {
+            if context.cancel_generation.load(Ordering::SeqCst) != generation {
+                tracing::info!(
+                    session_id,
+                    generation,
+                    "discarding stale AI cleanup after cancellation"
+                );
+                return;
+            }
+            context.cleaning.remove(&session_id);
+            let has_pending = !context.transcribing.is_empty() || !context.cleaning.is_empty();
+            match result {
+                Ok(cleaned) => {
+                    tracing::info!(target: "simple_stt_privacy", session_id, raw_chars = raw.chars().count(), cleaned_chars = cleaned.text.chars().count(), latency_ms = cleaned.latency_ms, provider = %cleaned.provider, model = %cleaned.model, "AI cleanup complete");
+                    context.cleanup_history.push_front(CleanupHistoryEntry {
+                        raw,
+                        cleaned: cleaned.text.clone(),
+                        provider: cleaned.provider,
+                        model: cleaned.model,
+                        latency_ms: cleaned.latency_ms,
+                        outcome: "cleaned".into(),
+                    });
+                    trim_cleanup_history(context.cleanup_history);
+                    restore_overlay_after_success(
+                        context.overlay,
+                        context.active_recording,
+                        has_pending,
+                    );
+                    push_transcript_event(context.events, session_id, cleaned.text);
+                }
+                Err(error) => {
+                    tracing::warn!(session_id, %error, "AI cleanup failed; delivering original transcript");
+                    let failure_notice =
+                        cleanup_failure_notice(&error, context.cleanup_config.timeout_ms);
+                    context.cleanup_history.push_front(CleanupHistoryEntry {
+                        raw: raw.clone(),
+                        cleaned: raw.clone(),
+                        provider: match context.cleanup_config.provider {
+                            simple_stt::config::CleanupProvider::OpenAiCompatible => {
+                                "openai_compatible"
+                            }
+                            simple_stt::config::CleanupProvider::ChatGpt => "chatgpt",
+                        }
+                        .into(),
+                        model: match context.cleanup_config.provider {
+                            simple_stt::config::CleanupProvider::OpenAiCompatible => {
+                                context.cleanup_config.openai_compatible.model.clone()
+                            }
+                            simple_stt::config::CleanupProvider::ChatGpt => {
+                                context.cleanup_config.chatgpt.model.clone()
+                            }
+                        },
+                        latency_ms: 0,
+                        outcome: "original_used".into(),
+                    });
+                    trim_cleanup_history(context.cleanup_history);
+                    context
+                        .overlay
+                        .notify_warning(&failure_notice, Duration::from_secs(5));
+                    context.events.push(notice_event_for_session(
+                        NoticeLevel::Warning,
+                        &failure_notice,
+                        session_id,
+                    ));
+                    restore_overlay_work_state(
+                        context.overlay,
+                        context.active_recording,
+                        has_pending,
+                    );
+                    push_transcript_event(context.events, session_id, raw);
                 }
             }
         }
@@ -1079,6 +1306,39 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
         },
     }
 }
+
+fn cleanup_failure_notice(error: &str, timeout_ms: u64) -> String {
+    let detail = error.to_ascii_lowercase();
+    let reason = if detail.contains("timed out") || detail.contains("timeout") {
+        format!("timed out after {} seconds", timeout_ms.div_ceil(1_000))
+    } else if detail.contains("http 401")
+        || detail.contains("http 403")
+        || detail.contains("authentication")
+    {
+        "API key or account was rejected".to_owned()
+    } else if detail.contains("http 429") || detail.contains("rate limit") {
+        "provider rate limit reached".to_owned()
+    } else if detail.contains("token limit") || detail.contains("too many tokens") {
+        "output token limit reached".to_owned()
+    } else if detail.contains("image") || detail.contains("vision") {
+        "model rejected screen context".to_owned()
+    } else if detail.contains("sending cleanup request")
+        || detail.contains("connect")
+        || detail.contains("dns")
+    {
+        "provider could not be reached".to_owned()
+    } else if detail.contains("unreadable")
+        || detail.contains("decoding")
+        || detail.contains("response text")
+    {
+        "provider returned an unreadable response".to_owned()
+    } else if detail.contains("empty text") {
+        "provider returned no text".to_owned()
+    } else {
+        "provider request failed".to_owned()
+    };
+    format!("AI cleanup {reason} — original text used")
+}
 fn restore_overlay_after_success(
     overlay: &OverlayHandle,
     active_recording: bool,
@@ -1117,6 +1377,32 @@ fn restore_overlay_work_state(
     ));
 }
 
+fn push_transcript_event(events: &mut EventBuffer, session_id: u64, text: String) {
+    let mut event = ServiceEvent::simple("transcript");
+    event.session_id = Some(session_id);
+    event.text = text;
+    tracing::info!(target: "simple_stt_privacy",
+        session_id,
+        transcript_chars = event.text.chars().count(),
+        "transcript ready"
+    );
+    events.push(event);
+}
+
+fn truncate_notice(text: &str, limit: usize) -> String {
+    let mut value = text.chars().take(limit).collect::<String>();
+    if text.chars().count() > limit {
+        value.push('…');
+    }
+    value
+}
+
+fn trim_cleanup_history(history: &mut VecDeque<CleanupHistoryEntry>) {
+    while history.len() > 5 {
+        history.pop_back();
+    }
+}
+
 fn notice_event(level: NoticeLevel, text: &str) -> ServiceEvent {
     let mut event = ServiceEvent::simple("notice");
     event.level = level;
@@ -1126,6 +1412,16 @@ fn notice_event(level: NoticeLevel, text: &str) -> ServiceEvent {
 fn notice_event_for_session(level: NoticeLevel, text: &str, session_id: u64) -> ServiceEvent {
     let mut event = notice_event(level, text);
     event.session_id = Some(session_id);
+    event
+}
+
+fn terminal_notice_event_for_session(
+    level: NoticeLevel,
+    text: &str,
+    session_id: u64,
+) -> ServiceEvent {
+    let mut event = notice_event_for_session(level, text, session_id);
+    event.values.insert("terminal".into(), "true".into());
     event
 }
 fn selected_model_available(config: &AppConfig) -> bool {
@@ -1138,7 +1434,7 @@ fn notify_missing_model(
 ) {
     overlay.notify_warning(format!("🎙 {MODEL_MISSING_NOTICE}"), Duration::from_secs(4));
     match session_id {
-        Some(session_id) => events.push(notice_event_for_session(
+        Some(session_id) => events.push(terminal_notice_event_for_session(
             NoticeLevel::Warning,
             MODEL_MISSING_NOTICE,
             session_id,
@@ -1238,5 +1534,78 @@ mod tests {
             assert_eq!(recovery.next_attempt, now + *delay);
         }
         assert!(!recovery.retry(start + Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn screen_context_waits_for_async_capture() {
+        let slot = Arc::new(ScreenCaptureSlot {
+            value: Mutex::new(ScreenCaptureState::Pending),
+            ready: Condvar::new(),
+        });
+        let producer = Arc::clone(&slot);
+        std::thread::spawn(move || {
+            producer.complete(Some(cleanup::CleanupImage {
+                mime_type: "image/jpeg".into(),
+                base64_data: "test".into(),
+            }));
+        })
+        .join()
+        .unwrap();
+        assert_eq!(
+            slot.wait(Duration::from_secs(1))
+                .expect("screen context")
+                .base64_data,
+            "test"
+        );
+    }
+
+    #[test]
+    fn cleanup_failures_explain_the_actionable_reason() {
+        assert_eq!(
+            cleanup_failure_notice("operation timed out", 30_000),
+            "AI cleanup timed out after 30 seconds — original text used"
+        );
+        assert!(
+            cleanup_failure_notice("cleanup provider returned HTTP 401", 30_000)
+                .contains("API key or account was rejected")
+        );
+        assert!(cleanup_failure_notice(
+            "cleanup output reached the configured token limit",
+            30_000
+        )
+        .contains("output token limit reached"));
+    }
+
+    #[test]
+    fn screenshot_progress_is_nonterminal_but_recording_failures_are_terminal() {
+        let screenshot =
+            notice_event_for_session(NoticeLevel::Info, "Screen context requested", 42);
+        assert!(!screenshot.values.contains_key("terminal"));
+
+        let no_speech =
+            terminal_notice_event_for_session(NoticeLevel::Warning, "No speech detected", 42);
+        assert_eq!(
+            no_speech.values.get("terminal").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn cleanup_history_is_bounded_to_five_entries() {
+        let mut history = VecDeque::new();
+        for index in 0..8 {
+            history.push_front(CleanupHistoryEntry {
+                raw: index.to_string(),
+                cleaned: index.to_string(),
+                provider: "test".into(),
+                model: "test".into(),
+                latency_ms: 0,
+                outcome: "cleaned".into(),
+            });
+        }
+        trim_cleanup_history(&mut history);
+        assert_eq!(history.len(), 5);
+        assert_eq!(history.front().unwrap().raw, "7");
+        assert_eq!(history.back().unwrap().raw, "3");
     }
 }

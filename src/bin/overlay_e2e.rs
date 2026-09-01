@@ -48,7 +48,7 @@ fn main() {
     sleep(500); // let the thread connect and the layer surface settle
 
     println!("step 1: show");
-    overlay.start_recording(0);
+    overlay.start_recording(0, Default::default());
     level.store(0.6f32.to_bits(), Ordering::Relaxed);
     sleep(700);
     shot("1_show");
@@ -59,7 +59,7 @@ fn main() {
     shot("2_hidden");
 
     println!("step 3: show again (the regression)");
-    overlay.start_recording(0);
+    overlay.start_recording(0, Default::default());
     level.store(0.6f32.to_bits(), Ordering::Relaxed);
     sleep(700);
     shot("3_show_again");
@@ -70,7 +70,7 @@ fn main() {
     shot("4_hidden_again");
 
     println!("step 5: third show");
-    overlay.start_recording(0);
+    overlay.start_recording(0, Default::default());
     level.store(0.6f32.to_bits(), Ordering::Relaxed);
     sleep(700);
     shot("5_show_third");

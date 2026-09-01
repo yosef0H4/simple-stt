@@ -1,6 +1,6 @@
 use crate::capture::overlay::overlay_model::{
     empty_visualizer_levels, render_overlay_text, set_visualizer_level, NoticeLevel,
-    OverlayPrimary, VisualizerLevels,
+    OverlayPrimary, RecordingIndicators, VisualizerLevels,
 };
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -39,7 +39,7 @@ pub struct OverlayHandle {
 
 #[derive(Debug, Clone)]
 enum OverlayCommand {
-    StartRecording(isize),
+    StartRecording(isize, RecordingIndicators),
     SetPrimary(OverlayPrimary),
     Notify {
         level: NoticeLevel,
@@ -64,13 +64,15 @@ impl OverlayHandle {
 
     /// Starts a fresh dictation session. Any stale notice from a previous
     /// session is removed so the recording visualizer remains easy to read.
-    pub fn start_recording(&self, target_window: isize) {
-        let _ = self.tx.send(OverlayCommand::StartRecording(target_window));
+    pub fn start_recording(&self, target_window: isize, indicators: RecordingIndicators) {
+        let _ = self
+            .tx
+            .send(OverlayCommand::StartRecording(target_window, indicators));
     }
 
     /// Backwards-compatible alias used by the screenshot and latency helpers.
     pub fn show(&self, target_window: isize) {
-        self.start_recording(target_window);
+        self.start_recording(target_window, RecordingIndicators::default());
     }
 
     pub fn set_primary(&self, primary: OverlayPrimary) {
@@ -194,6 +196,7 @@ struct TooltipState {
     target_level: f32,
     display_level: f32,
     visualizer_levels: VisualizerLevels,
+    indicators: RecordingIndicators,
     last_text: String,
     text_buf: Vec<u16>,
 }
@@ -212,17 +215,19 @@ impl TooltipState {
             target_level: 0.0,
             display_level: 0.0,
             visualizer_levels: empty_visualizer_levels(),
+            indicators: RecordingIndicators::default(),
             last_text: String::new(),
             text_buf: Vec::new(),
         }
     }
 
-    fn start_recording(&mut self, _target_window: isize) {
+    fn start_recording(&mut self, _target_window: isize, indicators: RecordingIndicators) {
         self.notice = None;
         self.primary = OverlayPrimary::Recording;
         self.target_level = 0.0;
         self.display_level = 0.0;
         self.visualizer_levels = empty_visualizer_levels();
+        self.indicators = indicators;
     }
 
     fn set_primary(&mut self, primary: OverlayPrimary) {
@@ -258,7 +263,9 @@ impl TooltipState {
 
     fn handle_command(&mut self, command: OverlayCommand) {
         match command {
-            OverlayCommand::StartRecording(hwnd) => self.start_recording(hwnd),
+            OverlayCommand::StartRecording(hwnd, indicators) => {
+                self.start_recording(hwnd, indicators)
+            }
             OverlayCommand::SetPrimary(primary) => self.set_primary(primary),
             OverlayCommand::Notify {
                 level,
@@ -369,6 +376,7 @@ impl TooltipState {
             self.primary,
             self.notice.as_ref().map(|notice| notice.text.as_str()),
             &self.visualizer_levels,
+            self.indicators,
         )
     }
 

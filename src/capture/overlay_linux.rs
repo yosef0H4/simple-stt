@@ -1,5 +1,6 @@
 use super::overlay_model::{
-    empty_visualizer_levels, set_visualizer_level, NoticeLevel, OverlayPrimary, VisualizerLevels,
+    empty_visualizer_levels, set_visualizer_level, NoticeLevel, OverlayPrimary,
+    RecordingIndicators, VisualizerLevels,
 };
 use super::overlay_render::{plan_for, render_surface, LayoutPlan, MAX_HEIGHT, MAX_WIDTH};
 use anyhow::{Context, Result};
@@ -49,7 +50,7 @@ pub struct OverlayHandle {
 
 #[derive(Debug, Clone)]
 enum OverlayCommand {
-    StartRecording,
+    StartRecording(RecordingIndicators),
     SetPrimary(OverlayPrimary),
     Notify {
         level: NoticeLevel,
@@ -91,8 +92,8 @@ impl OverlayHandle {
         Ok(Self { tx, level })
     }
 
-    pub fn start_recording(&self, _: isize) {
-        let _ = self.tx.send(OverlayCommand::StartRecording);
+    pub fn start_recording(&self, _: isize, indicators: RecordingIndicators) {
+        let _ = self.tx.send(OverlayCommand::StartRecording(indicators));
     }
 
     pub fn set_primary(&self, primary: OverlayPrimary) {
@@ -177,6 +178,7 @@ fn overlay_thread(rx: channel::Channel<OverlayCommand>, level: Arc<AtomicU32>) -
         target_level: 0.0,
         display_level: 0.0,
         visualizer_levels: empty_visualizer_levels(),
+        indicators: RecordingIndicators::default(),
         level_sample_tick: 0,
         last_signature: String::new(),
         needs_redraw: true,
@@ -232,6 +234,7 @@ struct LayerOverlay {
     target_level: f32,
     display_level: f32,
     visualizer_levels: VisualizerLevels,
+    indicators: RecordingIndicators,
     level_sample_tick: usize,
     last_signature: String,
     needs_redraw: bool,
@@ -242,13 +245,14 @@ struct LayerOverlay {
 impl LayerOverlay {
     fn handle_command(&mut self, command: OverlayCommand) {
         match command {
-            OverlayCommand::StartRecording => {
+            OverlayCommand::StartRecording(indicators) => {
                 self.primary = OverlayPrimary::Recording;
                 self.notice = None;
                 self.target_level = 0.0;
                 self.display_level = 0.0;
                 self.visualizer_levels = empty_visualizer_levels();
                 self.level_sample_tick = 0;
+                self.indicators = indicators;
             }
             OverlayCommand::SetPrimary(primary) => {
                 self.primary = primary;
@@ -466,6 +470,7 @@ impl LayerOverlay {
             self.primary,
             self.notice.as_ref().map(|notice| notice.text.as_str()),
             &self.visualizer_levels,
+            self.indicators,
         )
     }
 }

@@ -55,12 +55,34 @@ if manager.enabled
 manager.SetEnabled(true)
 if !manager.enabled
     Fail("manager should be enabled after SetEnabled(true)")
+manager.Configure("None", true, "preserve_tap")
+if manager.enabled
+    Fail("None should leave a hotkey disabled")
+if !HotkeySpec.IsNone("disabled") || !HotkeySpec.IsNone("off")
+    Fail("disabled aliases should be recognized as None")
 manager.Configure("AltGr+S", true, "preserve_tap")
 manager.DisableBindings()
 cancelManager.DisableBindings()
 toggleManager.DisableBindings()
 if capsController.count != 0
     Fail("shared CapsLock controller should unregister all bindings")
+
+screenshotNotice := Map(
+    "kind", "notice",
+    "session_id", 42,
+    "text", "Screen context requested",
+    "values", Map()
+)
+if SimpleSttNoticeEndsSession(screenshotNotice)
+    Fail("screen-context progress must preserve the recording session")
+terminalNotice := Map(
+    "kind", "notice",
+    "session_id", 42,
+    "text", "No speech detected",
+    "values", Map("terminal", "true")
+)
+if !SimpleSttNoticeEndsSession(terminalNotice)
+    Fail("terminal recording notices must close the recording session")
 
 cycle := "smart_paste,paste_ctrl_shift_v,clipboard"
 if SimpleSttNextDeliveryMode("smart_paste", cycle) != "paste_ctrl_shift_v"

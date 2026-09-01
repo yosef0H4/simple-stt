@@ -10,6 +10,22 @@ pub enum OverlayPrimary {
     Typing,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RecordingIndicators {
+    pub ai_cleanup: bool,
+    pub screen_context: bool,
+}
+
+impl RecordingIndicators {
+    fn text(self) -> &'static str {
+        match (self.ai_cleanup, self.screen_context) {
+            (true, true) => " \u{1f916} \u{1f4f7}",
+            (true, false) => " \u{1f916}",
+            _ => "",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub enum NoticeLevel {
     #[default]
@@ -51,10 +67,15 @@ pub fn render_overlay_text(
     primary: OverlayPrimary,
     notice_text: Option<&str>,
     visualizer: &VisualizerLevels,
+    indicators: RecordingIndicators,
 ) -> String {
     let primary = match primary {
         OverlayPrimary::Hidden => None,
-        OverlayPrimary::Recording => Some(format!("\u{1f399} {}", ascii_visualizer(visualizer))),
+        OverlayPrimary::Recording => Some(format!(
+            "\u{1f399}{} {}",
+            indicators.text(),
+            ascii_visualizer(visualizer)
+        )),
         OverlayPrimary::Transcribing => Some("\u{1f399} Transcribing...".to_owned()),
         OverlayPrimary::Typing => Some("\u{1f399} Typing...".to_owned()),
     };
@@ -70,12 +91,14 @@ pub fn linux_overlay_lines(
     primary: OverlayPrimary,
     notice_text: Option<&str>,
     visualizer: &VisualizerLevels,
+    indicators: RecordingIndicators,
 ) -> Vec<Cow<'static, str>> {
     let mut lines = Vec::new();
     match primary {
         OverlayPrimary::Hidden => {}
         OverlayPrimary::Recording => lines.push(Cow::Owned(format!(
-            "\u{1f399} {}",
+            "\u{1f399}{} {}",
+            indicators.text(),
             ascii_visualizer(visualizer)
         ))),
         OverlayPrimary::Transcribing => {
@@ -117,8 +140,38 @@ mod tests {
             OverlayPrimary::Transcribing,
             Some("Loading speech model..."),
             &empty_visualizer_levels(),
+            RecordingIndicators::default(),
         );
         assert!(text.contains("Transcribing"));
         assert!(text.contains("Loading speech model..."));
+    }
+
+    #[test]
+    fn recording_shows_ai_and_screen_privacy_indicators() {
+        let text = render_overlay_text(
+            OverlayPrimary::Recording,
+            None,
+            &empty_visualizer_levels(),
+            RecordingIndicators {
+                ai_cleanup: true,
+                screen_context: true,
+            },
+        );
+        assert!(text.contains("\u{1f916}"));
+        assert!(text.contains("\u{1f4f7}"));
+    }
+
+    #[test]
+    fn screen_indicator_never_appears_without_ai() {
+        let text = render_overlay_text(
+            OverlayPrimary::Recording,
+            None,
+            &empty_visualizer_levels(),
+            RecordingIndicators {
+                ai_cleanup: false,
+                screen_context: true,
+            },
+        );
+        assert!(!text.contains("\u{1f4f7}"));
     }
 }

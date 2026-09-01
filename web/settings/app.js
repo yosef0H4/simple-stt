@@ -9,6 +9,7 @@ let state,
   streaming = true,
   noticeTimer,
   modelSearchQuery = "";
+let cleanupModels = [];
 const modelDownloads = new Map();
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)];
@@ -21,6 +22,9 @@ const actionIcons = {
   check: '<path d="m5 12 4 4L19 6"/>',
   test: '<path d="m9 3-5 9h7l-1 9 10-12h-7l1-6Z"/>',
   trash: '<path d="M3 6h18M8 6V4h8v2m3 0-1 15H6L5 6m5 4v7m4-7v7"/>',
+  connect: '<path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1"/>',
+  copy: '<path d="M8 8h12v12H8zM4 16V4h12"/>',
+  disable: '<path d="M6 6l12 12M18 6 6 18"/>',
 };
 const groupIcons = {
   "Dictation shortcuts": '<path d="M224,48H32A16,16,0,0,0,16,64V192a16,16,0,0,0,16,16H224a16,16,0,0,0,16-16V64A16,16,0,0,0,224,48Zm0,144H32V64H224V192Zm-16-64a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,128Zm0-32a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16H200A8,8,0,0,1,208,96ZM72,160a8,8,0,0,1-8,8H56a8,8,0,0,1,0-16h8A8,8,0,0,1,72,160Zm96,0a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,160Zm40,0a8,8,0,0,1-8,8h-8a8,8,0,0,1,0-16h8A8,8,0,0,1,208,160Z"/>',
@@ -32,6 +36,10 @@ const groupIcons = {
   Runtime: '<path d="M245,110.64A16,16,0,0,0,232,104H216V88a16,16,0,0,0-16-16H130.67L102.94,51.2a16.14,16.14,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V208a8,8,0,0,0,8,8H211.1a8,8,0,0,0,7.59-5.47l28.49-85.47A16.05,16.05,0,0,0,245,110.64ZM93.34,64,123.2,86.4A8,8,0,0,0,128,88h72v16H69.77a16,16,0,0,0-15.18,10.94L40,158.7V64Zm112,136H43.1l26.67-80H232Z"/>',
   Diagnostics: '<path d="M240,128a8,8,0,0,1-8,8H204.94l-37.78,75.58A8,8,0,0,1,160,216h-.4a8,8,0,0,1-7.08-5.14L95.35,60.76,63.28,131.31A8,8,0,0,1,56,136H24a8,8,0,0,1,0-16H50.85L88.72,36.69a8,8,0,0,1,14.76.46l57.51,151,31.85-63.71A8,8,0,0,1,200,120h32A8,8,0,0,1,240,128Z"/>',
   "Speech model": '<path d="M248,124a56.11,56.11,0,0,0-32-50.61V72a48,48,0,0,0-88-26.49A48,48,0,0,0,40,72v1.39a56,56,0,0,0,0,101.2V176a48,48,0,0,0,88,26.49A48,48,0,0,0,216,176v-1.41A56.09,56.09,0,0,0,248,124ZM88,208a32,32,0,0,1-31.81-28.56A55.87,55.87,0,0,0,64,180h8a8,8,0,0,0,0-16H64A40,40,0,0,1,50.67,86.27,8,8,0,0,0,56,78.73V72a32,32,0,0,1,64,0v68.26A47.8,47.8,0,0,0,88,128a8,8,0,0,0,0,16,32,32,0,0,1,0,64Zm104-44h-8a8,8,0,0,0,0,16h8a55.87,55.87,0,0,0,7.81-.56A32,32,0,1,1,168,144a8,8,0,0,0,0-16,47.8,47.8,0,0,0-32,12.26V72a32,32,0,0,1,64,0v6.73a8,8,0,0,0,5.33,7.54A40,40,0,0,1,192,164Z"/>',
+  "AI cleanup": '<path d="M216,96a88,88,0,1,0-88,88h8a8,8,0,0,0,0-16h-8A72,72,0,1,1,200,96v16h-8a8,8,0,0,0,0,16h16a8,8,0,0,0,8-8Zm-72,24H112V88a8,8,0,0,0-16,0v32H64a8,8,0,0,0,0,16H96v32a8,8,0,0,0,16,0V136h32a8,8,0,0,0,0-16Z"/>',
+  "Connection": '<path d="M137.54,186.36a36,36,0,0,1-50.91,0L69.66,169.4a36,36,0,0,1,0-50.91L93.7,94.45a36,36,0,0,1,50.91,0,8,8,0,0,1-11.32,11.32,20,20,0,0,0-28.28,0L81,129.8a20,20,0,0,0,0,28.28l17,17a20,20,0,0,0,28.28,0l24-24a8,8,0,0,1,11.32,11.32Zm48.8-99.76-17-17a36,36,0,0,0-50.91,0l-24,24a8,8,0,0,0,11.32,11.32l24-24a20,20,0,0,1,28.28,0l17,17a20,20,0,0,1,0,28.28l-24,24a20,20,0,0,1-28.28,0,8,8,0,0,0-11.32,11.32,36,36,0,0,0,50.91,0l24-24A36,36,0,0,0,186.34,86.6Z"/>',
+  "Screen context": '<path d="M208,40H48A24,24,0,0,0,24,64V176a24,24,0,0,0,24,24h72v16H88a8,8,0,0,0,0,16h80a8,8,0,0,0,0-16H136V200h72a24,24,0,0,0,24-24V64A24,24,0,0,0,208,40Zm8,136a8,8,0,0,1-8,8H48a8,8,0,0,1-8-8V64a8,8,0,0,1,8-8H208a8,8,0,0,1,8,8Z"/>',
+  "Recent cleanup": '<path d="M128,24a104,104,0,1,0,104,104A104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm40-88a8,8,0,0,1-8,8H128a8,8,0,0,1-8-8V80a8,8,0,0,1,16,0v40h24A8,8,0,0,1,168,128Z"/>',
 };
 const actionIcon = (name) =>
   `<svg class="action-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${actionIcons[name]}</svg>`;
@@ -150,7 +158,8 @@ function hotkeyField(parent, label, description, path) {
   wrap.innerHTML = `<span class="field-copy"><strong>${label}</strong><small>${description}</small></span>`;
   const control = document.createElement("div"),
     value = document.createElement("output"),
-    button = document.createElement("button");
+    button = document.createElement("button"),
+    disable = document.createElement("button");
   control.className = "control hotkey-control";
   value.className = "hotkey-value";
   value.textContent = get(path);
@@ -159,7 +168,18 @@ function hotkeyField(parent, label, description, path) {
     state.platform === "windows" ? "Record" : "System managed";
   button.disabled = state.platform !== "windows";
   button.onclick = () => captureHotkey(path, label);
-  control.append(value, button);
+  disable.type = "button";
+  disable.className = "icon-button";
+  disable.innerHTML = actionIcon("disable");
+  disable.title = `Set ${label} shortcut to None`;
+  disable.setAttribute("aria-label", `Disable ${label} shortcut`);
+  disable.disabled = String(get(path)).toLowerCase() === "none";
+  disable.onclick = () => {
+    set(path, "None");
+    build();
+    notice(`${label} shortcut disabled. Save to apply it.`);
+  };
+  control.append(value, button, disable);
   wrap.append(control);
   parent.append(wrap);
 }
@@ -204,7 +224,7 @@ function linuxHotkeyGuide(parent, backend, tools) {
   note.innerHTML = "<strong>Compatibility note:</strong> Linux desktop support is experimental. KDE Plasma on Fedora Wayland is the only environment tested on real hardware so far.";
   const intro = document.createElement("p");
   if (resolved === "portal") {
-    intro.textContent = "The desktop portal owns these shortcuts. Select Configure, approve the request once, then assign Record, Cancel, and Switch delivery in the system dialog.";
+    intro.textContent = "The desktop portal owns these shortcuts. Select Configure, approve the request once, then assign the actions you want in the system dialog.";
   } else if (resolved === "x11") {
     intro.textContent = "Simple STT registers these chords directly with the X11 server. Enter each chord here, Save, then restart Simple STT. If another application owns a chord, Simple STT reports a conflict instead of replacing it.";
   } else {
@@ -215,7 +235,7 @@ function linuxHotkeyGuide(parent, backend, tools) {
   body.append(note, install, intro);
   if (resolved === "desktop") {
     const examples = document.createElement("ul");
-    examples.innerHTML = `<li><strong>Hyprland</strong> — add <code>bind = SUPER, Z, exec, simple-stt-linux toggle</code>, <code>bind = SUPER, X, exec, simple-stt-linux cancel</code>, and <code>bind = SUPER, D, exec, simple-stt-linux cycle-delivery</code> to <code>~/.config/hypr/hyprland.conf</code>, then run <code>hyprctl reload</code>.</li><li><strong>Sway</strong> — add <code>bindsym $mod+z exec simple-stt-linux toggle</code>, equivalent Cancel and Cycle bindings to <code>~/.config/sway/config</code>, then run <code>swaymsg reload</code>.</li><li><strong>Other compositors</strong> — create three global key bindings that run the Toggle, Cancel, and Switch delivery commands shown above. Use the full executable path if <code>simple-stt-linux</code> is not on PATH.</li>`;
+    examples.innerHTML = `<li><strong>Hyprland</strong> — bind the commands shown above with <code>bind = SUPER, KEY, exec, COMMAND</code> in <code>~/.config/hypr/hyprland.conf</code>, then run <code>hyprctl reload</code>.</li><li><strong>Sway</strong> — use <code>bindsym $mod+KEY exec COMMAND</code> in <code>~/.config/sway/config</code>, then run <code>swaymsg reload</code>.</li><li><strong>Other compositors</strong> — bind only the actions you want. Use the full executable path if <code>simple-stt-linux</code> is not on PATH.</li>`;
     body.append(examples);
   }
   const caps = document.createElement("small");
@@ -578,7 +598,7 @@ function linuxAutomationGuide(parent, tools) {
 }
 function combobox(
   parent,
-  { label, description, path, items, placeholder, onchange },
+  { label, description, path, items, placeholder, onchange, allowCustom = false },
 ) {
   const wrap = document.createElement("div"),
     control = document.createElement("div"),
@@ -610,11 +630,11 @@ function combobox(
     if (onchange) onchange();
   }
   function render() {
-    const terms = input.value.toLowerCase().trim().split(/\s+/).filter(Boolean),
-      matches = items.filter((i) => {
-        const searchable = (i.label + " " + (i.meta || "")).toLowerCase();
-        return terms.every((term) => searchable.includes(term));
-      });
+    const query = input.value.trim(),
+      matches = items.map((item) => {
+        const searchable = (item.label + " " + (item.meta || "")).toLowerCase();
+        return { item, score: fuzzyScore(query, searchable) };
+      }).filter(({ score }) => score >= 0).sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label)).map(({ item }) => item);
     list.replaceChildren();
     if (!matches.length) {
       const empty = document.createElement("div");
@@ -643,6 +663,11 @@ function combobox(
   };
   input.oninput = render;
   input.onkeydown = (e) => {
+    if (allowCustom && e.key === "Enter") {
+      e.preventDefault();
+      const exact = items.find((item) => item.label.toLowerCase() === input.value.trim().toLowerCase());
+      choose(exact || { value: input.value.trim(), label: input.value.trim() });
+    }
     if (e.key === "Escape") {
       list.hidden = true;
       input.value = selected()?.label || get(path) || "";
@@ -654,6 +679,8 @@ function combobox(
   };
   document.addEventListener("pointerdown", (e) => {
     if (!control.contains(e.target)) {
+      if (allowCustom && input.value.trim() && input.value.trim() !== get(path) && !items.some((item) => item.label === input.value))
+        set(path, input.value.trim());
       list.hidden = true;
       input.setAttribute("aria-expanded", "false");
       input.value = selected()?.label || get(path) || "";
@@ -670,8 +697,9 @@ function build() {
   const g = $("#general-fields"),
     a = $("#audio-fields"),
     o = $("#output-fields"),
-    x = $("#advanced-fields");
-  [g, a, o, x].forEach((n) => n.replaceChildren());
+    x = $("#advanced-fields"),
+    c = $("#cleanup-fields");
+  [g, a, o, x, c].forEach((n) => n.replaceChildren());
   const shortcuts = group(
     g,
     "Dictation shortcuts",
@@ -704,14 +732,17 @@ function build() {
       portalShortcutField(shortcuts, "Record", "Assigned by your Wayland desktop.", "record");
       portalShortcutField(shortcuts, "Cancel", "Assigned by your Wayland desktop.", "cancel");
       portalShortcutField(shortcuts, "Switch delivery", "Assigned by your Wayland desktop.", "delivery");
+      portalShortcutField(shortcuts, "Toggle AI cleanup", "Assigned by your Wayland desktop.", "cleanup");
     } else if (resolved === "x11") {
       field(shortcuts, { label: "Record", description: "Native X11 global chord.", path: "general.record_hotkey", type: "text" });
       field(shortcuts, { label: "Cancel", description: "Native X11 global chord.", path: "general.cancel_hotkey", type: "text" });
       field(shortcuts, { label: "Switch delivery", description: "Native X11 global chord.", path: "general.toggle_delivery_hotkey", type: "text" });
+      field(shortcuts, { label: "Toggle AI cleanup", description: "Native X11 global chord or None.", path: "general.toggle_cleanup_hotkey", type: "text" });
     } else {
       commandShortcutField(shortcuts, "Record / stop", "Bind this command in your compositor.", "simple-stt-linux toggle");
       commandShortcutField(shortcuts, "Cancel", "Bind this command in your compositor.", "simple-stt-linux cancel");
       commandShortcutField(shortcuts, "Switch delivery", "Bind this command in your compositor.", "simple-stt-linux cycle-delivery");
+      commandShortcutField(shortcuts, "Toggle AI cleanup", "Bind this command in your compositor.", "simple-stt-linux toggle-cleanup");
     }
     commandShortcutField(shortcuts, "Start program", "Bind this in your desktop or compositor shortcuts; it works while Simple STT is closed.", state.linux_automation?.start_command || "systemctl --user start simple-stt-linux.service");
     commandShortcutField(shortcuts, "Close program", "Bind this in your desktop or compositor shortcuts.", state.linux_automation?.stop_command || "simple-stt-linux shutdown");
@@ -773,6 +804,12 @@ function build() {
       "Switch delivery",
       "Changes between typing and paste.",
       "general.toggle_delivery_hotkey",
+    );
+    hotkeyField(
+      shortcuts,
+      "Toggle AI cleanup",
+      "Changes AI cleanup for the next dictation.",
+      "general.toggle_cleanup_hotkey",
     );
   }
   const behavior = group(
@@ -945,6 +982,7 @@ function build() {
     path: "output.trailing_space",
     type: "checkbox",
   });
+  renderCleanup(c);
   field(transforms, {
     label: "Remove punctuation",
     description: "Strip punctuation from recognized text.",
@@ -1029,6 +1067,344 @@ function build() {
   renderSettingsSearch();
   syncJson();
 }
+
+function textareaField(parent, { label, description, path, rows = 6, placeholder = "" }) {
+  const wrap = document.createElement("label");
+  wrap.className = "field field-textarea";
+  wrap.dataset.settingPath = path;
+  wrap.innerHTML = `<span class="field-copy"><strong>${label}</strong>${description ? `<small>${description}</small>` : ""}</span>`;
+  const input = document.createElement("textarea");
+  input.rows = rows;
+  input.placeholder = placeholder;
+  input.value = get(path);
+  input.dataset.path = path;
+  input.oninput = () => set(path, input.value);
+  const control = document.createElement("span");
+  control.className = "control";
+  control.append(input);
+  wrap.append(control);
+  parent.append(wrap);
+  return input;
+}
+
+async function cleanupAction(action, extra = {}) {
+  const result = await api("/api/cleanup-action", {
+    method: "POST",
+    body: JSON.stringify({ action, config, ...extra }),
+  });
+  if (result.message) notice(result.message, "success");
+  return result;
+}
+
+function renderCleanup(root) {
+  const overview = group(root, "AI cleanup", "");
+  field(overview, {
+    label: "Clean dictated text",
+    description: "",
+    path: "cleanup.enabled",
+    type: "checkbox",
+  }).onchange = (event) => {
+    const enabled = event.currentTarget.checked;
+    set("cleanup.enabled", enabled);
+    if (!enabled) set("cleanup.screenshot.enabled", false);
+    build();
+  };
+  const provider = field(overview, {
+    label: "Provider",
+    description: "",
+    path: "cleanup.provider",
+    type: "select",
+    options: [
+      ["open_ai_compatible", "OpenAI-compatible"],
+      ["chat_gpt", "ChatGPT subscription"],
+    ],
+  });
+  provider.onchange = () => {
+    set("cleanup.provider", provider.value);
+    cleanupModels = [];
+    build();
+  };
+
+  const connection = group(root, "Connection", "");
+  if (config.cleanup.provider === "open_ai_compatible") {
+    field(connection, {
+      label: "Base URL",
+      description: "",
+      path: "cleanup.openai_compatible.base_url",
+    });
+    const keyRow = document.createElement("div");
+    keyRow.className = "field";
+    keyRow.dataset.settingPath = "cleanup.secret";
+    keyRow.innerHTML = `<span class="field-copy"><strong>API key</strong><small>${state.cleanup?.compatible_key_saved ? "Saved in system vault" : "Not saved"}</small></span>`;
+    const keyControl = document.createElement("div");
+    keyControl.className = "control inline-control";
+    const key = document.createElement("input");
+    key.type = "password";
+    key.autocomplete = "new-password";
+    key.placeholder = state.cleanup?.compatible_key_saved ? "Replace saved key" : "Paste API key";
+    key.setAttribute("aria-label", "Provider API key");
+    const saveKey = document.createElement("button");
+    saveKey.type = "button";
+    saveKey.textContent = "Save";
+    saveKey.onclick = async () => {
+      if (!key.value.trim()) return notice("Enter an API key first.", "error");
+      saveKey.disabled = true;
+      try {
+        await cleanupAction("save_api_key", { secret: key.value });
+        key.value = "";
+        await refreshState();
+      } finally {
+        saveKey.disabled = false;
+      }
+    };
+    keyControl.append(key, saveKey);
+    if (state.cleanup?.compatible_key_saved) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "icon-button danger-quiet";
+      remove.innerHTML = actionIcon("trash");
+      remove.title = "Remove saved API key";
+      remove.setAttribute("aria-label", "Remove saved API key");
+      remove.onclick = () => cleanupAction("delete_api_key").then(refreshState);
+      keyControl.append(remove);
+    }
+    keyRow.append(keyControl);
+    connection.append(keyRow);
+  } else {
+    const account = document.createElement("div");
+    account.className = "account-card";
+    account.innerHTML = `<div><strong>ChatGPT</strong><span>${state.cleanup?.chatgpt_connected ? "Connected" : "Not connected"}</span></div>`;
+    const actions = document.createElement("div");
+    actions.className = "account-actions";
+    if (state.cleanup?.chatgpt_connected) {
+      const disconnect = document.createElement("button");
+      disconnect.type = "button";
+      disconnect.textContent = "Disconnect";
+      disconnect.onclick = () => cleanupAction("chatgpt_logout").then(refreshState);
+      actions.append(disconnect);
+    } else {
+      const connect = document.createElement("button");
+      connect.type = "button";
+      connect.className = "primary";
+      connect.innerHTML = `${actionIcon("connect")}<span>Connect</span>`;
+      connect.onclick = async () => {
+        const result = await cleanupAction("chatgpt_login_browser");
+        window.open(result.url, "_blank", "noopener");
+        pollCleanupLogin();
+      };
+      const code = document.createElement("button");
+      code.type = "button";
+      code.textContent = "Use a code";
+      code.onclick = async () => {
+        const result = await cleanupAction("chatgpt_login_code");
+        await navigator.clipboard.writeText(result.code).catch(() => {});
+        window.open(result.url, "_blank", "noopener");
+        notice(`Code ${result.code} copied.`, "success");
+        pollCleanupLogin();
+      };
+      actions.append(connect, code);
+    }
+    account.append(actions);
+    connection.append(account);
+  }
+
+  const modelPath = config.cleanup.provider === "chat_gpt"
+    ? "cleanup.chatgpt.model"
+    : "cleanup.openai_compatible.model";
+  const model = combobox(connection, {
+    label: "Model",
+    description: "Search fetched models or enter an exact model ID.",
+    path: modelPath,
+    items: cleanupModels.map((entry) => ({ value: entry.id, label: entry.id, meta: "Provider model" })),
+    placeholder: "Search or enter a model…",
+    allowCustom: true,
+  });
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "cleanup-model-refresh";
+  refresh.innerHTML = `${actionIcon("refresh")}<span>Fetch models</span>`;
+  refresh.onclick = async () => {
+    refresh.disabled = true;
+    refresh.dataset.state = "loading";
+    try {
+      cleanupModels = (await cleanupAction("list_models")).models || [];
+      build();
+      requestAnimationFrame(() => $("[data-setting-path='" + modelPath + "'] input")?.focus());
+    } finally {
+      refresh.disabled = false;
+      refresh.dataset.state = "default";
+    }
+  };
+  model.closest(".field").querySelector(".control").append(refresh);
+
+  const behavior = group(root, "Text cleanup", "");
+  const reasoningPath = config.cleanup.provider === "chat_gpt"
+    ? "cleanup.chatgpt.reasoning_effort"
+    : "cleanup.openai_compatible.reasoning_effort";
+  field(behavior, {
+    label: "Reasoning",
+    description: "",
+    path: reasoningPath,
+    type: "select",
+    options: [
+      ["none", "None"], ["low", "Low"], ["medium", "Medium"],
+      ["high", "High"], ["xhigh", "Extra high"], ["max", "Maximum"],
+    ],
+  });
+  field(behavior, {
+    label: "Timeout",
+    description: "Milliseconds before the original transcript is used.",
+    path: "cleanup.timeout_ms",
+    type: "number",
+    min: 15000,
+    max: 120000,
+  });
+  field(behavior, {
+    label: "Output limit",
+    description: "Maximum generated tokens.",
+    path: "cleanup.max_output_tokens",
+    type: "number",
+    min: 64,
+    max: 32768,
+  });
+  textareaField(behavior, {
+    label: "Instructions",
+    description: "The transcript and screen text are always treated as untrusted content.",
+    path: "cleanup.prompt",
+    rows: 10,
+  });
+  const testRow = document.createElement("div");
+  testRow.className = "cleanup-test";
+  const testInput = document.createElement("textarea");
+  testInput.rows = 3;
+  testInput.value = "uh hello jason no sorry Jayson comma this is a test";
+  testInput.setAttribute("aria-label", "Test transcript");
+  const testButton = document.createElement("button");
+  testButton.type = "button";
+  testButton.innerHTML = `${actionIcon("test")}<span>Test cleanup</span>`;
+  const testOutput = document.createElement("output");
+  testButton.onclick = async () => {
+    testButton.disabled = true;
+    testButton.dataset.state = "loading";
+    try {
+      const result = await cleanupAction("test", { transcript: testInput.value });
+      testOutput.textContent = result.result.text;
+    } catch (error) {
+      testOutput.textContent = error.message;
+      testOutput.dataset.state = "error";
+    } finally {
+      testButton.disabled = false;
+      testButton.dataset.state = "default";
+    }
+  };
+  testRow.append(testInput, testButton, testOutput);
+  behavior.append(testRow);
+
+  const screen = group(root, "Screen context", "");
+  const screenEnabled = field(screen, {
+    label: "Use screen context",
+    description: "A visible privacy indicator appears whenever a screenshot is requested.",
+    path: "cleanup.screenshot.enabled",
+    type: "checkbox",
+  });
+  const scope = field(screen, {
+    label: "Capture",
+    description: "",
+    path: "cleanup.screenshot.scope",
+    type: "select",
+    options: [["active_window", "Active window"], ["full_screen", "Full screen"]],
+  });
+  const deny = textareaField(screen, {
+    label: "Never capture",
+    description: state.platform === "linux" && String(state.linux_automation?.session || "").toLowerCase() === "wayland"
+      ? "One app per line. A Wayland portal selection cannot be identified before you approve it."
+      : "One application name per line.",
+    path: "cleanup.screenshot.excluded_apps",
+    rows: 5,
+  });
+  deny.value = config.cleanup.screenshot.excluded_apps.join("\n");
+  deny.oninput = () => set("cleanup.screenshot.excluded_apps", deny.value.split(/\r?\n/).map((v) => v.trim()).filter(Boolean));
+  const maxEdge = field(screen, {
+    label: "Image size",
+    description: "Longest edge in pixels.",
+    path: "cleanup.screenshot.max_edge_pixels",
+    type: "number",
+    min: 320,
+    max: 4096,
+  });
+  const quality = field(screen, {
+    label: "JPEG quality",
+    description: "20–100.",
+    path: "cleanup.screenshot.jpeg_quality",
+    type: "number",
+    min: 20,
+    max: 100,
+  });
+  for (const control of [screenEnabled, scope, deny, maxEdge, quality]) {
+    control.disabled = !config.cleanup.enabled;
+    control.closest(".field")?.classList.toggle("field-disabled", !config.cleanup.enabled);
+  }
+
+  const history = group(root, "Recent cleanup", "Kept in memory until Simple STT closes.");
+  const historyHead = history.querySelector(".group-head");
+  historyHead.querySelector(".group-reset").remove();
+  const clear = document.createElement("button");
+  clear.type = "button";
+  clear.className = "icon-button";
+  clear.innerHTML = actionIcon("trash");
+  clear.title = "Clear cleanup history";
+  clear.setAttribute("aria-label", "Clear cleanup history");
+  clear.disabled = !state.cleanup?.history?.length;
+  clear.onclick = () => cleanupAction("clear_history").then(refreshState);
+  historyHead.append(clear);
+  const entries = state.cleanup?.history || [];
+  if (!entries.length) {
+    const empty = document.createElement("p");
+    empty.className = "cleanup-empty";
+    empty.textContent = "No cleaned dictation yet.";
+    history.append(empty);
+  }
+  for (const entry of entries) {
+    const card = document.createElement("article");
+    card.className = "cleanup-history-card";
+    const meta = document.createElement("small");
+    meta.textContent = `${entry.model} · ${entry.latency_ms} ms · ${entry.outcome === "cleaned" ? "Cleaned" : "Original used"}`;
+    const raw = document.createElement("p");
+    raw.textContent = entry.raw;
+    const cleaned = document.createElement("p");
+    cleaned.textContent = entry.cleaned;
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "icon-button";
+    copy.innerHTML = actionIcon("copy");
+    copy.title = "Copy cleaned text";
+    copy.setAttribute("aria-label", "Copy cleaned text");
+    copy.onclick = () => navigator.clipboard.writeText(entry.cleaned).then(() => notice("Cleaned text copied.", "success"));
+    card.append(meta, raw, cleaned, copy);
+    history.append(card);
+  }
+}
+
+async function pollCleanupLogin() {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const next = await api("/api/state");
+    if (next.cleanup?.chatgpt_connected) {
+      state = next;
+      build();
+      notice("ChatGPT connected.", "success");
+      return;
+    }
+    if (next.cleanup?.auth_status?.state === "error") {
+      state = next;
+      build();
+      notice(next.cleanup.auth_status.message || "ChatGPT connection failed.", "error");
+      return;
+    }
+  }
+  notice("ChatGPT connection timed out.", "error");
+}
+
 function renderModels() {
   const root = $("#model-workbench");
   root.replaceChildren();
@@ -1235,7 +1611,8 @@ async function captureHotkey(path, label) {
       "general.record_hotkey",
       "general.cancel_hotkey",
       "general.toggle_delivery_hotkey",
-    ].some((p) => p !== path && get(p) === result.hotkey);
+      "general.toggle_cleanup_hotkey",
+    ].some((p) => p !== path && String(get(p)).toLowerCase() !== "none" && get(p) === result.hotkey);
     if (duplicate)
       throw new Error(
         "That shortcut is already assigned. Choose another chord.",
@@ -1330,7 +1707,7 @@ async function save(retriedRuntimeChange = false) {
     ) {
       try {
         const latest = await api("/api/state");
-        const runtimePaths = new Set(["general.enabled", "output.delivery_mode"]);
+        const runtimePaths = new Set(["general.enabled", "output.delivery_mode", "cleanup.enabled"]);
         const changed = latest.config
           ? changedConfigPaths(baselineConfig, latest.config)
           : [];

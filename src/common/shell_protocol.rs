@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const SHELL_PROTOCOL_VERSION: u32 = 1;
+pub const SHELL_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -37,19 +37,36 @@ pub enum ServerMessage {
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum ShellCommand {
     Ping,
-    StartRecording { session_id: u64 },
-    StopRecording { session_id: u64 },
+    StartRecording {
+        session_id: u64,
+        #[serde(default)]
+        target_window: Option<i64>,
+    },
+    StopRecording {
+        session_id: u64,
+    },
     Cancel,
-    PollEvents { after_seq: u64 },
+    PollEvents {
+        after_seq: u64,
+    },
     ReloadConfig,
     UnloadModel,
     TestModel,
-    DownloadModel { filename: String },
-    RemoveModel { filename: String },
+    DownloadModel {
+        filename: String,
+    },
+    RemoveModel {
+        filename: String,
+    },
     ListInputs,
     ListModels,
     RefreshModels,
-    ShowNotice { level: NoticeLevel, text: String },
+    ListCleanupHistory,
+    ClearCleanupHistory,
+    ShowNotice {
+        level: NoticeLevel,
+        text: String,
+    },
     Shutdown,
 }
 

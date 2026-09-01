@@ -4,6 +4,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::{json, Value};
 use simple_stt::capture::state::ServiceState;
+use simple_stt::cleanup::{self, auth, secrets};
 use simple_stt::common::shell_protocol::{
     ClientMessage, ServerMessage, ShellCommand, ShellResponse, SHELL_PROTOCOL_VERSION,
 };
@@ -49,6 +50,7 @@ struct AppState {
     capture: Option<CaptureConnection>,
     last_activity: Mutex<Instant>,
     closing: AtomicBool,
+    cleanup_auth_status: Arc<Mutex<Value>>,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +64,17 @@ struct ActionRequest {
     action: String,
     #[serde(default)]
     filename: String,
+}
+
+#[derive(Deserialize)]
+struct CleanupActionRequest {
+    action: String,
+    #[serde(default)]
+    config: Value,
+    #[serde(default)]
+    secret: String,
+    #[serde(default)]
+    transcript: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -103,6 +116,7 @@ fn run() -> Result<()> {
         capture,
         last_activity: Mutex::new(Instant::now()),
         closing: AtomicBool::new(false),
+        cleanup_auth_status: Arc::new(Mutex::new(json!({"state":"idle"}))),
     });
     let url = format!("{origin}/#token={web_token}");
     write_session(&SettingsSession {
@@ -188,6 +202,7 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
         }
         (&Method::Post, "/api/save") => save_response(request, state),
         (&Method::Post, "/api/action") => action_response(request, state),
+        (&Method::Post, "/api/cleanup-action") => cleanup_action_response(request, state),
         (&Method::Post, "/api/platform-action") => platform_action(request, state),
         (&Method::Post, "/api/hotkey-capture") => hotkey_capture_response(state),
         (&Method::Post, "/api/close") => {
@@ -287,7 +302,7 @@ fn locate_hotkey_recorder() -> Result<(PathBuf, PathBuf)> {
 fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
     let path = AppConfig::config_path();
     let mut raw = fs::read(&path).unwrap_or_default();
-    let config = match AppConfig::load() {
+    let mut config = match AppConfig::load() {
         Ok(config) => config,
         Err(error) => {
             return Ok(json_response(
@@ -306,6 +321,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             ))
         }
     };
+    cleanup::apply_development_env(&mut config.cleanup);
     raw = fs::read(&path)?;
     let models = simple_stt::models::catalog_for_config(&config)
         .into_iter()
@@ -321,6 +337,22 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
         Vec::new()
     };
     let shortcut_state = linux_shortcut_state();
+    let cleanup_history = if service_online {
+        capture_request(state, ShellCommand::ListCleanupHistory)
+            .ok()
+            .and_then(|response| response.values.get("history").cloned())
+            .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+            .unwrap_or_else(|| json!([]))
+    } else {
+        json!([])
+    };
+    let compatible_key_saved = secrets::compatible_api_key().ok().flatten().is_some();
+    let chatgpt_connected = auth::chatgpt_connected();
+    let cleanup_auth_status = state
+        .cleanup_auth_status
+        .lock()
+        .expect("cleanup auth lock")
+        .clone();
     Ok(json_response(
         StatusCode(200),
         &json!({
@@ -336,9 +368,100 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "linux_automation":linux_automation_state(),
             "microphones":microphones,
             "models":models
+            ,"cleanup": {
+                "compatible_key_saved": compatible_key_saved,
+                "chatgpt_connected": chatgpt_connected,
+                "auth_status": cleanup_auth_status,
+                "history": cleanup_history
+            }
         }),
         state,
     ))
+}
+
+fn cleanup_action_response(
+    request: &mut Request,
+    state: &AppState,
+) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
+    let body: CleanupActionRequest = serde_json::from_slice(&read_body(request)?)?;
+    let config = if body.config.is_null() {
+        AppConfig::load()?
+    } else {
+        AppConfig::normalize_json(&body.config)
+    };
+    let value = match body.action.as_str() {
+        "save_api_key" => {
+            secrets::set_compatible_api_key(&body.secret)?;
+            json!({"message":"API key saved in the operating-system vault"})
+        }
+        "delete_api_key" => {
+            secrets::delete_compatible_api_key()?;
+            json!({"message":"API key removed"})
+        }
+        "list_models" => {
+            let models = cleanup::list_models(&config.cleanup)?;
+            json!({"message":"Models refreshed","models":models})
+        }
+        "test" => {
+            let transcript = if body.transcript.trim().is_empty() {
+                "uh hello jason no sorry Jayson comma this is a test".to_owned()
+            } else {
+                body.transcript
+            };
+            let result = cleanup::clean_transcript(&config.cleanup, &transcript, None)?;
+            json!({"message":"Cleanup test passed","result":result})
+        }
+        "chatgpt_login_browser" => {
+            let login = auth::begin_browser_login()?;
+            let url = login.authorization_url.clone();
+            *state.cleanup_auth_status.lock().expect("cleanup auth lock") =
+                json!({"state":"waiting_browser"});
+            let auth_status = Arc::clone(&state.cleanup_auth_status);
+            // The settings process owns this short-lived OAuth wait, while capture remains available.
+            std::thread::spawn(move || match login.complete() {
+                Ok(_) => {
+                    *auth_status.lock().expect("cleanup auth lock") = json!({"state":"connected"})
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "ChatGPT browser login failed");
+                    *auth_status.lock().expect("cleanup auth lock") =
+                        json!({"state":"error","message":format!("{error:#}")});
+                }
+            });
+            json!({"message":"Finish connecting in your browser","url":url})
+        }
+        "chatgpt_login_code" => {
+            let login = auth::begin_device_login()?;
+            let url = login.verification_url.clone();
+            let code = login.user_code.clone();
+            *state.cleanup_auth_status.lock().expect("cleanup auth lock") =
+                json!({"state":"waiting_code","code":code});
+            let auth_status = Arc::clone(&state.cleanup_auth_status);
+            std::thread::spawn(move || match login.complete() {
+                Ok(_) => {
+                    *auth_status.lock().expect("cleanup auth lock") = json!({"state":"connected"})
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "ChatGPT device login failed");
+                    *auth_status.lock().expect("cleanup auth lock") =
+                        json!({"state":"error","message":format!("{error:#}")});
+                }
+            });
+            json!({"message":"Enter the code in your browser","url":url,"code":code})
+        }
+        "chatgpt_logout" => {
+            secrets::delete_chatgpt_tokens()?;
+            *state.cleanup_auth_status.lock().expect("cleanup auth lock") = json!({"state":"idle"});
+            json!({"message":"ChatGPT disconnected"})
+        }
+        "clear_history" => {
+            let response = capture_request(state, ShellCommand::ClearCleanupHistory)?;
+            anyhow::ensure!(response.ok, "{}", response.message);
+            json!({"message":"Cleanup history cleared"})
+        }
+        _ => anyhow::bail!("unsupported cleanup action"),
+    };
+    Ok(json_response(StatusCode(200), &value, state))
 }
 
 #[cfg(target_os = "linux")]
@@ -901,5 +1024,8 @@ mod tests {
         assert!(TOKENS.contains("--color-accent"));
         assert!(JS.contains("model_download_progress"));
         assert!(JS.contains("Search language or model"));
+        assert!(INDEX.contains("AI cleanup"));
+        assert!(JS.contains("chatgpt_login_browser"));
+        assert!(JS.contains("cleanup.screenshot.excluded_apps"));
     }
 }

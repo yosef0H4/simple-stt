@@ -4,7 +4,9 @@
 //! look — and sizes the surface to fit the text so the panel grows/shrinks with
 //! its content (dynamic, tooltip-style UI).
 
-use super::overlay_model::{render_overlay_text, OverlayPrimary, VisualizerLevels};
+use super::overlay_model::{
+    render_overlay_text, OverlayPrimary, RecordingIndicators, VisualizerLevels,
+};
 
 // Monospace font that renders the block glyphs (▁▂▃…▇) full-cell and crisp,
 // matching how they look in a terminal. JetBrainsMono is SIL OFL licensed.
@@ -37,8 +39,9 @@ pub fn plan_for(
     primary: OverlayPrimary,
     notice: Option<&str>,
     levels: &VisualizerLevels,
+    indicators: RecordingIndicators,
 ) -> Option<LayoutPlan> {
-    let text = render_overlay_text(primary, notice, levels).replace("\r\n", "\n");
+    let text = render_overlay_text(primary, notice, levels, indicators).replace("\r\n", "\n");
     if text.trim().is_empty() {
         return None;
     }

@@ -52,6 +52,13 @@ SimpleSttBoolText(value) {
     return SimpleSttBool(value) ? "true" : "false"
 }
 
+SimpleSttNoticeEndsSession(event) {
+    return event.Has("values")
+        && IsObject(event["values"])
+        && event["values"].Has("terminal")
+        && SimpleSttBool(event["values"]["terminal"])
+}
+
 SimpleSttNextDeliveryMode(current, configured := "smart_paste,type") {
     modes := []
     for mode in StrSplit(configured, ",") {

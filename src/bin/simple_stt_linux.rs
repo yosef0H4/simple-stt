@@ -54,6 +54,7 @@ enum LinuxCommand {
     Settings,
     ConfigureShortcuts,
     CycleDelivery,
+    ToggleCleanup,
     PrintShortcutCommands,
     InstallUserService,
 }
@@ -137,6 +138,7 @@ fn main() -> Result<()> {
         LinuxCommand::Settings => settings(),
         LinuxCommand::ConfigureShortcuts => configure_shortcuts(),
         LinuxCommand::CycleDelivery => toggle_linux_delivery_mode(),
+        LinuxCommand::ToggleCleanup => toggle_linux_cleanup(),
         LinuxCommand::PrintShortcutCommands => print_shortcut_commands(),
         LinuxCommand::InstallUserService => install_user_service(),
     }
@@ -646,6 +648,7 @@ fn print_shortcut_commands() -> Result<()> {
     println!("Toggle dictation: {} toggle", exe.display());
     println!("Cancel dictation: {} cancel", exe.display());
     println!("Switch delivery:  {} cycle-delivery", exe.display());
+    println!("Toggle AI cleanup: {} toggle-cleanup", exe.display());
     println!("Unload model:     {} unload-model", exe.display());
     println!("Start program:    systemctl --user start simple-stt-linux.service");
     println!("Close program:    {} shutdown", exe.display());
@@ -763,6 +766,7 @@ async fn portal_shortcuts_loop() -> Result<()> {
         NewShortcut::new("record", "Record or stop dictation"),
         NewShortcut::new("cancel", "Cancel dictation"),
         NewShortcut::new("delivery", "Toggle text delivery mode"),
+        NewShortcut::new("cleanup", "Toggle AI transcript cleanup"),
     ];
     let request = portal
         .bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default())
@@ -886,8 +890,10 @@ fn x11_shortcuts_loop() -> Result<()> {
         ("record", config.general.record_hotkey.as_str()),
         ("cancel", config.general.cancel_hotkey.as_str()),
         ("delivery", config.general.toggle_delivery_hotkey.as_str()),
+        ("cleanup", config.general.toggle_cleanup_hotkey.as_str()),
     ]
     .into_iter()
+    .filter(|(_, chord)| !hotkey_is_none(chord))
     .map(|(id, chord)| parse_x11_shortcut(&connection, id, chord))
     .collect::<Result<Vec<_>>>()?;
 
@@ -1121,6 +1127,7 @@ fn handle_portal_activation(id: &str) -> Result<()> {
         }
         "cancel" => cancel(),
         "delivery" => toggle_linux_delivery_mode(),
+        "cleanup" => toggle_linux_cleanup(),
         _ => Ok(()),
     }
 }
@@ -1176,6 +1183,37 @@ fn toggle_linux_delivery_mode() -> Result<()> {
     );
     println!("[{APP}] {text}");
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn toggle_linux_cleanup() -> Result<()> {
+    let mut config = AppConfig::load()?;
+    config.cleanup.enabled = !config.cleanup.enabled;
+    let enabled = config.cleanup.enabled;
+    if !enabled {
+        config.cleanup.screenshot.enabled = false;
+    }
+    config.save()?;
+    let result = run_ctl(["reload-config"], Duration::from_secs(5), false)?;
+    anyhow::ensure!(result.ok, "{}", result.message);
+    println!(
+        "[{APP}] AI cleanup {}",
+        if enabled { "enabled" } else { "disabled" }
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn toggle_linux_cleanup() -> Result<()> {
+    bail!("AI cleanup shortcut toggling is only available on Linux")
+}
+
+#[cfg(target_os = "linux")]
+fn hotkey_is_none(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "none" | "off" | "disabled"
+    )
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -12,12 +12,19 @@ The command runs:
 
 ```text
 cargo test --all-targets
+python scripts\test-cleanup-settings-e2e.py
 python scripts\verify-static.py
 python tools\ipc-poc\test_poc.py
 scripts\test-ahk-full.cmd
 ```
 
 The AutoHotkey portion rebuilds current release binaries first, so runtime smoke tests cannot accidentally validate stale executables.
+
+The cleanup E2E launches the real `simple-stt-settings` process against a
+deterministic OpenAI-compatible HTTP server, then exercises bootstrap and
+**Test cleanup** across the authenticated browser API. Debug-only provider
+values can be supplied through the ignored `.env` file documented by
+`.env.example`.
 
 ## Full-suite coverage
 
@@ -26,7 +33,9 @@ The combined validation suite covers:
 ```text
 Rust unit tests
 real-child-process worker lifecycle integration tests
-nested schema-v5 normalization and malformed-file preservation
+nested schema-v7 normalization and malformed-file preservation
+AI cleanup provider response parsing, Unicode preservation, and raw-text fallback
+AI credential separation from portable configuration
 install-relative runtime path behavior
 Windows Common Controls v6 manifest embedding
 loopback authenticated IPC
@@ -63,7 +72,8 @@ shell JSON Unicode and malformed JSON
 escaped helper protocol Unicode/control-character round trip
 worker framed protocol PCM and Unicode transcript framing
 protocol-version and malformed-size rejection
-schema-v5 normalization, unknown-field removal, and malformed-file preservation
+schema-v7 normalization, unknown-field removal, and malformed-file preservation
+AI cleanup defaults, nested invalid-value recovery, OAuth PKCE, and Codex SSE parsing
 approved model-name restriction
 lazy launch / warm reuse / model replacement / idle policy
 install-relative runtime root behavior
@@ -125,7 +135,9 @@ state-file reconnect after simulated service restart
 
 ## Browser Settings coverage
 
-Browser automation covers all five pages, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
+Browser automation covers all six pages, including AI Cleanup, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, provider model search/manual IDs, credential-state controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
+
+Provider tests use deterministic loopback fixtures and must never use a developer's saved API key. A real provider test is manual, requires a freshly issued credential supplied through the OS vault or `SIMPLE_STT_AI_API_KEY`, and must verify that a failed or timed-out request delivers the original transcript. Screenshot testing must also verify the visible capture notice, denylist behavior, active-window targeting, and that no image or history survives capture-process exit. Wayland's compositor-owned picker remains a manual desktop check.
 
 ## Linux X11 shortcut E2E
 

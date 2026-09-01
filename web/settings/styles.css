@@ -1,6 +1,8 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4
  * genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app
- * contrast: pass (40–41) · tokens: pass (48) · mobile: pass (34, 49–57)
+ * contrast: pass (40–41) · nav: N2 sidebar/workbench · footer: none · slop: pass (42–45)
+ * honest: pass (46) · chrome: pass (47) · tokens: pass (48) · responsive: pass (49) · icons: pass (30)
+ * mobile: pass (34, 49–57)
  */
 * {
   box-sizing: border-box;
@@ -1099,6 +1101,106 @@ textarea,
   border-radius: var(--radius-input);
   background: var(--color-paper-raised);
 }
+
+.field-textarea {
+  align-items: start;
+}
+.field-textarea textarea,
+.cleanup-test textarea {
+  width: 100%;
+  resize: vertical;
+}
+.inline-control {
+  display: flex;
+  gap: var(--space-2xs);
+}
+.inline-control input {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.icon-button {
+  display: inline-grid;
+  width: 2.75rem;
+  min-width: 2.75rem;
+  padding: 0;
+  place-items: center;
+}
+.account-card {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm);
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-paper-soft);
+}
+.account-card > div:first-child {
+  display: grid;
+  gap: var(--space-3xs);
+}
+.account-card span,
+.cleanup-empty {
+  color: var(--color-ink-muted);
+}
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+.cleanup-model-refresh {
+  margin-block-start: var(--space-2xs);
+}
+.cleanup-test {
+  display: grid;
+  gap: var(--space-2xs);
+  padding: var(--space-sm) 0 0;
+}
+.cleanup-test button {
+  justify-self: start;
+}
+.cleanup-test output {
+  min-height: 3rem;
+  padding: var(--space-xs);
+  border: var(--rule-thin) solid var(--color-rule);
+  border-radius: var(--radius-input);
+  background: var(--color-paper-soft);
+  white-space: pre-wrap;
+}
+.cleanup-test output:empty {
+  display: none;
+}
+.cleanup-test output[data-state="error"] {
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+.cleanup-history-card {
+  position: relative;
+  display: grid;
+  gap: var(--space-2xs);
+  padding: var(--space-sm) 3.5rem var(--space-sm) var(--space-sm);
+  border-block-start: var(--rule-thin) solid var(--color-rule);
+}
+.cleanup-history-card small {
+  color: var(--color-ink-muted);
+}
+.cleanup-history-card p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.cleanup-history-card p:first-of-type {
+  color: var(--color-ink-muted);
+  text-decoration: line-through;
+  text-decoration-thickness: var(--rule-thin);
+}
+.cleanup-history-card .icon-button {
+  position: absolute;
+  inset: var(--space-sm) var(--space-sm) auto auto;
+}
+.cleanup-empty {
+  margin: 0;
+  padding: var(--space-sm) 0;
+}
 .model-results {
   display: grid;
   gap: var(--space-2xs);
@@ -1214,6 +1316,11 @@ textarea,
   }
 }
 @media (max-width: 39.99rem) {
+  nav button {
+    column-gap: var(--space-3xs);
+    padding-inline: var(--space-3xs);
+    font-size: var(--text-sm);
+  }
   .setting-group {
     padding: var(--space-sm);
     border-radius: var(--radius-card);
@@ -1224,7 +1331,16 @@ textarea,
     margin: 0 var(--space-xs) var(--space-xs) 0;
   }
   .group-head {
+    align-items: center;
     min-height: 2.5rem;
+  }
+  .group-reset span {
+    display: none;
+  }
+  .group-reset {
+    min-width: 2.75rem;
+    margin-inline-start: var(--space-3xs);
+    padding-inline: var(--space-2xs);
   }
   .model-result {
     grid-template-columns: minmax(0, 1fr);
@@ -1237,5 +1353,16 @@ textarea,
   }
   .field-switch .control {
     justify-self: start;
+  }
+}
+
+@media (max-width: 39.99rem) {
+  .inline-control,
+  .account-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .account-actions > button {
+    flex: 1 1 auto;
   }
 }

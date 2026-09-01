@@ -119,6 +119,12 @@ simple-stt-infer.log
 
 Transcripts are not logged by default.
 
+## Optional AI cleanup
+
+The current split architecture can optionally clean a completed transcript before the shell applies text transforms and delivery. This work belongs to `simple-stt-capture`, runs off its control thread, and does not change the Parakeet isolation boundary. OpenAI-compatible credentials and ChatGPT subscription tokens are stored outside portable `config.json` in the operating-system credential vault. Cleanup is disabled by default, falls back to the raw transcript on every error or timeout, and keeps only five comparison pairs in process memory.
+
+Screen context is a separate privacy opt-in. Windows captures the HWND remembered at recording start, X11 uses the active window, and Wayland requests a compositor-owned portal selection for each dictation. The image is resized, JPEG-encoded, sent with one request, and never written by Simple STT. Password-manager names seed the local denylist.
+
 ## Old utilities and tests
 
 Archived utilities:

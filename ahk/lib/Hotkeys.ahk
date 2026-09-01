@@ -1,4 +1,9 @@
 class HotkeySpec {
+    static IsNone(label) {
+        value := StrLower(Trim(label))
+        return value = "none" || value = "disabled" || value = "off"
+    }
+
     static Parse(label) {
         parts := StrSplit(label, "+")
         if parts.Length < 2
@@ -183,16 +188,19 @@ class HotkeyManager {
 
     Configure(label, enabled, capslockBehavior, releaseStops := true) {
         this.DisableBindings()
-        this.spec := HotkeySpec.Parse(label)
+        this.spec := HotkeySpec.IsNone(label) ? "" : HotkeySpec.Parse(label)
         this.capslockBehavior := capslockBehavior
-        this.enabled := enabled
+        this.enabled := enabled && IsObject(this.spec)
         this.releaseStops := releaseStops
-        if enabled
+        if this.enabled
             this.EnableBindings()
-        this.logger.Write("info", "hotkey configured label=" . this.spec["label"] . " enabled=" . SimpleSttBoolText(enabled))
+        configuredLabel := IsObject(this.spec) ? this.spec["label"] : "None"
+        this.logger.Write("info", "hotkey configured label=" . configuredLabel . " enabled=" . SimpleSttBoolText(this.enabled))
     }
 
     EnableBindings() {
+        if !IsObject(this.spec)
+            return
         Hotkey(this.spec["down"], this.downCallback, "On")
         Hotkey(this.spec["up"], this.upCallback, "On")
         if this.spec["uses_capslock"] {
@@ -221,8 +229,8 @@ class HotkeyManager {
         if this.enabled = enabled
             return
         this.DisableBindings()
-        this.enabled := enabled
-        if enabled
+        this.enabled := enabled && IsObject(this.spec)
+        if this.enabled
             this.EnableBindings()
     }
 

@@ -36,6 +36,8 @@ enum CommandKind {
     StartRecording {
         #[arg(long)]
         session_id: u64,
+        #[arg(long)]
+        target_window: Option<i64>,
     },
     StopRecording {
         #[arg(long)]
@@ -58,6 +60,8 @@ enum CommandKind {
     ListInputs,
     ListModels,
     RefreshModels,
+    ListCleanupHistory,
+    ClearCleanupHistory,
     Notice {
         #[arg(long)]
         level: NoticeArg,
@@ -194,7 +198,13 @@ fn poll_events_wait(
 fn translate(command: CommandKind) -> ShellCommand {
     match command {
         CommandKind::Ping => ShellCommand::Ping,
-        CommandKind::StartRecording { session_id } => ShellCommand::StartRecording { session_id },
+        CommandKind::StartRecording {
+            session_id,
+            target_window,
+        } => ShellCommand::StartRecording {
+            session_id,
+            target_window,
+        },
         CommandKind::StopRecording { session_id } => ShellCommand::StopRecording { session_id },
         CommandKind::Cancel => ShellCommand::Cancel,
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
@@ -205,6 +215,8 @@ fn translate(command: CommandKind) -> ShellCommand {
         CommandKind::ListInputs => ShellCommand::ListInputs,
         CommandKind::ListModels => ShellCommand::ListModels,
         CommandKind::RefreshModels => ShellCommand::RefreshModels,
+        CommandKind::ListCleanupHistory => ShellCommand::ListCleanupHistory,
+        CommandKind::ClearCleanupHistory => ShellCommand::ClearCleanupHistory,
         CommandKind::Notice { level, text } => ShellCommand::ShowNotice {
             level: match level {
                 NoticeArg::Info => NoticeLevel::Info,
@@ -246,6 +258,13 @@ fn config_show() -> Result<ShellResponse> {
     response
         .values
         .insert("cancel_hotkey".into(), config.general.cancel_hotkey.clone());
+    response.values.insert(
+        "toggle_cleanup_hotkey".into(),
+        config.general.toggle_cleanup_hotkey.clone(),
+    );
+    response
+        .values
+        .insert("cleanup_enabled".into(), config.cleanup.enabled.to_string());
     response.values.insert(
         "capslock_behavior".into(),
         match config.general.capslock_behavior {
@@ -443,6 +462,13 @@ fn apply_config_field(config: &mut AppConfig, key: &str, value: &str) -> Result<
 }
 
 fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
+    if key == "cleanup_enabled" {
+        config.cleanup.enabled = parse_bool(value)?;
+        if !config.cleanup.enabled {
+            config.cleanup.screenshot.enabled = false;
+        }
+        return Ok(true);
+    }
     let target = match key {
         "hotkey_enabled" => &mut config.general.enabled,
         "paced_typing_enabled" => &mut config.output.paced_typing_enabled,
@@ -463,6 +489,7 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
         "record_hotkey" => &mut config.general.record_hotkey,
         "toggle_delivery_hotkey" => &mut config.general.toggle_delivery_hotkey,
         "cancel_hotkey" => &mut config.general.cancel_hotkey,
+        "toggle_cleanup_hotkey" => &mut config.general.toggle_cleanup_hotkey,
         "audio_device_contains" => &mut config.audio.preferred_device_id,
         "parakeet_runtime_dir" => &mut config.speech.runtime_dir,
         "model_dir" => &mut config.speech.model_dir,

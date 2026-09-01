@@ -56,6 +56,12 @@
               <path d="M3 12h12m4-7v14" /></svg
             ><span>Output</span><small>Typing &amp; transforms</small>
           </button>
+          <button data-page="cleanup">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M12 3a6 6 0 0 0-6 6c0 1.4.5 2.7 1.3 3.7L6 18h12l-1.3-5.3A6 6 0 0 0 12 3Z" />
+              <path d="M9 21h6M9 9h6m-3-3v6" />
+            </svg><span>AI cleanup</span><small>Corrections &amp; context</small>
+          </button>
           <button data-page="advanced">
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="3" />
@@ -104,6 +110,12 @@
               <h1>Output</h1>
             </header>
             <div id="output-fields"></div>
+          </section>
+          <section data-section="cleanup" hidden>
+            <header class="page-head">
+              <h1>AI cleanup</h1>
+            </header>
+            <div id="cleanup-fields"></div>
           </section>
           <section data-section="advanced" hidden>
             <header class="page-head">

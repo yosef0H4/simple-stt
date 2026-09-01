@@ -19,7 +19,7 @@ mod platform;
 
 #[cfg(not(any(windows, target_os = "linux")))]
 mod platform {
-    use super::overlay_model::OverlayPrimary;
+    use super::overlay_model::{OverlayPrimary, RecordingIndicators};
     use anyhow::Result;
     use std::sync::{atomic::AtomicU32, Arc};
     use std::time::Duration;
@@ -33,7 +33,7 @@ mod platform {
                 level: Arc::new(AtomicU32::new(0)),
             })
         }
-        pub fn start_recording(&self, _: isize) {}
+        pub fn start_recording(&self, _: isize, _: RecordingIndicators) {}
         pub fn set_primary(&self, _: OverlayPrimary) {}
         pub fn notify_info(&self, _: impl Into<String>, _: Option<Duration>) {}
         pub fn notify_warning(&self, _: impl Into<String>, _: Duration) {}
@@ -47,6 +47,6 @@ mod platform {
 }
 pub use overlay_model::{
     ascii_visualizer, empty_visualizer_levels, linux_overlay_lines, render_overlay_text,
-    set_visualizer_level, NoticeLevel, OverlayPrimary,
+    set_visualizer_level, NoticeLevel, OverlayPrimary, RecordingIndicators,
 };
 pub use platform::OverlayHandle;

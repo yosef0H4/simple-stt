@@ -29,6 +29,8 @@ simple-stt-capture.exe
     ├── fast overlay and RMS level updates
     ├── local control server and structured events
     ├── model downloads and tests off the control thread
+    ├── optional asynchronous AI transcript cleanup and in-memory history
+    ├── optional bounded, in-memory screen context capture
     └── lazy supervision of simple-stt-infer.exe
 
 simple-stt-settings.exe
@@ -37,6 +39,8 @@ simple-stt-settings.exe
     ├── edits canonical nested config.json with explicit Save
     ├── streams capture/model events to the browser
     ├── starts model refresh, download, selection, and test workflows
+    ├── configures/tests AI cleanup and owns short-lived OAuth callbacks
+    ├── stores provider credentials only in the operating-system vault
     └── exits on Close or idle timeout; repeated opens reuse its session
 
 simple-stt-infer.exe
@@ -64,7 +68,10 @@ simple-stt-infer.exe
 | Rapid recording visualizer | capture service | Rust Win32 overlay. |
 | Parakeet DLL and model | infer worker | Isolated; capture service cannot import loader. |
 | Model idle cleanup | capture service + infer worker | request graceful worker shutdown, then process exit; exact-PID force kill only after grace period. |
-| Canonical config | schema-v5 JSON | Nested portable JSON; browser UI is only an editor. |
+| AI transcript cleanup | capture service | Optional and disabled by default. Runs after STT and before AHK transforms/delivery. Failures and timeouts deliver the original transcript. It never loads speech models. |
+| Screen context | capture service | Separately opted in. Windows uses the recording target HWND, X11 captures the active window, and Wayland uses a compositor-owned portal prompt. Images remain in memory and are bounded before upload. |
+| AI credentials | OS vault | Windows Credential Manager or the Linux desktop secret service. `SIMPLE_STT_AI_API_KEY` is an explicit process-environment override; secrets never enter `config.json` or logs. |
+| Canonical config | schema-v7 JSON | Nested portable JSON; browser UI is only an editor. |
 | Component logs | each component | Shell, capture, and infer logs are separate. |
 
 ## Dictation sequence
@@ -95,7 +102,9 @@ simple-stt-infer
   return framed Unicode transcript on stdout
 
 capture service
-  queue transcript event
+  if AI cleanup is enabled, send transcript and optional screen context to the selected provider
+  keep at most five raw/cleaned pairs in process memory
+  queue cleaned transcript event, or original transcript on any cleanup failure
 
 AHK poll timer
   launch simple-stt-ctl poll-events
@@ -104,7 +113,11 @@ AHK poll timer
   verify same HWND before every chunk
 ```
 
-A later dictation can be recorded while an earlier inference request is completing. Shell target windows are tracked by session and transcript typing is queued, avoiding loss of rapid repeated dictations.
+A later dictation can be recorded while an earlier inference or cleanup request is completing. Shell target windows are tracked by session and transcript typing is queued, avoiding loss of rapid repeated dictations.
+
+On Windows, every app hotkey may be set to `None`. The AI-cleanup toggle defaults to `None`; when assigned, it atomically flips `cleanup.enabled`, requests capture-service reload, and affects the next dictation. On Wayland the equivalent action is compositor-assigned through the GlobalShortcuts portal.
+
+AI cleanup is stateless at the provider boundary: each request contains only the current transcript, the configured system instructions, and at most one current screenshot. Transcript and screen text are explicitly delimited as untrusted content. The five-item Settings history is memory-only and disappears with the capture process.
 
 ## Worker cleanup sequence
 

@@ -34,7 +34,7 @@ need(
 )
 need("src/infer/parakeet_native.rs", 'libparakeet.so', 'parakeet.so', 'parakeet_capi_load')
 need("src/capture/inference_supervisor.rs", 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'add_native_library_search_env')
-need("src/config.rs", 'CONFIG_SCHEMA_VERSION: u32 = 5', 'pub struct GeneralConfig', 'pub struct AudioConfig', 'parakeet-linux', 'parakeet_native_library_candidates')
+need("src/config.rs", 'CONFIG_SCHEMA_VERSION: u32 = 7', 'pub struct GeneralConfig', 'pub struct AudioConfig', 'parakeet-linux', 'parakeet_native_library_candidates', 'screen context requires AI cleanup')
 need("src/capture/process.rs", 'use anyhow::Context;', 'use anyhow::Result;', 'kill')
 need("Cargo.toml", 'name = "simple-stt-linux"', 'path = "src/bin/simple_stt_linux.rs"')
 linux_shell = need(
@@ -51,7 +51,7 @@ linux_shell = need(
     'ydotool',
     'xdotool',
 )
-need("src/capture/overlay_model.rs", 'ascii_visualizer', 'render_overlay_text', 'OverlayPrimary')
+need("src/capture/overlay_model.rs", 'ascii_visualizer', 'render_overlay_text', 'OverlayPrimary', 'RecordingIndicators')
 need("src/capture/overlay_windows.rs", 'render_overlay_text', 'crate::capture::overlay::overlay_model::ascii_visualizer')
 need("resources/linux-fast-paste.c", 'adapted from OpenWhispr', 'PASTE_MODE_SHIFT_INSERT', '--detect-terminal', '--active-app', 'active_app_atspi', 'RemoteDesktop')
 need("src/bin/simple_stt_linux.rs", 'native-paste-restore-token', '--restore-token', 'run_native_paste')

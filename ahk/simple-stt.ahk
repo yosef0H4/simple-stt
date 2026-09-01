@@ -39,6 +39,7 @@ class SimpleSttShell {
         this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger, this.capsController)
         this.cancelHotkey := HotkeyManager(ObjBindMethod(this, "CancelAll"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.cleanupToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleCleanupHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.tray := TrayController(this)
         this.modeTooltipTimer := ObjBindMethod(this, "HideModeTooltip")
         this.ApplyHotkeyConfig()
@@ -53,6 +54,7 @@ class SimpleSttShell {
             this.hotkeys.Configure(this.config.Get("record_hotkey", "CapsLock+S"), this.config.Bool("hotkey_enabled", true), capsMode, releaseStops)
             this.cancelHotkey.Configure(this.config.Get("cancel_hotkey", "CapsLock+A"), true, capsMode)
             this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+D"), true, capsMode)
+            this.cleanupToggleHotkey.Configure(this.config.Get("toggle_cleanup_hotkey", "None"), true, capsMode)
         } catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
             MsgBox(err.Message, "SimpleStt hotkey error", "Iconx")
@@ -79,7 +81,7 @@ class SimpleSttShell {
         this.sessions[session] := target
         this.pendingStarts[session] := true
         this.logger.Write("info", "hotkey down target_hwnd=" . target, session)
-        this.ipc.CallService("start-recording --session-id " . session, ObjBindMethod(this, "RecordingStarted", session))
+        this.ipc.CallService("start-recording --session-id " . session . " --target-window " . target, ObjBindMethod(this, "RecordingStarted", session))
     }
 
     RecordingStarted(session, response) {
@@ -150,7 +152,7 @@ class SimpleSttShell {
                 this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), this.config.Bool("trailing_space", true), mode)
             case "notice":
                 this.Notice(event["text"], event["level"])
-                if session && this.sessions.Has(session)
+                if session && this.sessions.Has(session) && SimpleSttNoticeEndsSession(event)
                     this.sessions.Delete(session)
             case "configuration_reloaded":
                 this.ApplyReloadedConfig()
@@ -273,6 +275,21 @@ class SimpleSttShell {
             this.Notice(enabled ? "Hotkey enabled" : "Hotkey disabled")
         } catch Error as err {
             MsgBox(err.Message, "SimpleStt settings error", "Iconx")
+        }
+    }
+
+    ToggleCleanupHotkey() {
+        enabled := !this.config.Bool("cleanup_enabled", false)
+        this.config.Set("cleanup_enabled", SimpleSttBoolText(enabled))
+        try {
+            this.config.SaveSync()
+            this.PublishRuntimeConfigChange()
+            ToolTip("AI cleanup: " . (enabled ? "On" : "Off"))
+            SetTimer(this.modeTooltipTimer, -1200)
+            this.logger.Write("info", "AI cleanup toggled enabled=" . SimpleSttBoolText(enabled))
+        } catch Error as err {
+            this.logger.Write("error", "AI cleanup toggle failed: " . err.Message)
+            this.Notice("AI cleanup toggle failed — see log", "error")
         }
     }
 
