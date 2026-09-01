@@ -139,6 +139,14 @@ Browser automation covers all six pages, including AI Cleanup, narrow and wide l
 
 Provider tests use deterministic loopback fixtures and must never use a developer's saved API key. A real provider test is manual, requires a freshly issued credential supplied through the OS vault or `SIMPLE_STT_AI_API_KEY`, and must verify that a failed or timed-out request delivers the original transcript. Screenshot testing must also verify the visible capture notice, denylist behavior, active-window targeting, and that no image or history survives capture-process exit. Wayland's compositor-owned picker remains a manual desktop check.
 
+For an opt-in quality check against the provider configured in the ignored local `.env`, run:
+
+```powershell
+python scripts\benchmark-cleanup-live.py
+```
+
+The benchmark uses the real debug Settings process and scores several unrelated ASR-error patterns plus a preservation control. It prints provider output for review and is intentionally excluded from deterministic validation because model output and external service availability can vary.
+
 ## Linux X11 shortcut E2E
 
 The native X11 shortcut listener has an opt-in end-to-end test. It needs `Xvfb`, `xdpyinfo`, and `xdotool`:
