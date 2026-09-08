@@ -43,6 +43,10 @@ enum CommandKind {
         #[arg(long)]
         session_id: u64,
     },
+    DeliveryComplete {
+        #[arg(long)]
+        session_id: u64,
+    },
     Cancel,
     PollEvents {
         #[arg(long, default_value_t = 0)]
@@ -206,6 +210,9 @@ fn translate(command: CommandKind) -> ShellCommand {
             target_window,
         },
         CommandKind::StopRecording { session_id } => ShellCommand::StopRecording { session_id },
+        CommandKind::DeliveryComplete { session_id } => {
+            ShellCommand::DeliveryComplete { session_id }
+        }
         CommandKind::Cancel => ShellCommand::Cancel,
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
         CommandKind::ReloadConfig => ShellCommand::ReloadConfig,

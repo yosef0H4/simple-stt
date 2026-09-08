@@ -6,10 +6,16 @@
 #Include ..\lib\Typist.ahk
 
 logger := ShellLog(A_Temp . "\simple-stt-typing-smoke.log")
-typistInstance := Typist(logger, Notice)
+global FinishedSessions := Array()
+typistInstance := Typist(logger, Notice, DeliveryFinished)
 
 Notice(text, level := "info") {
     SimpleSttConsoleLine("NOTICE[" . level . "]: " . text)
+}
+
+DeliveryFinished(sessionId) {
+    global FinishedSessions
+    FinishedSessions.Push(sessionId)
 }
 
 Fail(message, exitCode := 1) {
@@ -35,6 +41,8 @@ if typistInstance.active
     Fail("typist should have cancelled the active item in headless mode")
 if typistInstance.queue.Length != 0
     Fail("expected the queued transcript to drain after cancellation, got queue length " . typistInstance.queue.Length)
+if FinishedSessions.Length != 2 || FinishedSessions[1] != 1 || FinishedSessions[2] != 2
+    Fail("delivery completion callback did not cover active and queued sessions")
 
 typistInstance.Cancel("test cleanup", false, true)
 if typistInstance.queue.Length != 0
@@ -47,6 +55,8 @@ if typistInstance.active
     Fail("typist should be inactive after explicit cancel")
 if typistInstance.queue.Length != 0
     Fail("typist explicit cancel did not clear queue")
+if FinishedSessions.Length != 4 || FinishedSessions[3] != 3 || FinishedSessions[4] != 4
+    Fail("explicit cancel did not acknowledge every discarded delivery")
 
 SimpleSttConsoleLine("PASS: typist queue/cancel headless smoke")
 ExitApp(0)

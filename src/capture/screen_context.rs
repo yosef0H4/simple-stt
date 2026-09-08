@@ -20,7 +20,10 @@ pub fn capture(
     #[cfg(windows)]
     let image = capture_windows(config, target_window)?;
     #[cfg(target_os = "linux")]
-    let image = capture_linux(config)?;
+    let image = {
+        let _ = target_window;
+        capture_linux(config)?
+    };
     #[cfg(not(any(windows, target_os = "linux")))]
     let image: Option<DynamicImage> = None;
     image

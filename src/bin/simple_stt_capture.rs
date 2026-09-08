@@ -150,6 +150,7 @@ struct ControlContext<'a> {
     transcribing: &'a mut HashSet<u64>,
     warming: &'a mut HashSet<u64>,
     cleaning: &'a mut HashSet<u64>,
+    delivering: &'a mut HashSet<u64>,
     cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
     shutting_down: &'a mut bool,
 }
@@ -164,6 +165,7 @@ struct BackgroundContext<'a> {
     transcribing: &'a mut HashSet<u64>,
     warming: &'a mut HashSet<u64>,
     cleaning: &'a mut HashSet<u64>,
+    delivering: &'a mut HashSet<u64>,
     cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
     cancel_generation: &'a AtomicU64,
 }
@@ -253,6 +255,7 @@ fn main() -> Result<()> {
     let mut transcribing = HashSet::<u64>::new();
     let mut warming = HashSet::<u64>::new();
     let mut cleaning = HashSet::<u64>::new();
+    let mut delivering = HashSet::<u64>::new();
     let mut cleanup_history = VecDeque::<CleanupHistoryEntry>::new();
     let mut shutting_down = false;
     let idle_check_running = Arc::new(AtomicBool::new(false));
@@ -294,6 +297,7 @@ fn main() -> Result<()> {
                     transcribing: &mut transcribing,
                     warming: &mut warming,
                     cleaning: &mut cleaning,
+                    delivering: &mut delivering,
                     cleanup_history: &mut cleanup_history,
                     cancel_generation: &cancel_generation,
                 });
@@ -317,6 +321,7 @@ fn main() -> Result<()> {
                     transcribing: &mut transcribing,
                     warming: &mut warming,
                     cleaning: &mut cleaning,
+                    delivering: &mut delivering,
                     cleanup_history: &mut cleanup_history,
                     shutting_down: &mut shutting_down,
                 });
@@ -546,6 +551,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         transcribing,
         warming,
         cleaning,
+        delivering,
         cleanup_history,
         shutting_down,
     } = context;
@@ -564,8 +570,43 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             session_id,
             target_window,
         } => {
-            if active.is_some() {
-                return ShellResponse::error("a recording is already active");
+            let mut superseded = transcribing.iter().copied().collect::<HashSet<_>>();
+            superseded.extend(warming.iter().copied());
+            superseded.extend(cleaning.iter().copied());
+            superseded.extend(delivering.iter().copied());
+            if let Some(recording) = active.take() {
+                superseded.insert(recording.session_id);
+            }
+            let cancel_worker = !transcribing.is_empty() || !warming.is_empty();
+            if !superseded.is_empty() {
+                let generation = cancel_generation.fetch_add(1, Ordering::SeqCst) + 1;
+                recording_active.store(false, Ordering::Relaxed);
+                transcribing.clear();
+                warming.clear();
+                cleaning.clear();
+                delivering.clear();
+                for old_session in superseded {
+                    events.push(terminal_notice_event_for_session(
+                        NoticeLevel::Info,
+                        "Superseded by newer recording",
+                        old_session,
+                    ));
+                }
+                tracing::info!(
+                    generation,
+                    session_id,
+                    "new recording superseded older work"
+                );
+                if cancel_worker {
+                    let worker = Arc::clone(worker);
+                    let tracker = Arc::clone(worker_pid);
+                    let grace = Duration::from_millis(config.speech.worker_shutdown_grace_ms);
+                    std::thread::spawn(move || {
+                        if let Err(error) = shutdown_shared(worker, tracker, grace) {
+                            tracing::warn!(%error, "failed to stop superseded inference worker");
+                        }
+                    });
+                }
             }
             let preferred_restored = match refresh_audio_capture(
                 config,
@@ -651,7 +692,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let mut event = ServiceEvent::simple("recording_started");
             event.session_id = Some(session_id);
             events.push(event);
-            if nonzero_pid(worker_pid).is_none() && selected_model_available(config) {
+            if !cancel_worker
+                && nonzero_pid(worker_pid).is_none()
+                && selected_model_available(config)
+            {
                 warming.insert(session_id);
                 overlay.notify_info("🎙 Loading speech model…", None);
                 let mut loading = ServiceEvent::simple("model_loading");
@@ -760,15 +804,25 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             });
             ShellResponse::ok("transcription queued")
         }
+        ShellCommand::DeliveryComplete { session_id } => {
+            let removed = delivering.remove(&session_id);
+            let pending =
+                !transcribing.is_empty() || !cleaning.is_empty() || !delivering.is_empty();
+            restore_overlay_work_state(overlay, active.is_some(), pending);
+            tracing::info!(session_id, removed, "text delivery completed");
+            ShellResponse::ok("delivery completed")
+        }
         ShellCommand::Cancel => {
             let generation = cancel_generation.fetch_add(1, Ordering::SeqCst) + 1;
             let had_recording = active.take().is_some();
             let had_transcribing = !transcribing.is_empty();
             let had_warming = !warming.is_empty();
             let had_cleaning = !cleaning.is_empty();
+            let had_delivering = !delivering.is_empty();
             transcribing.clear();
             warming.clear();
             cleaning.clear();
+            delivering.clear();
             recording_active.store(false, Ordering::Relaxed);
             overlay.hide();
             events.push(notice_event(NoticeLevel::Warning, "Cancelled"));
@@ -778,6 +832,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 had_transcribing,
                 had_warming,
                 had_cleaning,
+                had_delivering,
                 "global cancellation requested"
             );
             if had_transcribing || had_warming {
@@ -1024,7 +1079,9 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 return;
             }
             context.transcribing.remove(&session_id);
-            let has_pending_transcript = !context.transcribing.is_empty();
+            let has_pending_work = !context.transcribing.is_empty()
+                || !context.cleaning.is_empty()
+                || !context.delivering.is_empty();
             match result {
                 Ok(text) if text.trim().is_empty() => {
                     context
@@ -1033,7 +1090,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     restore_overlay_work_state(
                         context.overlay,
                         context.active_recording,
-                        has_pending_transcript,
+                        has_pending_work,
                     );
                     context.events.push(terminal_notice_event_for_session(
                         NoticeLevel::Warning,
@@ -1067,10 +1124,11 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                             });
                         });
                     } else {
+                        context.delivering.insert(session_id);
                         restore_overlay_after_success(
                             context.overlay,
                             context.active_recording,
-                            has_pending_transcript,
+                            true,
                         );
                         push_transcript_event(context.events, session_id, text);
                     }
@@ -1083,7 +1141,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     restore_overlay_work_state(
                         context.overlay,
                         context.active_recording,
-                        has_pending_transcript,
+                        has_pending_work,
                     );
                     context.events.push(terminal_notice_event_for_session(
                         NoticeLevel::Error,
@@ -1108,7 +1166,6 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 return;
             }
             context.cleaning.remove(&session_id);
-            let has_pending = !context.transcribing.is_empty() || !context.cleaning.is_empty();
             match result {
                 Ok(cleaned) => {
                     tracing::info!(target: "simple_stt_privacy", session_id, raw_chars = raw.chars().count(), cleaned_chars = cleaned.text.chars().count(), latency_ms = cleaned.latency_ms, provider = %cleaned.provider, model = %cleaned.model, "AI cleanup complete");
@@ -1121,11 +1178,8 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                         outcome: "cleaned".into(),
                     });
                     trim_cleanup_history(context.cleanup_history);
-                    restore_overlay_after_success(
-                        context.overlay,
-                        context.active_recording,
-                        has_pending,
-                    );
+                    context.delivering.insert(session_id);
+                    restore_overlay_after_success(context.overlay, context.active_recording, true);
                     push_transcript_event(context.events, session_id, cleaned.text);
                 }
                 Err(error) => {
@@ -1162,11 +1216,8 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                         &failure_notice,
                         session_id,
                     ));
-                    restore_overlay_work_state(
-                        context.overlay,
-                        context.active_recording,
-                        has_pending,
-                    );
+                    context.delivering.insert(session_id);
+                    restore_overlay_work_state(context.overlay, context.active_recording, true);
                     push_transcript_event(context.events, session_id, raw);
                 }
             }

@@ -105,15 +105,17 @@ capture service
   if AI cleanup is enabled, send transcript and optional screen context to the selected provider
   keep at most five raw/cleaned pairs in process memory
   queue cleaned transcript event, or original transcript on any cleanup failure
+  keep the Transcribing overlay visible while awaiting desktop delivery acknowledgement
 
 AHK poll timer
   launch simple-stt-ctl poll-events
   receive transcript event
-  queue transcript for variable-paced per-character SendText typing
+  deliver the newest transcript by typing, paste, or clipboard
   verify same HWND before every chunk
+  acknowledge completion so capture can hide the overlay
 ```
 
-A later dictation can be recorded while an earlier inference or cleanup request is completing. Shell target windows are tracked by session and transcript typing is queued, avoiding loss of rapid repeated dictations.
+A new dictation supersedes all older work. Capture invalidates older inference and cleanup generations, terminates an obsolete inference worker when necessary, and discards stale results. The Windows shell cancels active or queued typing/paste work; the Linux shell checks the persisted session generation before delivery. This prevents delayed transcripts from arriving in a later context.
 
 On Windows, every app hotkey may be set to `None`. The AI-cleanup toggle defaults to `None`; when assigned, it atomically flips `cleanup.enabled`, requests capture-service reload, and affects the next dictation. On Wayland the equivalent action is compositor-assigned through the GlobalShortcuts portal.
 

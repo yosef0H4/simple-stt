@@ -45,6 +45,9 @@ pub enum ShellCommand {
     StopRecording {
         session_id: u64,
     },
+    DeliveryComplete {
+        session_id: u64,
+    },
     Cancel,
     PollEvents {
         after_seq: u64,
@@ -159,5 +162,15 @@ mod tests {
     #[test]
     fn malformed_json_is_rejected() {
         assert!(serde_json::from_str::<ClientMessage>("{not json}").is_err());
+    }
+
+    #[test]
+    fn delivery_completion_round_trips_with_session_id() {
+        let command = ShellCommand::DeliveryComplete { session_id: 42 };
+        let encoded = serde_json::to_string(&command).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ShellCommand>(&encoded).unwrap(),
+            command
+        );
     }
 }

@@ -34,7 +34,7 @@ class SimpleSttShell {
         this.supervisor := ProcessSupervisor(this.captureExe, this.ctlExe, this.config, this.logger, ObjBindMethod(this, "OnServiceRestart"))
         this.ipc := IpcClient(this.ctlExe, this.supervisor.stateFile, this.supervisor.token, ObjBindMethod(this, "HandleServiceEvent"), this.logger)
         this.supervisor.AttachIpc(this.ipc)
-        this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"))
+        this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"), ObjBindMethod(this, "DeliveryFinished"))
         this.capsController := CapsLockTapController(this.logger)
         this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger, this.capsController)
         this.cancelHotkey := HotkeyManager(ObjBindMethod(this, "CancelAll"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
@@ -75,6 +75,7 @@ class SimpleSttShell {
             this.Notice("Recording cancelled: no active target window", "warning")
             return
         }
+        this.CancelSupersededShellWork()
         this.sessionId += 1
         session := this.sessionId
         this.activeRecordingSession := session
@@ -130,6 +131,22 @@ class SimpleSttShell {
         this.Notice("Recording failed — see log", "error")
         if this.sessions.Has(session)
             this.sessions.Delete(session)
+    }
+
+    CancelSupersededShellWork() {
+        hadOlderWork := this.sessions.Count || this.pendingStarts.Count || this.pendingStops.Count || this.typist.active || this.typist.queue.Length
+        if this.typist.active || this.typist.queue.Length
+            this.typist.Cancel("text delivery superseded by newer recording", false)
+        if hadOlderWork
+            this.logger.Write("info", "new recording cleared older shell work")
+        this.sessions := Map()
+        this.pendingStarts := Map()
+        this.pendingStops := Map()
+    }
+
+    DeliveryFinished(session) {
+        if this.ipc.ready
+            this.ipc.CallService("delivery-complete --session-id " . session)
     }
 
     HandleServiceEvent(event) {

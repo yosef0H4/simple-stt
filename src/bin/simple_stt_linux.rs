@@ -77,7 +77,7 @@ struct CtlEvent {
     text: String,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 struct SessionState {
     recording: bool,
     session_id: u64,
@@ -490,16 +490,25 @@ fn toggle_recording(source: RecordingSource, timeout_s: f64, shift_insert: bool)
         }
         RecordingTransition::Start => {
             let session_id = next_session_id(state.session_id);
-            let result = run_ctl(
-                ["start-recording", "--session-id", &session_id.to_string()],
-                Duration::from_secs(35),
-                true,
-            )?;
-            write_session(&SessionState {
+            let next_state = SessionState {
                 recording: true,
                 session_id,
                 updated_at: now_secs(),
-            })?;
+            };
+            // Publish the new generation before IPC so an older helper that is
+            // waiting to deliver text cannot race the replacement recording.
+            write_session(&next_state)?;
+            let result = match run_ctl(
+                ["start-recording", "--session-id", &session_id.to_string()],
+                Duration::from_secs(35),
+                true,
+            ) {
+                Ok(result) => result,
+                Err(error) => {
+                    let _ = write_session(&state);
+                    return Err(error);
+                }
+            };
             write_seq(read_seq()?.max(max_event_seq(&result.events)))?;
             println!(
                 "[{APP}] recording started source={} session={session_id}",
@@ -580,9 +589,39 @@ fn finish_stop_recording(
         );
         return Ok(());
     };
-    let text = transform_text(&transcript)?;
-    let action = deliver_text(&text, shift_insert)?;
-    println!("[{APP}] {action} transcript chars={}", text.chars().count());
+    if !delivery_session_is_current(&read_session()?, pending.session_id) {
+        signal_delivery_complete(pending.session_id)?;
+        println!(
+            "[{APP}] discarded superseded transcript session={}",
+            pending.session_id
+        );
+        return Ok(());
+    }
+    let delivery = (|| -> Result<(&'static str, usize)> {
+        let text = transform_text(&transcript)?;
+        if !delivery_session_is_current(&read_session()?, pending.session_id) {
+            bail!("dictation was superseded before delivery");
+        }
+        let action = deliver_text(&text, shift_insert)?;
+        Ok((action, text.chars().count()))
+    })();
+    let completion = signal_delivery_complete(pending.session_id);
+    let (action, chars) = delivery?;
+    completion?;
+    println!("[{APP}] {action} transcript chars={chars}");
+    Ok(())
+}
+
+fn delivery_session_is_current(state: &SessionState, session_id: u64) -> bool {
+    !state.recording && state.session_id == session_id
+}
+
+fn signal_delivery_complete(session_id: u64) -> Result<()> {
+    run_ctl(
+        ["delivery-complete", "--session-id", &session_id.to_string()],
+        Duration::from_secs(5),
+        true,
+    )?;
     Ok(())
 }
 
@@ -1397,6 +1436,7 @@ fn terminal_transcription_notice(text: &str) -> bool {
         || text.contains("recording too short")
         || text.contains("speech engine failed")
         || text.contains("speech model is missing")
+        || text.contains("superseded by newer recording")
 }
 
 fn transform_text(text: &str) -> Result<String> {
@@ -2238,6 +2278,36 @@ mod tests {
             transcript_outcome(&[transcript], 42),
             TranscriptOutcome::Transcript("hello".to_owned())
         );
+        let superseded = CtlEvent {
+            seq: 3,
+            kind: "notice".to_owned(),
+            session_id: "42".to_owned(),
+            level: "info".to_owned(),
+            text: "Superseded by newer recording".to_owned(),
+        };
+        assert_eq!(
+            transcript_outcome(&[superseded], 42),
+            TranscriptOutcome::Terminal
+        );
+    }
+
+    #[test]
+    fn only_latest_completed_session_may_deliver() {
+        let completed = SessionState {
+            recording: false,
+            session_id: 42,
+            updated_at: 1.0,
+        };
+        assert!(delivery_session_is_current(&completed, 42));
+        assert!(!delivery_session_is_current(&completed, 41));
+        assert!(!delivery_session_is_current(
+            &SessionState {
+                recording: true,
+                session_id: 43,
+                updated_at: 2.0,
+            },
+            42
+        ));
     }
 
     #[test]

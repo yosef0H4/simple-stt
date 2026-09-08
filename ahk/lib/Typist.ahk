@@ -1,9 +1,10 @@
 class Typist {
     static modifierKeys := ["LCtrl", "RCtrl", "LAlt", "RAlt", "LShift", "RShift", "LWin", "RWin"]
 
-    __New(logger, onNotice) {
+    __New(logger, onNotice, onFinished := "") {
         this.logger := logger
         this.onNotice := onNotice
+        this.onFinished := onFinished
         this.active := false
         this.queue := Array()
         this.timer := ObjBindMethod(this, "Tick")
@@ -204,9 +205,11 @@ class Typist {
 
     CompleteCurrent() {
         this.logger.Write("info", "text-delivery success mode=" . this.deliveryMode, this.sessionId)
+        completedSession := this.sessionId
         this.active := false
         this.pasteStage := 0
         this.clipboardBackup := ""
+        this.NotifyFinished(completedSession)
         this.StartNext()
     }
 
@@ -230,8 +233,10 @@ class Typist {
         SetTimer(this.timer, 0)
         this.RestoreClipboardIfOwned()
         this.logger.Write("warning", reason, this.sessionId)
+        cancelledSession := this.sessionId
         this.active := false
         this.pasteStage := 0
+        this.NotifyFinished(cancelledSession)
         if notify && IsObject(this.onNotice)
             this.onNotice.Call(reason, "warning")
     }
@@ -240,8 +245,15 @@ class Typist {
         this.CancelCurrent(reason, notify)
         if clearQueue && this.queue.Length {
             this.logger.Write("warning", "text-delivery queue cleared count=" . this.queue.Length)
+            for item in this.queue
+                this.NotifyFinished(item["session_id"])
             this.queue := Array()
         }
+    }
+
+    NotifyFinished(sessionId) {
+        if IsObject(this.onFinished)
+            this.onFinished.Call(sessionId)
     }
 
     AnyPhysicalModifierDown() {

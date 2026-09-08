@@ -79,6 +79,7 @@ lazy launch / warm reuse / model replacement / idle policy
 install-relative runtime root behavior
 worker logging-level propagation
 stationary compact Unicode waveform behavior
+new-recording supersession and delivery-completion acknowledgement
 ```
 
 `src/bin/simple_stt_mock_infer.rs` is a deterministic test-only worker. `tests/worker_lifecycle.rs` launches it as a real child process and covers:
@@ -198,7 +199,7 @@ hotkeys-manual.ahk
   parser and runtime binding smoke
 
 typing-smoke.ahk
-  typed queue behavior and foreground mismatch cancellation
+  typed queue behavior, foreground mismatch cancellation, and completion acknowledgement
 
 text-transform-smoke.ahk
   punctuation removal, lowercase conversion, and combined transform
