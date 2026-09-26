@@ -30,3 +30,4 @@ lcov.info
 # Editors
 .vscode/
 .idea/
+tmp/
