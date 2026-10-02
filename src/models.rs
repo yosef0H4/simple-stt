@@ -468,10 +468,19 @@ where
 
 pub fn remove_model(config: &AppConfig, filename: &str) -> Result<()> {
     validate_model_filename(filename)?;
+    let mut usages = Vec::new();
+    if config.speech.single_model_filename.as_deref() == Some(filename) {
+        usages.push("Use one model".to_owned());
+    }
+    for (language, assigned) in &config.speech.language_models {
+        if assigned.as_deref() == Some(filename) {
+            usages.push(format!("{language} keyboard language"));
+        }
+    }
     anyhow::ensure!(
-        filename != config.speech.english_model_filename
-            && filename != config.speech.arabic_model_filename,
-        "select another model before removing the active model"
+        usages.is_empty(),
+        "model is assigned to {}; save another choice before removing it",
+        usages.join(", ")
     );
     anyhow::ensure!(
         catalog_for_config(config)
@@ -521,7 +530,7 @@ mod tests {
         config.speech.model_dir = temp.path().display().to_string();
         let model = downloadable_models(&config)
             .into_iter()
-            .find(|model| model.file == config.speech.arabic_model_filename)
+            .find(|model| model.file == "lemura-arabic-asr-lite-q8_0.gguf")
             .unwrap();
         assert_eq!(model.languages, ["Arabic (ar)"]);
         assert_eq!(model.download_url.as_deref(), Some(ARABIC_Q8_URL));
@@ -582,7 +591,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
         config.speech.model_dir = temp.path().display().to_string();
-        config.speech.english_model_filename = "tdt_ctc-110m-f16.gguf".into();
+        config.speech.single_model_filename = Some("tdt_ctc-110m-f16.gguf".into());
         let removable = "tdt_ctc-110m-q4_k.gguf";
         let path = temp.path().join(removable);
         fs::write(&path, b"fixture").unwrap();
@@ -594,7 +603,11 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
         config.speech.model_dir = temp.path().display().to_string();
-        let selected = config.speech.english_model_filename.clone();
+        let selected = "tdt_ctc-110m-q8_0.gguf".to_owned();
+        config
+            .speech
+            .language_models
+            .insert("fr".into(), Some(selected.clone()));
         let path = temp.path().join(&selected);
         fs::write(&path, b"fixture").unwrap();
         assert!(remove_model(&config, &selected).is_err());

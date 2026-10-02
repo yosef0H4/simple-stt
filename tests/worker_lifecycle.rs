@@ -20,7 +20,7 @@ fn worker_config(model_name: &str, idle: Duration, grace: Duration) -> WorkerCon
         log_path: root.join("simple-stt-mock-infer.log"),
         log_level: LogLevel::Debug,
         inference_device: InferenceDevice::Cpu,
-        speech_language: simple_stt::config::SpeechLanguage::English,
+        speech_language: "en".into(),
         idle_timeout: idle,
         shutdown_grace: grace,
     }
@@ -125,6 +125,28 @@ fn model_switch_recycles_worker_before_next_request() {
 }
 
 #[test]
+fn saving_assignments_does_not_replace_the_warm_selected_model() {
+    let mut worker = WorkerSupervisor::new(worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    ));
+    worker.transcribe_pcm(1, &[1]).unwrap();
+    let pid = worker.worker_pid().unwrap();
+    worker
+        .update_runtime_config(worker_config(
+            "another-saved-selection.gguf",
+            Duration::from_secs(10),
+            Duration::from_millis(300),
+        ))
+        .unwrap();
+    assert_eq!(worker.worker_pid(), Some(pid));
+    worker.transcribe_pcm(2, &[1]).unwrap();
+    assert_eq!(worker.worker_pid(), Some(pid));
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
 fn device_switch_recycles_worker_before_next_request() {
     let mut first = worker_config(
         "normal.gguf",
@@ -153,7 +175,7 @@ fn device_switch_recycles_worker_before_next_request() {
 }
 
 #[test]
-fn language_switch_recycles_worker_even_when_model_path_is_unchanged() {
+fn language_switch_reuses_worker_when_model_path_is_unchanged() {
     let first = worker_config(
         "normal.gguf",
         Duration::from_secs(10),
@@ -163,11 +185,11 @@ fn language_switch_recycles_worker_even_when_model_path_is_unchanged() {
     worker.transcribe_pcm(1, &[1]).unwrap();
     let first_pid = worker.worker_pid().unwrap();
     let mut second = first;
-    second.speech_language = simple_stt::config::SpeechLanguage::Arabic;
+    second.speech_language = "ar".into();
     worker.replace_config(second).unwrap();
-    assert_eq!(worker.worker_pid(), None);
+    assert_eq!(worker.worker_pid(), Some(first_pid));
     worker.transcribe_pcm(2, &[2]).unwrap();
-    assert_ne!(worker.worker_pid(), Some(first_pid));
+    assert_eq!(worker.worker_pid(), Some(first_pid));
     worker.shutdown_now().unwrap();
 }
 

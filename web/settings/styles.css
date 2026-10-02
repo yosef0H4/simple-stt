@@ -1366,3 +1366,65 @@ textarea,
     flex: 1 1 auto;
   }
 }
+
+.assignment-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2xs);
+}
+.model-combo {
+  min-width: 0;
+}
+.model-combo .combo-shell,
+.model-combo .combo-input {
+  width: 100%;
+}
+.model-combo .combo-list {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.model-combo .combo-option:disabled {
+  color: var(--color-ink-muted);
+  cursor: not-allowed;
+  opacity: 0.75;
+}
+.selection-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2xs);
+}
+.keyboard-language-unavailable {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+  text-align: end;
+  margin-block: var(--space-2xs);
+}
+.removed-keyboard-languages {
+  margin-block-start: var(--space-sm);
+  padding-block-start: var(--space-xs);
+  border-block-start: var(--rule-thin) solid var(--color-rule);
+}
+.removed-keyboard-languages > summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.removed-keyboard-languages[open] > .field {
+  margin-block-start: var(--space-xs);
+}
+.model-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3xs);
+  margin-block-start: var(--space-3xs);
+}
+.model-badges span {
+  color: var(--color-ink-muted);
+  font-size: var(--text-xs);
+}
+@media (max-width: 42rem) {
+  .assignment-control {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}

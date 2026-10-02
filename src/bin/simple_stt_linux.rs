@@ -509,6 +509,17 @@ fn toggle_recording(source: RecordingSource, timeout_s: f64, shift_insert: bool)
                     return Err(error);
                 }
             };
+            if result
+                .values
+                .get("recording")
+                .is_some_and(|value| value == "skipped")
+            {
+                write_session(&SessionState {
+                    recording: false,
+                    ..next_state
+                })?;
+                return Ok(());
+            }
             write_seq(read_seq()?.max(max_event_seq(&result.events)))?;
             println!(
                 "[{APP}] recording started source={} session={session_id}",
@@ -525,6 +536,9 @@ fn stop(timeout_s: f64, shift_insert: bool) -> Result<()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     ensure_service()?;
     let state = read_session()?;
+    if !state.recording {
+        return Ok(());
+    }
     let session_id = if state.session_id == 0 {
         next_session_id(0)
     } else {

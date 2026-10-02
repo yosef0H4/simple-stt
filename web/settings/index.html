@@ -47,8 +47,13 @@
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
               <path d="M19 10v2a7 7 0 0 1-14 0v-2m7 9v3" /></svg
-            ><span>Audio &amp; models</span
+            ><span>Audio &amp; recognition</span
             ><small>Input &amp; recognition</small>
+          </button>
+          <button data-page="models">
+            <svg aria-hidden="true" viewBox="0 0 24 24">
+              <path d="M4 5h16v14H4zM8 9h8m-8 4h5" />
+            </svg><span>Model installer</span><small>Install &amp; manage</small>
           </button>
           <button data-page="output">
             <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -100,9 +105,14 @@
           </section>
           <section data-section="audio" hidden>
             <header class="page-head">
-              <h1>Audio &amp; models</h1>
+              <h1>Audio &amp; recognition</h1>
             </header>
             <div id="audio-fields"></div>
+          </section>
+          <section data-section="models" hidden>
+            <header class="page-head">
+              <h1>Model installer</h1>
+            </header>
             <div id="model-workbench" class="setting-group"></div>
           </section>
           <section data-section="output" hidden>

@@ -181,6 +181,11 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
     validate_origin(request, state)?;
     match (request.method(), path) {
         (&Method::Get, "/api/state") => state_response(state),
+        (&Method::Get, "/api/keyboard-languages") => Ok(json_response(
+            StatusCode(200),
+            &serde_json::to_value(simple_stt::capture::input_language::keyboard_languages())?,
+            state,
+        )),
         (&Method::Get, "/api/health") => Ok(json_response(
             StatusCode(200),
             &json!({"ok":true,"pid":std::process::id()}),
@@ -369,6 +374,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "linux_hotkeys":linux_hotkey_backend_state(),
             "linux_automation":linux_automation_state(),
             "microphones":microphones,
+            "keyboard_languages":simple_stt::capture::input_language::keyboard_languages(),
             "models":models
             ,"cleanup": {
                 "compatible_key_saved": compatible_key_saved,
@@ -595,6 +601,11 @@ fn action_response(
             filename: body.filename,
         },
         "test_model" => ShellCommand::TestModel {
+            filename: if body.filename.is_empty() {
+                None
+            } else {
+                Some(body.filename.clone())
+            },
             language: body.language,
         },
         _ => anyhow::bail!("unsupported service action"),
@@ -1024,10 +1035,12 @@ mod tests {
     }
     #[test]
     fn assets_are_bundled() {
-        assert!(INDEX.contains("Audio &amp; models"));
+        assert!(INDEX.contains("Audio &amp; recognition"));
+        assert!(INDEX.contains("Model installer"));
         assert!(TOKENS.contains("--color-accent"));
         assert!(JS.contains("model_download_progress"));
-        assert!(JS.contains("Search language or model"));
+        assert!(JS.contains("modelAssignmentField"));
+        assert!(JS.contains("/api/keyboard-languages"));
         assert!(INDEX.contains("AI cleanup"));
         assert!(JS.contains("chatgpt_login_browser"));
         assert!(JS.contains("cleanup.screenshot.excluded_apps"));

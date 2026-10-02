@@ -55,6 +55,8 @@ pub enum ShellCommand {
     ReloadConfig,
     UnloadModel,
     TestModel {
+        #[serde(default)]
+        filename: Option<String>,
         language: crate::config::SpeechLanguage,
     },
     DownloadModel {

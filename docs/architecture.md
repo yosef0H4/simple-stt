@@ -71,7 +71,7 @@ simple-stt-infer.exe
 | AI transcript cleanup | capture service | Optional and disabled by default. Runs after STT and before AHK transforms/delivery. Failures and timeouts deliver the original transcript. It never loads speech models. |
 | Screen context | capture service | Separately opted in. Windows uses the recording target HWND, X11 captures the active window, and Wayland uses a compositor-owned portal prompt. Images remain in memory and are bounded before upload. |
 | AI credentials | OS vault | Windows Credential Manager or the Linux desktop secret service. `SIMPLE_STT_AI_API_KEY` is an explicit process-environment override; secrets never enter `config.json` or logs. |
-| Canonical config | schema-v8 JSON | Separate English and Arabic model slots; browser UI is only an editor. |
+| Canonical config | schema-v9 JSON | Nullable single-model choice and per-keyboard-language assignments; browser UI uses an explicit Save draft. |
 | Component logs | each component | Shell, capture, and infer logs are separate. |
 
 ## Dictation sequence
@@ -120,7 +120,7 @@ AHK poll timer
 
 A new dictation supersedes all older work. Capture invalidates older inference and cleanup generations, terminates an obsolete inference worker when necessary, and discards stale results. The Windows shell cancels active or queued typing/paste work; the Linux shell checks the persisted session generation before delivery. This prevents delayed transcripts from arriving in a later context.
 
-Windows follow-keyboard mode reads the foreground window thread's input layout when recording starts. English and Arabic manual modes work on Windows and Linux. Linux follow-keyboard mode returns a clear unsupported-mode error; the Linux Settings UI offers the manual modes. Only one model worker stays loaded by default. The runtime uses Vulkan automatically with CPU fallback, `Vulkan0` for explicit GPU, and CPU for explicit CPU.
+Model installation is separate from dictation selection. Schema 9 stores a nullable single-model choice and nullable assignments keyed by keyboard language. Windows enumerates loaded keyboard layouts with locale ISO codes and reads the foreground thread's active layout at recording start. Linux discovers KDE Plasma layouts on Wayland, or XKB configured layouts and effective groups on X11, using installed rules XML including variant overrides. Regional variants share an assignment. Other Wayland desktops use one model; XWayland is never used to guess native Wayland input. None, an unassigned language, or a missing file skips before recording, overlay, screenshots, and worker prewarm. Recording freezes the actual model and device; workers are reused when only the language changes. Only the inference worker loads models. The runtime uses Vulkan automatically with CPU fallback, a physical Vulkan GPU for explicit GPU (preferring discrete over integrated, rejecting software devices), and CPU for explicit CPU. Explicit GPU mode errors when no physical GPU is available.
 
 On Windows, every app hotkey may be set to `None`. The AI-cleanup toggle defaults to `None`; when assigned, it atomically flips `cleanup.enabled`, requests capture-service reload, and affects the next dictation. On Wayland the equivalent action is compositor-assigned through the GlobalShortcuts portal.
 

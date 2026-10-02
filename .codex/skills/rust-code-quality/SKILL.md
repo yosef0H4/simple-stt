@@ -43,7 +43,8 @@ cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 cargo crap --lcov lcov.info
 ```
 
-Also run the project-specific Windows validation before release:
+Also run the platform-appropriate validation documented in `AGENTS.md` and
+`docs/testing.md`. On Windows, use the native suite:
 
 ```bat
 scripts\test-full.cmd
@@ -69,4 +70,4 @@ CRAP scores combine complexity and test coverage. High scores usually mean a fun
 - Do not remove public APIs or scripts unless references are audited first.
 - Keep behavior changes explicit and covered by tests.
 - Prefer small, reviewable edits over broad rewrites.
-- Run targeted tests after each risky change, then run `scripts\test-full.cmd`.
+- Run targeted tests after each risky change, then run the current platform's full validation documented in `AGENTS.md`.

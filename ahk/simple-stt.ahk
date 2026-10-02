@@ -88,6 +88,15 @@ class SimpleSttShell {
     RecordingStarted(session, response) {
         if this.pendingStarts.Has(session)
             this.pendingStarts.Delete(session)
+        if response["values"].Has("recording") && response["values"]["recording"] = "skipped" {
+            if this.activeRecordingSession = session
+                this.activeRecordingSession := 0
+            if this.sessions.Has(session)
+                this.sessions.Delete(session)
+            if this.pendingStops.Has(session)
+                this.pendingStops.Delete(session)
+            return
+        }
         if !response["ok"] {
             this.logger.Write("error", "recording start rejected: " . response["message"], session)
             this.Notice("Audio service rejected recording — see log", "error")

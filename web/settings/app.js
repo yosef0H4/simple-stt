@@ -67,7 +67,7 @@ const applyTheme = (value) =>
 function group(parent, title, description) {
   const root = document.createElement("div");
   root.className = "setting-group";
-  root.innerHTML = `${groupIcon(title)}<div class="group-head"><div><h2>${title}</h2>${description ? `<p>${description}</p>` : ""}</div><button type="button" class="group-reset" aria-label="Reset ${title} to defaults" title="Reset only this group to defaults">${actionIcon("reset")}<span>Reset group</span></button></div>`;
+  root.innerHTML = `${groupIcon(title)}<div class="group-head"><div><h2>${title}</h2>${description ? `<p>${description}</p>` : ""}</div><button type="button" class="group-reset" aria-label="Reset ${title} to defaults" title="Reset group">${actionIcon("reset")}</button></div>`;
   root.querySelector(".group-reset").onclick = async () => {
     try {
       const defaults = (await api("/api/defaults")).config;
@@ -901,13 +901,7 @@ function build() {
       ["gpu", "GPU (Vulkan)"],
     ],
   });
-  field(engine, {
-    label: "Speech language",
-    description: state.platform === "linux" ? "Choose a fixed language on Linux." : "Follow the active keyboard layout or choose a fixed language.",
-    path: "speech.language_mode",
-    type: "select",
-    options: state.platform === "linux" ? [["english", "English"], ["arabic", "Arabic"]] : [["english", "English"], ["arabic", "Arabic"], ["follow_keyboard", "Follow keyboard"]],
-  });
+  renderSpeechAssignments(engine);
   renderModels();
   const delivery = group(
     o,
@@ -1412,13 +1406,318 @@ async function pollCleanupLogin() {
   notice("ChatGPT connection timed out.", "error");
 }
 
+function keyboardLanguages() {
+  return state.keyboard_languages || { available: false, message: "Keyboard languages have not been discovered yet.", languages: [] };
+}
+function installedModels() {
+  return (state.models || []).filter((model) => model.installed);
+}
+function languageCompatible(model, language) {
+  const id = String(language.id || "").toLowerCase();
+  const languageNames = (model.languages || []).map((value) => String(value).toLowerCase());
+  return languageNames.some((value) => {
+    const match = value.match(/\(([a-z]{2,3})\)/);
+    if (match) return match[1] === id;
+    return value === id || value.startsWith(`${id} `) || value.includes(`(${id})`);
+  }) || (id === "ar" && model.file.startsWith("lemura-arabic-asr-lite-"));
+}
+function recommendedModel(language) {
+  return installedModels().filter((model) => languageCompatible(model, language)).sort((a, b) =>
+    Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)) ||
+    Number(/q8/i.test(b.quant || "")) - Number(/q8/i.test(a.quant || "")) ||
+    Number(a.size_mb ?? Infinity) - Number(b.size_mb ?? Infinity) ||
+    (a.file < b.file ? -1 : a.file > b.file ? 1 : 0),
+  )[0] || null;
+}
+function initializeMissingLanguageAssignments() {
+  if (!config.speech.language_models || typeof config.speech.language_models !== "object")
+    config.speech.language_models = {};
+  let changed = false;
+  for (const language of keyboardLanguages().languages || []) {
+    if (Object.hasOwn(config.speech.language_models, language.id)) continue;
+    config.speech.language_models[language.id] = recommendedModel(language)?.file || null;
+    changed = true;
+  }
+  if (changed) markDirty();
+  return changed;
+}
+function savedModelUsages(filename) {
+  const saved = state.config?.speech || {};
+  const usages = [];
+  if (saved.single_model_filename === filename)
+    usages.push("Use one model");
+  for (const [id, file] of Object.entries(saved.language_models || {})) {
+    if (file === filename) {
+      const language = (state.keyboard_languages?.languages || []).find((item) => item.id === id);
+      usages.push(language ? language.name : `${id} keyboard language`);
+    }
+  }
+  return usages;
+}
+function modelAssignmentField(parent, { label, description, path, value, assign, testLanguage, language }) {
+  const wrap = document.createElement("div");
+  wrap.className = "field model-assignment";
+  wrap.dataset.settingPath = path;
+  const copy = document.createElement("span");
+  copy.className = "field-copy";
+  copy.innerHTML = "<strong></strong>";
+  copy.firstChild.textContent = label;
+  if (description) copy.title = description;
+  const control = document.createElement("div");
+  control.className = "control assignment-control";
+  const combo = document.createElement("div");
+  combo.className = "combo model-combo";
+  const shell = document.createElement("div");
+  shell.className = "combo-shell";
+  const input = document.createElement("input");
+  input.className = "combo-input";
+  input.type = "text";
+  input.role = "combobox";
+  input.autocomplete = "off";
+  input.setAttribute("aria-label", label === "Model" ? "Speech model" : `${label} model`);
+  input.setAttribute("aria-haspopup", "listbox");
+  input.setAttribute("aria-expanded", "false");
+  const list = document.createElement("div");
+  list.className = "combo-list";
+  list.role = "listbox";
+  list.hidden = true;
+  const models = installedModels().sort((a, b) =>
+    Number(Boolean(language && languageCompatible(b, language))) - Number(Boolean(language && languageCompatible(a, language))) ||
+    a.family.localeCompare(b.family),
+  ).map((model) => ({
+    value: model.file,
+    label: `${model.family} · ${model.quant}`,
+    meta: `${(model.languages || []).join(", ")} · ${model.file}${model.size_mb ? ` · ${model.size_mb} MB` : ""}`,
+  }));
+  let unavailable = value && !models.some((item) => item.value === value)
+    ? { value, label: `Unavailable · ${value}`, meta: "This saved model file is missing", unavailable: true }
+    : null;
+  const items = [{ value: "", label: "None", meta: "" }, ...models];
+  const selectedItem = () => unavailable || items.find((item) => item.value === value) || items[0];
+  const test = document.createElement("button");
+  test.type = "button";
+  test.className = "icon-button";
+  test.dataset.modelTest = "true";
+  test.dataset.filename = value || "";
+  test.dataset.missing = String(Boolean(unavailable));
+  test.innerHTML = actionIcon("test");
+  test.setAttribute("aria-label", `Test ${label.toLowerCase()} model`);
+  test.title = "Run the bundled speech sample";
+  test.disabled = !value || Boolean(unavailable) || !state.service_online || dirty;
+  if (dirty) test.title = "Save your changes before testing";
+  else if (!state.service_online) test.title = "Connect the capture service before testing";
+  else if (!value) test.title = "Choose an installed model before testing";
+  test.onclick = () => action("test_model", value, typeof testLanguage === "function" ? testLanguage(value) : testLanguage);
+  function render(query = "") {
+    list.replaceChildren();
+    const allItems = unavailable ? [items[0], unavailable, ...models] : items;
+    const filtered = allItems.filter((item) => !query || fuzzyScore(query, `${item.label} ${item.meta}`) >= 0);
+    if (!filtered.length) {
+      const empty = document.createElement("div");
+      empty.className = "combo-option";
+      empty.textContent = "No installed models match";
+      list.append(empty);
+    }
+    for (const item of filtered) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "combo-option";
+      option.role = "option";
+      option.disabled = Boolean(item.unavailable);
+      option.setAttribute("aria-selected", String(item.value === value));
+      option.innerHTML = "<strong></strong><small></small>";
+      option.firstChild.textContent = item.label;
+      option.lastChild.textContent = item.meta || "";
+      option.onclick = () => {
+        if (item.unavailable) return;
+        assign(item.value || null);
+        value = item.value;
+        unavailable = null;
+        test.dataset.filename = value;
+        test.dataset.missing = "false";
+        input.value = item.label;
+        list.hidden = true;
+        input.setAttribute("aria-expanded", "false");
+        input.setAttribute("aria-activedescendant", "");
+        test.disabled = !value || !state.service_online || dirty;
+        test.title = test.disabled ? (dirty ? "Save your changes before testing" : "Choose an installed model before testing") : "Run the bundled speech sample";
+      };
+      list.append(option);
+    }
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+  }
+  input.value = selectedItem().label;
+  let suppressFocusOpen = false;
+  input.onfocus = () => {
+    if (suppressFocusOpen) { suppressFocusOpen = false; return; }
+    input.select();
+    if (list.hidden) render("");
+  };
+  input.oninput = () => render(input.value.trim());
+  input.onkeydown = (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      list.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      input.value = selectedItem().label;
+      suppressFocusOpen = true;
+      input.focus();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (list.hidden) render(input.value);
+      const options = [...list.querySelectorAll("button:not(:disabled)")];
+      const active = document.activeElement;
+      const current = options.indexOf(active);
+      const next = event.key === "ArrowDown" ? Math.min(current + 1, options.length - 1) : Math.max(current < 0 ? options.length - 1 : current - 1, 0);
+      options[next]?.focus();
+    } else if (event.key === "Enter") {
+      const focused = list.querySelector("button:focus");
+      if (focused) { event.preventDefault(); focused.click(); }
+      else {
+        const exact = [...list.querySelectorAll("button:not(:disabled)")].find((button) => button.querySelector("strong")?.textContent.toLowerCase() === input.value.trim().toLowerCase());
+        if (exact) { event.preventDefault(); exact.click(); }
+      }
+    }
+  };
+  list.onkeydown = (event) => {
+    const options = [...list.querySelectorAll("button:not(:disabled)")];
+    const index = options.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      options[(index + step + options.length) % options.length]?.focus();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      list.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+      input.value = selectedItem().label;
+      suppressFocusOpen = true;
+      input.focus();
+    }
+  };
+  combo.closePicker = () => {
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.value = selectedItem().label;
+  };
+  combo.onfocusout = (event) => {
+    if (!combo.contains(event.relatedTarget)) combo.closePicker();
+  };
+  shell.append(input);
+  combo.append(shell, list);
+  control.append(combo, test);
+  wrap.append(copy, control);
+  parent.append(wrap);
+  return input;
+}
+async function refreshKeyboardLanguages() {
+  try {
+    const discovered = await api("/api/keyboard-languages");
+    state.keyboard_languages = {
+      available: Boolean(discovered.available),
+      message: String(discovered.message || ""),
+      languages: Array.isArray(discovered.languages) ? discovered.languages : [],
+    };
+    initializeMissingLanguageAssignments();
+    build();
+    notice("Languages refreshed.", "success");
+  } catch (error) {
+    state.keyboard_languages = { available: false, message: error.message || "Could not discover keyboard languages.", languages: [] };
+    build();
+    notice(state.keyboard_languages.message, "error");
+  }
+}
+function renderSpeechAssignments(parent) {
+  const mode = config.speech.selection_mode || "single_model";
+  if (mode === "follow_keyboard") initializeMissingLanguageAssignments();
+  const chooser = field(parent, {
+    label: "Mode",
+    path: "speech.selection_mode",
+    type: "select",
+    options: [["single_model", "Use one model"], ["follow_keyboard", "Follow keyboard"]],
+  });
+  chooser.title = "Use one model for every dictation, or assign a model to each keyboard language.";
+  chooser.parentElement.classList.add("selection-control");
+  const discovery = keyboardLanguages();
+  const refresh = document.createElement("button");
+  refresh.type = "button";
+  refresh.className = "icon-button keyboard-language-refresh";
+  refresh.innerHTML = actionIcon("refresh");
+  refresh.setAttribute("aria-label", "Refresh keyboard languages");
+  refresh.title = discovery.available ? "Refresh keyboard languages" : discovery.message || "Keyboard detection unavailable";
+  refresh.onclick = refreshKeyboardLanguages;
+  if (mode === "follow_keyboard" || !discovery.available) chooser.parentElement.append(refresh);
+  chooser.querySelector('option[value="follow_keyboard"]').disabled = !discovery.available && mode !== "follow_keyboard";
+  if (!discovery.available) {
+    const support = document.createElement("div");
+    support.className = "keyboard-language-unavailable";
+    support.setAttribute("role", "status");
+    support.textContent = "Keyboard detection unavailable";
+    support.title = discovery.message;
+    parent.append(support);
+  }
+  chooser.onchange = () => {
+    set("speech.selection_mode", chooser.value);
+    if (chooser.value === "follow_keyboard") initializeMissingLanguageAssignments();
+    build();
+  };
+  if (mode === "single_model") {
+    modelAssignmentField(parent, {
+      label: "Model",
+      description: "Choose any installed model. Search by language, model name, or filename.",
+      path: "speech.single_model_filename",
+      value: config.speech.single_model_filename,
+      assign: (filename) => set("speech.single_model_filename", filename),
+      testLanguage: (filename) => String(filename || "").startsWith("lemura-arabic-asr-lite-") ? "arabic" : "english",
+    });
+    return;
+  }
+  const current = new Set((discovery.languages || []).map((language) => language.id));
+  for (const language of discovery.languages || []) {
+    const filename = config.speech.language_models?.[language.id] ?? null;
+    modelAssignmentField(parent, {
+      label: language.name,
+      description: language.id,
+      path: `speech.language_models.${language.id}`,
+      value: filename,
+      assign: (next) => {
+        if (!config.speech.language_models) config.speech.language_models = {};
+        config.speech.language_models[language.id] = next;
+        markDirty();
+      },
+      testLanguage: language.id === "ar" ? "arabic" : "english",
+      language,
+    });
+  }
+  const removed = Object.entries(config.speech.language_models || {}).filter(([id]) => !current.has(id));
+  if (removed.length) {
+    const details = document.createElement("details");
+    details.className = "removed-keyboard-languages";
+    const summary = document.createElement("summary");
+    summary.textContent = `Other languages (${removed.length})`;
+    summary.title = "Not currently on your keyboard";
+    details.append(summary);
+    for (const [id, filename] of removed) {
+      modelAssignmentField(details, {
+        label: id,
+        description: "This saved assignment is preserved until you change or remove it.",
+        path: `speech.language_models.${id}`,
+        value: filename,
+        assign: (next) => { config.speech.language_models[id] = next; markDirty(); },
+        testLanguage: id === "ar" ? "arabic" : "english",
+        language: { id, name: id },
+      });
+    }
+    parent.append(details);
+  }
+}
 function renderModels() {
   const root = $("#model-workbench");
   root.replaceChildren();
   const head = document.createElement("div");
   head.className = "group-head";
-  head.innerHTML =
-    "<div><h2>Speech model</h2></div>";
+  head.innerHTML = "<div><h2>Models</h2></div>";
   const refresh = document.createElement("button");
   refresh.id = "refresh-models";
   refresh.type = "button";
@@ -1429,18 +1728,6 @@ function renderModels() {
   refresh.onclick = () => action("refresh_models").then(refreshState);
   head.append(refresh);
   root.append(document.createRange().createContextualFragment(groupIcon("Speech model")), head);
-  const arabicInstalled = state.models.some((model) => model.file === config.speech.arabic_model_filename && model.installed);
-  const status = document.createElement("p");
-  status.className = "model-status";
-  status.textContent = `English model: ${config.speech.english_model_filename} · Arabic model: ${arabicInstalled ? config.speech.arabic_model_filename : "choose an installed model below"}`;
-  root.append(status);
-  const languageText = (m) =>
-      (m.languages || []).join(", ") ||
-      "Language not declared for this local model",
-    languagePreview = (m) =>
-      (m.languages || []).length > 3
-        ? `${m.languages.length} languages · English, Spanish, French, German, and more`
-        : languageText(m);
   const searchField = document.createElement("label");
   searchField.className = "model-search-field";
   searchField.innerHTML = "<strong>Find a model</strong>";
@@ -1458,32 +1745,12 @@ function renderModels() {
   results.className = "model-results";
   root.append(searchField, results);
   let visibleModelLimit = 8;
-
   function drawResults() {
-    const terms = search.value
-      .toLowerCase()
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
-    const matches = state.models.filter((model) => {
-      const searchable = [
-        model.family,
-        model.quant,
-        model.file,
-        ...(model.languages || []),
-        model.installed ? "installed downloaded local" : "available download",
-        model.recommended ? "recommended" : "",
-        model.file === config.speech.english_model_filename ? "selected" : "",
-        model.file === config.speech.arabic_model_filename ? "selected" : "",
-      ]
-        .join(" ")
-        .toLowerCase();
+    const terms = search.value.toLowerCase().trim().split(/\s+/).filter(Boolean);
+    const matches = (state.models || []).filter((model) => {
+      const searchable = [model.family, model.quant, model.file, ...(model.languages || []), model.installed ? "installed downloaded local" : "available download", model.recommended ? "recommended" : "", ...savedModelUsages(model.file)].join(" ").toLowerCase();
       return terms.every((term) => searchable.includes(term));
-    }).sort((a, b) =>
-      Number(b.recommended) - Number(a.recommended) ||
-      Number(b.installed) - Number(a.installed) ||
-      a.family.localeCompare(b.family),
-    );
+    }).sort((a, b) => Number(Boolean(b.installed)) - Number(Boolean(a.installed)) || Number(Boolean(b.recommended)) - Number(Boolean(a.recommended)) || a.family.localeCompare(b.family));
     results.replaceChildren();
     if (!matches.length) {
       const empty = document.createElement("p");
@@ -1492,103 +1759,55 @@ function renderModels() {
       results.append(empty);
       return;
     }
-    const visibleMatches = terms.length ? matches : matches.slice(0, visibleModelLimit);
-    for (const model of visibleMatches) {
-      const assignedEnglish = model.file === config.speech.english_model_filename;
-      const assignedArabic = model.file === config.speech.arabic_model_filename;
-      const selected = assignedEnglish || assignedArabic;
-      const knownArabic = model.file.startsWith("lemura-arabic-asr-lite-");
-      const knownEnglish = (model.languages || []).some((language) => language.startsWith("English (")) && !knownArabic;
+    const visible = terms.length ? matches : matches.slice(0, visibleModelLimit);
+    for (const model of visible) {
       const row = document.createElement("article");
       row.className = "model-result";
-      if (selected)
-        row.dataset.selected = "true";
       const copy = document.createElement("div");
       copy.className = "model-result-copy";
-      copy.innerHTML = `<strong>${model.family} · ${model.quant}</strong><span>${languagePreview(model)} · ${model.file}${model.size_mb ? ` · ${model.size_mb} MB` : ""}</span>`;
+      const title = document.createElement("strong");
+      title.textContent = `${model.family} · ${model.quant}`;
+      const description = document.createElement("span");
+      description.textContent = `${(model.languages || []).join(", ") || "Language not declared"} · ${model.file}${model.size_mb ? ` · ${model.size_mb} MB` : ""}`;
       const badges = document.createElement("div");
       badges.className = "model-badges";
-      if (model.recommended) badges.innerHTML += "<span>Recommended</span>";
-      if (model.installed) badges.innerHTML += "<span>Installed</span>";
-      if (assignedEnglish) badges.innerHTML += "<span>English model</span>";
-      if (assignedArabic) badges.innerHTML += "<span>Arabic model</span>";
-      copy.append(badges);
+      if (model.recommended) badges.append(Object.assign(document.createElement("span"), { textContent: "Recommended" }));
+      if (model.installed) badges.append(Object.assign(document.createElement("span"), { textContent: "Installed" }));
+      const usages = savedModelUsages(model.file);
+      if (usages.length) badges.append(Object.assign(document.createElement("span"), { textContent: `In use: ${usages.join(", ")}` }));
+      copy.append(title, description, badges);
       const actions = document.createElement("div");
       actions.className = "model-actions";
-      const primary = document.createElement("button");
-      primary.type = "button";
       const downloadState = modelDownloads.get(model.file);
       if (downloadState) {
-        primary.innerHTML = actionIcon("download");
-        primary.className = "icon-button";
-        primary.setAttribute("aria-label", `Downloading ${model.family}`);
-        primary.title = "Downloading";
-        primary.disabled = true;
-        primary.dataset.state = "loading";
+        const progressButton = document.createElement("button");
+        progressButton.type = "button";
+        progressButton.className = "icon-button";
+        progressButton.innerHTML = actionIcon("download");
+        progressButton.setAttribute("aria-label", `Downloading ${model.family}`);
+        progressButton.title = "Downloading";
+        progressButton.disabled = true;
+        actions.append(progressButton);
       } else if (!model.installed && model.download_url) {
-        primary.innerHTML = actionIcon("download");
-        primary.className = "icon-button";
-        primary.setAttribute("aria-label", `Download ${model.family} ${model.quant}`);
-        primary.title = "Download model";
-        primary.onclick = () => download(model.file);
-      } else if (!model.installed) {
-        primary.textContent = "Install model to assign";
-        primary.disabled = true;
-      }
-      if (model.installed) {
-        for (const [language, allowed, assigned] of [
-          ["English", !knownArabic, assignedEnglish],
-          ["Arabic", !knownEnglish, assignedArabic],
-        ]) {
-          if (!allowed) continue;
-          const assign = document.createElement("button");
-          assign.type = "button";
-          assign.textContent = assigned ? `${language} selected` : `Use for ${language}`;
-          assign.disabled = assigned;
-          if (!assigned) assign.className = "primary";
-          assign.onclick = () => {
-            set(`speech.${language.toLowerCase()}_model_filename`, model.file);
-            drawResults();
-          };
-          actions.append(assign);
-        }
-      } else {
-        actions.append(primary);
-      }
-      if (selected) {
-        const test = document.createElement("button");
-        test.type = "button";
-        test.className = "icon-button";
-        test.innerHTML = actionIcon("test");
-        test.setAttribute("aria-label", "Test selected model");
-        test.disabled = !state.service_online || dirty;
-        test.title = dirty
-          ? "Save your selection before testing"
-          : "Run the bundled speech sample";
-        test.onclick = () => action("test_model", model.file, assignedArabic ? "arabic" : "english");
-        actions.append(test);
+        const install = document.createElement("button");
+        install.type = "button";
+        install.className = "icon-button";
+        install.innerHTML = actionIcon("download");
+        install.setAttribute("aria-label", `Download ${model.family} ${model.quant}`);
+        install.title = "Download model";
+        install.onclick = () => download(model.file);
+        actions.append(install);
       }
       if (model.installed) {
         const remove = document.createElement("button");
         remove.type = "button";
         remove.className = "icon-button danger-quiet";
         remove.innerHTML = actionIcon("trash");
-        remove.setAttribute(
-          "aria-label",
-          `Remove ${model.family} ${model.quant}`,
-        );
-        remove.title =
-          selected
-            ? "Select another model before removing this one"
-            : "Remove downloaded model";
-        remove.disabled = selected;
+        remove.setAttribute("aria-label", `Remove ${model.family} ${model.quant}`);
+        remove.title = usages.length ? `Saved assignment uses this model: ${usages.join(", ")}` : "Remove downloaded model";
+        remove.disabled = usages.length > 0;
         remove.onclick = async () => {
-          if (
-            !window.confirm(
-              `Remove ${model.family} · ${model.quant} from this computer?`,
-            )
-          )
-            return;
+          if (!window.confirm(`Remove ${model.family} · ${model.quant} from this computer?`)) return;
           await action("remove_model", model.file);
           notice("Model removed.", "success");
           await refreshState();
@@ -1597,35 +1816,27 @@ function renderModels() {
       }
       row.append(copy, actions);
       if (downloadState) {
-        const downloaded = downloadState.downloaded || 0,
-          total = downloadState.total || 0,
-          percent = total ? Math.floor((downloaded * 100) / total) : 0,
-          progressWrap = document.createElement("div");
+        const downloaded = downloadState.downloaded || 0;
+        const total = downloadState.total || 0;
+        const percent = total ? Math.floor(downloaded * 100 / total) : 0;
+        const progressWrap = document.createElement("div");
         progressWrap.className = "model-download-progress";
         progressWrap.innerHTML = `<progress class="download-progress" max="100" value="${percent}"></progress><span>${total ? `${percent}%` : `${Math.floor(downloaded / 1048576)} MB`}</span>`;
         row.append(progressWrap);
       }
       results.append(row);
     }
-    if (!terms.length && matches.length > visibleMatches.length) {
+    if (!terms.length && matches.length > visible.length) {
       const more = document.createElement("button");
-      const remaining = matches.length - visibleMatches.length;
       more.type = "button";
       more.className = "model-view-more";
       more.textContent = "View more";
-      more.setAttribute("aria-label", `View more models (${remaining} remaining)`);
-      more.onclick = () => {
-        visibleModelLimit += 8;
-        drawResults();
-      };
+      more.setAttribute("aria-label", `View more models (${matches.length - visible.length} remaining)`);
+      more.onclick = () => { visibleModelLimit += 8; drawResults(); };
       results.append(more);
     }
   }
-  search.oninput = () => {
-    modelSearchQuery = search.value;
-    visibleModelLimit = 8;
-    drawResults();
-  };
+  search.oninput = () => { modelSearchQuery = search.value; visibleModelLimit = 8; drawResults(); };
   drawResults();
 }
 async function captureHotkey(path, label) {
@@ -1658,6 +1869,9 @@ async function captureHotkey(path, label) {
 }
 function markDirty(sync = true) {
   dirty = true;
+  $$('[data-model-test="true"]').forEach((button) => {
+    button.disabled = dirty || !button.dataset.filename || button.dataset.missing === "true" || !state.service_online;
+  });
   $("#savebar").hidden = false;
   $("#dirty").textContent = "Unsaved changes";
   if (sync) syncJson();
@@ -1686,6 +1900,16 @@ async function load() {
   else {
     config = (await api("/api/defaults")).config;
     notice(`Config is malformed and preserved: ${state.config_error}`, "error");
+  }
+  try {
+    const discovered = await api("/api/keyboard-languages");
+    state.keyboard_languages = {
+      available: Boolean(discovered.available),
+      message: String(discovered.message || ""),
+      languages: Array.isArray(discovered.languages) ? discovered.languages : [],
+    };
+  } catch (error) {
+    state.keyboard_languages = { available: false, message: error.message || "Could not discover keyboard languages.", languages: [] };
   }
   const service = $("#service");
   service.lastChild.textContent = state.service_online
@@ -1832,6 +2056,7 @@ async function refreshState(reloadConfig = false) {
       baselineConfig = structuredClone(nextState.config);
     }
   }
+  nextState.keyboard_languages = state.keyboard_languages;
   state = nextState;
   build();
 }
@@ -1912,7 +2137,7 @@ function renderSettingsSearch() {
     option.children[0].textContent = item.title;
     option.children[1].textContent = item.description;
     option.children[2].textContent =
-      item.page === "audio" ? "Audio & models" : item.page;
+      item.page === "audio" ? "Audio & recognition" : item.page;
     option.onclick = () => {
       showPage(item.page);
       input.value = "";
@@ -1921,6 +2146,8 @@ function renderSettingsSearch() {
         const target = $$("[data-setting-path]").find(
           (node) => node.dataset.settingPath === item.path,
         );
+        const collapsedGroup = target?.closest("details");
+        if (collapsedGroup) collapsedGroup.open = true;
         target?.scrollIntoView({ behavior: "smooth", block: "center" });
         target
           ?.querySelector("input, select, button")
@@ -1948,6 +2175,9 @@ $("#settings-search").onkeydown = (event) => {
   }
 };
 document.addEventListener("pointerdown", (event) => {
+  for (const combo of $$(".model-combo")) {
+    if (!combo.contains(event.target)) combo.closePicker();
+  }
   if (!event.target.closest(".settings-search")) {
     $("#settings-search-results").hidden = true;
     $("#settings-search").setAttribute("aria-expanded", "false");

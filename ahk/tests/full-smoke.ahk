@@ -143,7 +143,7 @@ WaitForWorkerUnloaded(timeoutMs := 10000) {
 KeyboardLanguageSmoke() {
     global SmokeCtl, SmokeTypingGui
     settings := ConfigStore(SmokeCtl)
-    settings.Set("language_mode", "follow_keyboard")
+    settings.Set("selection_mode", "follow_keyboard")
     settings.SaveSync()
     response := CallCtl("reload-config")
     Assert(response["ok"], "language-mode reload failed")
@@ -155,7 +155,7 @@ KeyboardLanguageSmoke() {
     threadId := DllCall("GetWindowThreadProcessId", "Ptr", window.Hwnd, "Ptr", 0, "UInt")
     originalLayout := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
     try {
-        for language in [Map("klid", "00000409", "name", "english", "session", 7201), Map("klid", "00000401", "name", "arabic", "session", 7202)] {
+        for language in [Map("klid", "00000409", "name", "en", "session", 7201), Map("klid", "00000401", "name", "ar", "session", 7202)] {
             layout := DllCall("LoadKeyboardLayoutW", "Str", language["klid"], "UInt", 1, "Ptr")
             Assert(layout != 0, "test keyboard layout unavailable: " . language["name"])
             DllCall("ActivateKeyboardLayout", "Ptr", layout, "UInt", 0, "Ptr")
@@ -180,7 +180,7 @@ KeyboardLanguageSmoke() {
         DllCall("ActivateKeyboardLayout", "Ptr", originalLayout, "UInt", 0, "Ptr")
         window.Destroy()
         SmokeTypingGui := ""
-        settings.Set("language_mode", "english")
+        settings.Set("selection_mode", "single_model")
         settings.SaveSync()
         CallCtl("reload-config")
     }
@@ -281,10 +281,20 @@ try {
     SmokeConfig := tempDir . "\config.json"
     SmokeState := tempDir . "\capture-state.json"
     EnvSet("SIMPLE_STT_CONFIG", SmokeConfig)
-    ConfigStore(SmokeCtl)
-
+    settings := ConfigStore(SmokeCtl)
     Info("starting isolated capture service")
     StartCapture()
+    Info("checking inactive None selection")
+    response := CallCtl("start-recording --session-id 7000")
+    Assert(response["ok"] && response["values"].Has("recording") && response["values"]["recording"] = "skipped", "None did not skip recording")
+    Sleep(200)
+    for event in PollEvents()
+        Assert(event["kind"] != "recording_started" && event["kind"] != "transcript" && event["kind"] != "model_loading", "None caused recording or inference")
+    Assert(!CallCtl("ping")["values"].Has("worker_pid"), "None launched an inference worker")
+    settings.Set("single_model_filename", "tdt_ctc-110m-q8_0.gguf")
+    settings.Set("language_models", '{"en":"tdt_ctc-110m-q8_0.gguf","ar":"lemura-arabic-asr-lite-q8_0.gguf"}')
+    settings.SaveSync()
+    Assert(CallCtl("reload-config")["ok"], "model selection reload failed")
     response := CallCtl("list-inputs")
     Assert(response["ok"], "list-inputs failed: " . response["message"])
     inputLabels := 0

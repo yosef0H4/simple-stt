@@ -94,6 +94,10 @@ impl Api {
                 actual_abi == 6,
                 "unsupported parakeet.cpp C ABI {actual_abi}; expected 6 (v0.5.0)"
             );
+            #[cfg(target_os = "linux")]
+            select_vulkan_device(&lib)?;
+            #[cfg(windows)]
+            select_windows_vulkan_device()?;
             Ok(Self {
                 load: sym(&lib, b"parakeet_capi_load\0")?,
                 free: sym(&lib, b"parakeet_capi_free\0")?,
@@ -104,6 +108,183 @@ impl Api {
                 _lib: lib,
             })
         }
+    }
+}
+
+#[cfg(windows)]
+unsafe fn select_windows_vulkan_device() -> Result<()> {
+    let requested = std::env::var("PARAKEET_DEVICE").ok();
+    if requested.as_deref() == Some("cpu") {
+        set_windows_native_env("PARAKEET_DEVICE", "cpu")?;
+        return Ok(());
+    }
+    // The Windows runtime only exports the Parakeet C API, not ggml's
+    // enumeration API. Query the same Vulkan loader before ggml initializes.
+    let result = windows_vulkan_devices();
+    match result {
+        Ok(devices) => {
+            if let Some(index) = preferred_vulkan_device(&devices) {
+                let (_, description, _) = &devices[index];
+                // ggml applies this filter to Vulkan physical-device indices,
+                // then exposes the sole selected device as Vulkan0.
+                set_windows_native_env("GGML_VK_VISIBLE_DEVICES", &index.to_string())?;
+                set_windows_native_env("PARAKEET_DEVICE", "Vulkan0")?;
+                tracing::info!(physical_index = index, gpu = %description, "selected physical Vulkan GPU");
+                return Ok(());
+            }
+            anyhow::ensure!(
+                requested.is_none(),
+                "GPU mode requires a physical Vulkan GPU; no GPU was found"
+            );
+        }
+        Err(error) => {
+            if requested.is_some() {
+                return Err(error).context("GPU mode requires an available Vulkan GPU");
+            }
+            tracing::warn!(%error, "Vulkan unavailable; automatic mode uses CPU");
+        }
+    }
+    set_windows_native_env("PARAKEET_DEVICE", "cpu")?;
+    Ok(())
+}
+
+#[cfg(windows)]
+unsafe fn set_windows_native_env(key: &str, value: &str) -> Result<()> {
+    // Rust updates the Win32 environment; the MSVC DLL reads UCRT's getenv.
+    // Keep both views synchronized even if UCRT initialized before DLL load.
+    let crt = Library::new("ucrtbase.dll").context("loading native runtime environment API")?;
+    let putenv: unsafe extern "C" fn(*const c_char, *const c_char) -> c_int =
+        sym(&crt, b"_putenv_s\0")?;
+    let key_c = CString::new(key)?;
+    let value_c = CString::new(value)?;
+    anyhow::ensure!(
+        putenv(key_c.as_ptr(), value_c.as_ptr()) == 0,
+        "failed to update native runtime environment variable {key}"
+    );
+    std::env::set_var(key, value);
+    Ok(())
+}
+
+#[cfg(windows)]
+unsafe fn windows_vulkan_devices() -> Result<Vec<(String, String, c_int)>> {
+    use ash::{vk, Entry};
+    let entry = Entry::load().context("loading Vulkan driver")?;
+    let application = vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_2);
+    let info = vk::InstanceCreateInfo::default().application_info(&application);
+    let instance = entry
+        .create_instance(&info, None)
+        .map_err(|error| anyhow!("creating Vulkan instance: {error:?}"))?;
+    let result = (|| {
+        let physical_devices = instance
+            .enumerate_physical_devices()
+            .map_err(|error| anyhow!("enumerating Vulkan devices: {error:?}"))?;
+        Ok(physical_devices
+            .iter()
+            .enumerate()
+            .map(|(index, device)| {
+                let properties = instance.get_physical_device_properties(*device);
+                let description = CStr::from_ptr(properties.device_name.as_ptr())
+                    .to_string_lossy()
+                    .into_owned();
+                let compute = instance
+                    .get_physical_device_queue_family_properties(*device)
+                    .iter()
+                    .any(|queue| queue.queue_flags.contains(vk::QueueFlags::COMPUTE));
+                let mut vulkan11 = vk::PhysicalDeviceVulkan11Features::default();
+                let mut features = vk::PhysicalDeviceFeatures2::default().push_next(&mut vulkan11);
+                instance.get_physical_device_features2(*device, &mut features);
+                let kind = if !compute
+                    || properties.api_version < vk::API_VERSION_1_2
+                    || vulkan11.storage_buffer16_bit_access == vk::FALSE
+                {
+                    0
+                } else if properties.device_type == vk::PhysicalDeviceType::DISCRETE_GPU {
+                    1
+                } else if properties.device_type == vk::PhysicalDeviceType::INTEGRATED_GPU {
+                    2
+                } else {
+                    0
+                };
+                (format!("Vulkan{index}"), description, kind)
+            })
+            .collect())
+    })();
+    instance.destroy_instance(None);
+    result
+}
+
+// Keep native backend enumeration inside the disposable inference process.
+#[cfg(target_os = "linux")]
+unsafe fn select_vulkan_device(lib: &Library) -> Result<()> {
+    let requested = std::env::var("PARAKEET_DEVICE").ok();
+    if requested.as_deref() == Some("cpu") {
+        return Ok(());
+    }
+    let count: unsafe extern "C" fn() -> usize = sym(lib, b"ggml_backend_dev_count\0")?;
+    let get: unsafe extern "C" fn(usize) -> Ctx = sym(lib, b"ggml_backend_dev_get\0")?;
+    let name: unsafe extern "C" fn(Ctx) -> *const c_char = sym(lib, b"ggml_backend_dev_name\0")?;
+    let description: unsafe extern "C" fn(Ctx) -> *const c_char =
+        sym(lib, b"ggml_backend_dev_description\0")?;
+    let device_type: unsafe extern "C" fn(Ctx) -> c_int = sym(lib, b"ggml_backend_dev_type\0")?;
+    let mut candidates = Vec::new();
+    for index in 0..count() {
+        let device = get(index);
+        let device_name = CStr::from_ptr(name(device)).to_string_lossy().into_owned();
+        let device_description = CStr::from_ptr(description(device))
+            .to_string_lossy()
+            .into_owned();
+        candidates.push((device_name, device_description, device_type(device)));
+    }
+    if let Some(index) = preferred_vulkan_device(&candidates) {
+        let (name, description, _) = &candidates[index];
+        std::env::set_var("PARAKEET_DEVICE", name);
+        tracing::info!(device = %name, gpu = %description, "selected physical Vulkan GPU");
+    } else {
+        anyhow::ensure!(
+            requested.is_none(),
+            "GPU mode requires a physical Vulkan GPU; no GPU was found"
+        );
+        // Automatic mode may fall back to CPU, explicit GPU mode may not.
+        std::env::set_var("PARAKEET_DEVICE", "cpu");
+    }
+    Ok(())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn preferred_vulkan_device(devices: &[(String, String, c_int)]) -> Option<usize> {
+    // ggml device types: 0 = CPU, 1 = discrete GPU, 2 = integrated GPU.
+    // Software Vulkan implementations must never satisfy explicit GPU mode.
+    devices
+        .iter()
+        .enumerate()
+        .filter(|(_, (name, description, kind))| {
+            let description = description.to_ascii_lowercase();
+            name.starts_with("Vulkan")
+                && matches!(kind, 1 | 2)
+                && !description.contains("llvmpipe")
+                && !description.contains("lavapipe")
+                && !description.contains("software")
+        })
+        .min_by_key(|(_, (_, _, kind))| if *kind == 1 { 0 } else { 1 })
+        .map(|(index, _)| index)
+}
+
+#[cfg(all(test, any(windows, target_os = "linux")))]
+mod gpu_tests {
+    use super::*;
+
+    #[test]
+    fn discrete_gpu_wins_over_integrated_and_software_devices() {
+        let devices = vec![
+            ("Vulkan0".into(), "AMD Radeon integrated".into(), 2),
+            ("Vulkan1".into(), "NVIDIA RTX 3050 Ti".into(), 1),
+            ("Vulkan2".into(), "llvmpipe".into(), 1),
+            ("CPU".into(), "AMD Ryzen".into(), 0),
+        ];
+        assert_eq!(preferred_vulkan_device(&devices), Some(1));
+        assert_eq!(preferred_vulkan_device(&devices[..1]), Some(0));
+        assert_eq!(preferred_vulkan_device(&devices[2..]), None);
+        assert_eq!(preferred_vulkan_device(&[]), None);
     }
 }
 

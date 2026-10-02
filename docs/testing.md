@@ -1,8 +1,28 @@
 # Testing matrix
 
-## Authoritative Windows validation command
+## Pre-commit validation
 
-Run this before committing code changes:
+Run validation for the current platform before committing code changes. On both
+Linux and Windows, run formatting, Clippy, Rust tests, Settings API tests, cleanup
+E2E, static verification, and IPC tests:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo build --bin simple-stt-settings
+python scripts/test-settings-selection-api.py
+python scripts/test-cleanup-settings-e2e.py
+python scripts/verify-static.py
+python tools/ipc-poc/test_poc.py
+```
+
+On Linux, also run `python scripts/test-linux-static.py`. Run the browser model
+selection regression for Settings changes and the relevant real-device tests
+below for keyboard routing or inference changes. Cross-compile and run Clippy
+for Windows-specific changes when the Windows target toolchain is available.
+
+On Windows, the authoritative native validation command is:
 
 ```bat
 scripts\test-full.cmd
@@ -12,6 +32,8 @@ The command runs:
 
 ```text
 cargo test --all-targets
+cargo build --bin simple-stt-settings
+python scripts\test-settings-selection-api.py
 python scripts\test-cleanup-settings-e2e.py
 python scripts\verify-static.py
 python tools\ipc-poc\test_poc.py
@@ -19,6 +41,9 @@ scripts\test-ahk-full.cmd
 ```
 
 The AutoHotkey portion rebuilds current release binaries first, so runtime smoke tests cannot accidentally validate stale executables.
+
+If a Windows host is unavailable, report native Windows runtime checks as
+unvalidated. They do not block committing changes validated on Linux.
 
 The cleanup E2E launches the real `simple-stt-settings` process against a
 deterministic OpenAI-compatible HTTP server, then exercises bootstrap and
@@ -33,7 +58,7 @@ The combined validation suite covers:
 ```text
 Rust unit tests
 real-child-process worker lifecycle integration tests
-nested schema-v8 normalization and malformed-file preservation
+nested schema-v9 normalization and malformed-file preservation
 AI cleanup provider response parsing, Unicode preservation, and raw-text fallback
 AI credential separation from portable configuration
 install-relative runtime path behavior
@@ -71,7 +96,7 @@ For experimental memory and latency comparisons across 50 alternating switches:
 python scripts/benchmark-language-switch.py --switches 50
 ```
 
-On Linux, run `python scripts/test-linux-static.py` alongside the normal Rust tests. Follow-keyboard selection currently requires Windows; fixed English and Arabic modes share the same worker and model paths on Linux.
+On Linux, run `python scripts/test-linux-static.py` alongside the normal Rust tests. Follow-keyboard selection supports KDE Plasma Wayland and X11. Fixed English and Arabic modes work on all supported Linux desktops. Install the Linux Vulkan runtime and both models with `bash scripts/bootstrap-linux-vulkan.sh`, then run `python scripts/test-inference-devices.py --mode both --language both`. To check a live layout, run `SIMPLE_STT_TEST_KEYBOARD_LANGUAGE=english cargo test --lib live_keyboard_language` (or `arabic` after switching layouts).
 
 ## Run Rust tests only
 
@@ -88,7 +113,7 @@ shell JSON Unicode and malformed JSON
 escaped helper protocol Unicode/control-character round trip
 worker framed protocol PCM and Unicode transcript framing
 protocol-version and malformed-size rejection
-schema-v8 normalization, unknown-field removal, and malformed-file preservation
+schema-v9 normalization, unknown-field removal, and malformed-file preservation
 AI cleanup defaults, nested invalid-value recovery, OAuth PKCE, and Codex SSE parsing
 approved model-name restriction
 lazy launch / warm reuse / model replacement / idle policy
@@ -262,3 +287,9 @@ release packaging with build-distribution.cmd
 ```
 
 For memory-specific measurements, see `docs/memory-cleanup-validation.md`.
+
+Linux desktop regression: `python scripts/test-linux-language.py --switch-layouts` briefly switches configured KDE English/Arabic layouts, verifies recording-start selection through authenticated capture IPC, tests both real models, unloads the worker, and restores the layout. For NVIDIA verification use `python scripts/test-inference-devices.py --mode both --language both --expect-gpu "NVIDIA GeForce RTX 3050 Ti"`; it requires the native selected-device log and an exact worker PID with NVIDIA VRAM allocation.
+
+Model selection regressions: `python scripts/test-settings-selection-api.py` exercises the real Settings HTTP server's schema migration, nullable selections, authenticated read-only discovery, unavailable Wayland, Save, and draft-only reset/import. Build the debug Settings binary first with `cargo build --bin simple-stt-settings`. `node scripts/test-settings-model-selection.cjs` exercises the browser UI using Playwright; install Playwright or set `NODE_PATH` to the bundled Node packages. It tests searchable mouse/keyboard selection, deterministic matches, preserved None, unavailable files, saved removal guards, download events, Save/Reset/import, and narrow layouts.
+
+The Linux language regression also checks silent skipped starts, real shell toggle/stop state and clipboard preservation, and worker PID reuse when English and Arabic share a model. The Windows full smoke checks skipped starts and explicitly selects its installed fixture models; run `scripts\test-full.cmd` when validating on Windows. Windows cross-compilation verifies build compatibility but does not replace native keyboard, AHK, or Vulkan desktop tests; report those checks as unvalidated when no Windows host is available.

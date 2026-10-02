@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use simple_stt::config::{InferenceDevice, LogLevel, SpeechLanguage};
+use simple_stt::config::{InferenceDevice, LogLevel};
 use simple_stt::infer::parakeet_native::ParakeetNative;
 use simple_stt::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use std::io::{stdin, stdout, BufReader};
@@ -22,8 +22,8 @@ struct Args {
     log_level: LogLevel,
     #[arg(long, value_enum, default_value = "auto")]
     inference_device: InferenceDevice,
-    #[arg(long, value_enum, default_value = "english")]
-    language: SpeechLanguage,
+    #[arg(long, default_value = "english")]
+    language: String,
     #[arg(long, default_value_t = 180)]
     idle_timeout_secs: u64,
 }

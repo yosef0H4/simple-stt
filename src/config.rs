@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 8;
+pub const CONFIG_SCHEMA_VERSION: u32 = 9;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn unique_atomic_temp_path(path: &Path) -> PathBuf {
@@ -154,19 +154,17 @@ impl SpeechLanguage {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum SpeechLanguageMode {
-    FollowKeyboard,
+pub enum ModelSelectionMode {
     #[default]
-    English,
-    Arabic,
+    SingleModel,
+    FollowKeyboard,
 }
 
-impl SpeechLanguageMode {
+impl ModelSelectionMode {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::SingleModel => "single_model",
             Self::FollowKeyboard => "follow_keyboard",
-            Self::English => "english",
-            Self::Arabic => "arabic",
         }
     }
 }
@@ -291,19 +289,33 @@ pub struct SpeechConfig {
     pub inference_device: InferenceDevice,
     pub runtime_dir: String,
     pub model_dir: String,
-    pub language_mode: SpeechLanguageMode,
-    pub english_model_filename: String,
-    pub arabic_model_filename: String,
+    pub selection_mode: ModelSelectionMode,
+    pub single_model_filename: Option<String>,
+    pub language_models: std::collections::BTreeMap<String, Option<String>>,
     pub idle_worker_timeout_secs: u64,
     pub worker_shutdown_grace_ms: u64,
 }
 
 impl SpeechConfig {
-    pub fn model_filename_for(&self, language: SpeechLanguage) -> &str {
-        match language {
-            SpeechLanguage::English => &self.english_model_filename,
-            SpeechLanguage::Arabic => &self.arabic_model_filename,
+    pub fn model_filename_for(&self, language: &str) -> Option<&str> {
+        match self.selection_mode {
+            ModelSelectionMode::SingleModel => self.single_model_filename.as_deref(),
+            ModelSelectionMode::FollowKeyboard => self
+                .language_models
+                .get(language)
+                .and_then(|name| name.as_deref()),
         }
+    }
+
+    pub fn assigned_models(&self) -> impl Iterator<Item = &str> {
+        self.single_model_filename
+            .iter()
+            .chain(
+                self.language_models
+                    .values()
+                    .filter_map(|name| name.as_ref()),
+            )
+            .map(String::as_str)
     }
 }
 
@@ -410,9 +422,9 @@ impl Default for AppConfig {
                 inference_device: InferenceDevice::Auto,
                 runtime_dir: default_parakeet_runtime_dir(),
                 model_dir: default_model_dir(),
-                language_mode: SpeechLanguageMode::English,
-                english_model_filename: "tdt_ctc-110m-q8_0.gguf".to_owned(),
-                arabic_model_filename: "lemura-arabic-asr-lite-q8_0.gguf".to_owned(),
+                selection_mode: ModelSelectionMode::SingleModel,
+                single_model_filename: None,
+                language_models: Default::default(),
                 idle_worker_timeout_secs: 180,
                 worker_shutdown_grace_ms: 2_000,
             },
@@ -592,21 +604,16 @@ impl AppConfig {
             !self.speech.model_dir.trim().is_empty(),
             "model_dir must not be empty"
         );
-        validate_model_filename(&self.speech.english_model_filename)?;
-        validate_model_filename(&self.speech.arabic_model_filename)?;
+        for filename in self.speech.assigned_models() {
+            validate_model_filename(filename)?;
+        }
         anyhow::ensure!(
-            !self
-                .speech
-                .english_model_filename
-                .starts_with("lemura-arabic-asr-lite-"),
-            "the Arabic-only Lemura model cannot be used for English"
+            self.speech.language_models.len() <= 128,
+            "too many language assignments"
         );
-        anyhow::ensure!(
-            !["tdt", "ctc-", "rnnt", "realtime_eou"]
-                .iter()
-                .any(|prefix| self.speech.arabic_model_filename.starts_with(prefix)),
-            "an English-only Parakeet model cannot be used for Arabic"
-        );
+        for language in self.speech.language_models.keys() {
+            anyhow::ensure!(valid_language_id(language), "invalid language identifier");
+        }
         anyhow::ensure!(
             (15_000..=120_000).contains(&self.cleanup.timeout_ms),
             "cleanup timeout_ms must be in [15000, 120000]"
@@ -714,13 +721,21 @@ impl AppConfig {
                 self.speech.runtime_dir = default_parakeet_runtime_dir();
             }
             if speech["model_dir"].as_str() == Some(old_models) {
-                let source = self
-                    .resolve_from_runtime_root(old_models)
-                    .join(&self.speech.english_model_filename);
+                let source = self.resolve_from_runtime_root(old_models).join(
+                    self.speech
+                        .language_models
+                        .get("en")
+                        .and_then(|name| name.as_deref())
+                        .unwrap_or("tdt_ctc-110m-q8_0.gguf"),
+                );
                 self.speech.model_dir = default_model_dir();
-                let destination = self
-                    .model_dir_path()
-                    .join(&self.speech.english_model_filename);
+                let destination = self.model_dir_path().join(
+                    self.speech
+                        .language_models
+                        .get("en")
+                        .and_then(|name| name.as_deref())
+                        .unwrap_or("tdt_ctc-110m-q8_0.gguf"),
+                );
                 if source.is_file() && !destination.exists() {
                     if let Some(parent) = destination.parent() {
                         fs::create_dir_all(parent)?;
@@ -731,7 +746,13 @@ impl AppConfig {
                 }
             }
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "linux")]
+        if input["speech"]["runtime_dir"].as_str()
+            == Some("external/parakeet-runtime/parakeet-linux")
+        {
+            self.speech.runtime_dir = default_parakeet_runtime_dir();
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
         let _ = input;
         Ok(())
     }
@@ -749,17 +770,60 @@ impl AppConfig {
             cleanup: normalize_section(&defaults.cleanup, section("cleanup")),
             diagnostics: normalize_section(&defaults.diagnostics, section("diagnostics")),
         };
-        if let Some(old_model) = section("speech")
-            .and_then(|speech| speech.get("selected_model_filename"))
-            .and_then(serde_json::Value::as_str)
-        {
-            if section("speech")
-                .and_then(|speech| speech.get("english_model_filename"))
-                .is_none()
-                && validate_model_filename(old_model).is_ok()
-            {
-                normalized.speech.english_model_filename = old_model.to_owned();
+        // Maps have dynamic keys, unlike the fixed-section normalizer.
+        if let Some(map) = input["speech"]["language_models"].as_object() {
+            for (language, value) in map.iter().take(128) {
+                if !valid_language_id(language) {
+                    continue;
+                }
+                if value.is_null() {
+                    normalized
+                        .speech
+                        .language_models
+                        .insert(language.clone(), None);
+                } else if let Some(filename) = value
+                    .as_str()
+                    .filter(|name| validate_model_filename(name).is_ok())
+                {
+                    normalized
+                        .speech
+                        .language_models
+                        .insert(language.clone(), Some(filename.to_owned()));
+                }
             }
+        }
+        if input["schema_version"].as_u64().unwrap_or(0) < 9
+            && input["speech"]["selection_mode"].is_null()
+            && input["speech"].is_object()
+        {
+            let speech = &input["speech"];
+            let legacy = |field: &str, default: &str| {
+                Some(speech[field].as_str().unwrap_or(default).to_owned())
+                    .filter(|filename| validate_model_filename(filename).is_ok())
+            };
+            let english_default = speech["selected_model_filename"]
+                .as_str()
+                .unwrap_or("tdt_ctc-110m-q8_0.gguf");
+            let english = legacy("english_model_filename", english_default);
+            let arabic = legacy("arabic_model_filename", "lemura-arabic-asr-lite-q8_0.gguf");
+            normalized
+                .speech
+                .language_models
+                .insert("en".into(), english.clone());
+            normalized
+                .speech
+                .language_models
+                .insert("ar".into(), arabic.clone());
+            normalized.speech.selection_mode = if speech["language_mode"] == "follow_keyboard" {
+                ModelSelectionMode::FollowKeyboard
+            } else {
+                ModelSelectionMode::SingleModel
+            };
+            normalized.speech.single_model_filename = if speech["language_mode"] == "arabic" {
+                arabic
+            } else {
+                english
+            };
         }
         if normalized.general.record_hotkey.trim().is_empty() {
             normalized.general.record_hotkey = defaults.general.record_hotkey;
@@ -811,20 +875,13 @@ impl AppConfig {
         if normalized.speech.model_dir.trim().is_empty() {
             normalized.speech.model_dir = defaults.speech.model_dir;
         }
-        if validate_model_filename(&normalized.speech.english_model_filename).is_err()
-            || normalized
-                .speech
-                .english_model_filename
-                .starts_with("lemura-arabic-asr-lite-")
+        if normalized
+            .speech
+            .single_model_filename
+            .as_deref()
+            .is_some_and(|name| validate_model_filename(name).is_err())
         {
-            normalized.speech.english_model_filename = defaults.speech.english_model_filename;
-        }
-        if validate_model_filename(&normalized.speech.arabic_model_filename).is_err()
-            || ["tdt", "ctc-", "rnnt", "realtime_eou"]
-                .iter()
-                .any(|prefix| normalized.speech.arabic_model_filename.starts_with(prefix))
-        {
-            normalized.speech.arabic_model_filename = defaults.speech.arabic_model_filename;
+            normalized.speech.single_model_filename = None;
         }
         if !(15_000..=120_000).contains(&normalized.cleanup.timeout_ms) {
             normalized.cleanup.timeout_ms = defaults.cleanup.timeout_ms;
@@ -923,12 +980,10 @@ impl AppConfig {
     pub fn model_dir_path(&self) -> PathBuf {
         self.resolve_from_runtime_root(&self.speech.model_dir)
     }
-    pub fn selected_model_path(&self) -> PathBuf {
-        self.model_path_for(SpeechLanguage::English)
-    }
-    pub fn model_path_for(&self, language: SpeechLanguage) -> PathBuf {
-        self.model_dir_path()
-            .join(self.speech.model_filename_for(language))
+    pub fn model_path_for(&self, language: &str) -> Option<PathBuf> {
+        self.speech
+            .model_filename_for(language)
+            .map(|name| self.model_dir_path().join(name))
     }
     pub fn validate_parakeet_files(&self) -> Result<()> {
         let runtime = self.parakeet_runtime_dir_path();
@@ -940,7 +995,9 @@ impl AppConfig {
             "Parakeet native library is missing under {}",
             runtime.display()
         );
-        let model = self.selected_model_path();
+        let model = self
+            .model_path_for("en")
+            .context("no speech model selected")?;
         anyhow::ensure!(
             model.exists(),
             "Parakeet GGUF model is missing: {}",
@@ -966,6 +1023,14 @@ fn validate_cleanup_base_url(value: &str) -> Result<()> {
         );
     }
     Ok(())
+}
+
+pub fn valid_language_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 80
+        && id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"-_:".contains(&byte)
+        })
 }
 
 fn normalize_section<T>(defaults: &T, input: Option<&serde_json::Value>) -> T
@@ -1159,6 +1224,22 @@ fn instance_local_data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_linux_runtime_migrates_to_vulkan() {
+        let old = serde_json::json!({"schema_version": 7, "speech": {
+            "runtime_dir": "external/parakeet-runtime/parakeet-linux"
+        }});
+        let mut config = AppConfig::normalize_json(&old);
+        config.migrate_legacy_runtime(&old).unwrap();
+        assert_eq!(config.speech.runtime_dir, default_parakeet_runtime_dir());
+        let custom =
+            serde_json::json!({"schema_version": 7, "speech": {"runtime_dir": "/custom/runtime"}});
+        let mut config = AppConfig::normalize_json(&custom);
+        config.migrate_legacy_runtime(&custom).unwrap();
+        assert_eq!(config.speech.runtime_dir, "/custom/runtime");
+    }
 
     #[test]
     fn concurrent_atomic_writes_use_distinct_temp_paths() {
@@ -1372,7 +1453,7 @@ mod tests {
         let normalized = fs::read_to_string(path).unwrap();
         assert!(!normalized.contains("typo"));
         assert!(!normalized.contains("obsolete"));
-        assert!(normalized.contains("english_model_filename"));
+        assert!(normalized.contains("single_model_filename"));
     }
 
     #[test]
@@ -1383,22 +1464,78 @@ mod tests {
         });
         let migrated = AppConfig::normalize_json(&legacy);
         assert_eq!(
-            migrated.speech.english_model_filename,
-            "tdt_ctc-110m-f16.gguf"
+            migrated.speech.single_model_filename.as_deref(),
+            Some("tdt_ctc-110m-f16.gguf")
         );
-        assert_eq!(migrated.speech.language_mode, SpeechLanguageMode::English);
+        assert_eq!(
+            migrated.speech.selection_mode,
+            ModelSelectionMode::SingleModel
+        );
         assert_eq!(migrated.speech.inference_device, InferenceDevice::Gpu);
         assert_eq!(migrated.schema_version, CONFIG_SCHEMA_VERSION);
     }
 
     #[test]
-    fn specialist_models_cannot_be_assigned_to_the_other_language() {
+    fn model_metadata_does_not_restrict_assignments() {
         let mut config = AppConfig::default();
-        config.speech.arabic_model_filename = "tdt_ctc-110m-q8_0.gguf".into();
-        assert!(config.validate().is_err());
-        config.speech.arabic_model_filename = "lemura-arabic-asr-lite-q8_0.gguf".into();
-        config.speech.english_model_filename = "lemura-arabic-asr-lite-q8_0.gguf".into();
-        assert!(config.validate().is_err());
+        config
+            .speech
+            .language_models
+            .insert("ar".into(), Some("tdt_ctc-110m-q8_0.gguf".into()));
+        config.speech.single_model_filename = Some("lemura-arabic-asr-lite-q8_0.gguf".into());
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn schema_nine_preserves_none_missing_and_other_languages() {
+        let config = AppConfig::normalize_json(&serde_json::json!({"schema_version":9,"speech":{
+            "selection_mode":"follow_keyboard", "single_model_filename":null,
+            "language_models":{"ar":null,"fr":"missing.gguf","en":"../bad.gguf"}
+        }}));
+        assert_eq!(config.speech.language_models.get("ar"), Some(&None));
+        assert_eq!(
+            config.speech.language_models.get("fr"),
+            Some(&Some("missing.gguf".into()))
+        );
+        assert!(!config.speech.language_models.contains_key("en"));
+        assert!(config.speech.single_model_filename.is_none());
+        config.validate().unwrap();
+        assert!(AppConfig::default()
+            .speech
+            .assigned_models()
+            .next()
+            .is_none());
+    }
+
+    #[test]
+    fn schema_eight_arabic_and_keyboard_migrate() {
+        for mode in ["arabic", "follow_keyboard"] {
+            let config = AppConfig::normalize_json(
+                &serde_json::json!({"schema_version":8,"speech":{
+                    "language_mode":mode,"english_model_filename":"unavailable.gguf","arabic_model_filename":"arabic.gguf"
+                }}),
+            );
+            assert_eq!(
+                config.speech.language_models["en"].as_deref(),
+                Some("unavailable.gguf")
+            );
+            assert_eq!(
+                config.speech.single_model_filename.as_deref(),
+                Some(if mode == "arabic" {
+                    "arabic.gguf"
+                } else {
+                    "unavailable.gguf"
+                })
+            );
+            assert_eq!(
+                config.speech.selection_mode,
+                if mode == "arabic" {
+                    ModelSelectionMode::SingleModel
+                } else {
+                    ModelSelectionMode::FollowKeyboard
+                }
+            );
+        }
     }
 
     #[test]

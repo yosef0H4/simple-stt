@@ -70,6 +70,8 @@ def main():
         env.update(
             {
                 "SIMPLE_STT_CONFIG": str(Path(temp) / "config.json"),
+                "SIMPLE_STT_RUNTIME_ROOT": str(Path(temp) / "runtime"),
+                "XDG_DATA_HOME": str(Path(temp) / "data"),
                 "SIMPLE_STT_AI_API_KEY": "settings-e2e-key",
                 "SIMPLE_STT_AI_BASE_URL": f"http://127.0.0.1:{provider.server_port}",
                 "SIMPLE_STT_AI_MODEL": "settings-e2e-model",

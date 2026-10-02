@@ -57,6 +57,8 @@ enum CommandKind {
     ReloadConfig,
     UnloadModel,
     TestModel {
+        #[arg(long)]
+        filename: Option<String>,
         #[arg(long, value_enum, default_value = "english")]
         language: simple_stt::config::SpeechLanguage,
     },
@@ -220,7 +222,9 @@ fn translate(command: CommandKind) -> ShellCommand {
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
         CommandKind::ReloadConfig => ShellCommand::ReloadConfig,
         CommandKind::UnloadModel => ShellCommand::UnloadModel,
-        CommandKind::TestModel { language } => ShellCommand::TestModel { language },
+        CommandKind::TestModel { language, filename } => {
+            ShellCommand::TestModel { language, filename }
+        }
         CommandKind::DownloadModel { filename } => ShellCommand::DownloadModel { filename },
         CommandKind::ListInputs => ShellCommand::ListInputs,
         CommandKind::ListModels => ShellCommand::ListModels,
@@ -399,21 +403,52 @@ fn config_show() -> Result<ShellResponse> {
         "model_dir_resolved".into(),
         config.model_dir_path().display().to_string(),
     );
+    for (key, filename) in [
+        (
+            "selected_model_filename",
+            config.speech.single_model_filename.as_deref(),
+        ),
+        (
+            "single_model_filename",
+            config.speech.single_model_filename.as_deref(),
+        ),
+        (
+            "english_model_filename",
+            config
+                .speech
+                .language_models
+                .get("en")
+                .and_then(|name| name.as_deref()),
+        ),
+        (
+            "arabic_model_filename",
+            config
+                .speech
+                .language_models
+                .get("ar")
+                .and_then(|name| name.as_deref()),
+        ),
+    ] {
+        response
+            .values
+            .insert(key.into(), filename.unwrap_or("").into());
+    }
     response.values.insert(
-        "selected_model_filename".into(),
-        config.speech.english_model_filename.clone(),
+        "selection_mode".into(),
+        config.speech.selection_mode.as_str().into(),
     );
     response.values.insert(
-        "english_model_filename".into(),
-        config.speech.english_model_filename.clone(),
-    );
-    response.values.insert(
-        "arabic_model_filename".into(),
-        config.speech.arabic_model_filename.clone(),
+        "language_models".into(),
+        serde_json::to_string(&config.speech.language_models)?,
     );
     response.values.insert(
         "language_mode".into(),
-        config.speech.language_mode.as_str().into(),
+        if config.speech.selection_mode == simple_stt::config::ModelSelectionMode::FollowKeyboard {
+            "follow_keyboard"
+        } else {
+            "english"
+        }
+        .into(),
     );
     response.values.insert(
         "config_path".into(),
@@ -507,6 +542,29 @@ fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
 }
 
 fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
+    if matches!(
+        key,
+        "selected_model_filename"
+            | "single_model_filename"
+            | "english_model_filename"
+            | "arabic_model_filename"
+    ) {
+        let filename = if value.is_empty() || value == "None" {
+            None
+        } else {
+            Some(value.to_owned())
+        };
+        match key {
+            "english_model_filename" => {
+                config.speech.language_models.insert("en".into(), filename);
+            }
+            "arabic_model_filename" => {
+                config.speech.language_models.insert("ar".into(), filename);
+            }
+            _ => config.speech.single_model_filename = filename,
+        }
+        return true;
+    }
     let target = match key {
         "record_hotkey" => &mut config.general.record_hotkey,
         "toggle_delivery_hotkey" => &mut config.general.toggle_delivery_hotkey,
@@ -515,9 +573,6 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
         "audio_device_contains" => &mut config.audio.preferred_device_id,
         "parakeet_runtime_dir" => &mut config.speech.runtime_dir,
         "model_dir" => &mut config.speech.model_dir,
-        "selected_model_filename" => &mut config.speech.english_model_filename,
-        "english_model_filename" => &mut config.speech.english_model_filename,
-        "arabic_model_filename" => &mut config.speech.arabic_model_filename,
         _ => return false,
     };
     *target = value.to_owned();
@@ -526,6 +581,7 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
 
 fn apply_numeric_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
     match key {
+        "language_models" => config.speech.language_models = serde_json::from_str(value)?,
         "audio_gain" => config.audio.gain = value.parse()?,
         "typing_speed_wpm" => config.output.typing_speed_wpm = value.parse()?,
         "idle_worker_timeout_secs" => config.speech.idle_worker_timeout_secs = value.parse()?,
@@ -542,13 +598,24 @@ fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
         "text_delivery_mode" => config.output.delivery_mode = parse_text_delivery_mode(value)?,
         "log_level" => config.diagnostics.log_level = parse_log_level(value)?,
         "inference_device" => config.speech.inference_device = parse_inference_device(value)?,
+        "selection_mode" => {
+            config.speech.selection_mode = match value {
+                "single_model" => simple_stt::config::ModelSelectionMode::SingleModel,
+                "follow_keyboard" => simple_stt::config::ModelSelectionMode::FollowKeyboard,
+                _ => anyhow::bail!("invalid selection_mode: {value}"),
+            };
+        }
         "language_mode" => {
-            config.speech.language_mode = match value {
-                "english" => simple_stt::config::SpeechLanguageMode::English,
-                "arabic" => simple_stt::config::SpeechLanguageMode::Arabic,
-                "follow_keyboard" => simple_stt::config::SpeechLanguageMode::FollowKeyboard,
+            config.speech.selection_mode = match value {
+                "follow_keyboard" => simple_stt::config::ModelSelectionMode::FollowKeyboard,
+                "english" | "arabic" => {
+                    let id = if value == "arabic" { "ar" } else { "en" };
+                    config.speech.single_model_filename =
+                        config.speech.language_models.get(id).cloned().flatten();
+                    simple_stt::config::ModelSelectionMode::SingleModel
+                }
                 _ => anyhow::bail!("invalid language_mode: {value}"),
-            }
+            };
         }
         "ui_theme" => config.general.ui_theme = parse_ui_theme(value)?,
         _ => return Ok(false),
@@ -726,6 +793,29 @@ mod tests {
             TextDeliveryMode::PasteCtrlShiftV
         );
         assert_eq!(config.speech.inference_device, InferenceDevice::Gpu);
+    }
+
+    #[test]
+    fn shell_save_preserves_single_choice_and_nullable_language_map() {
+        let mut config = AppConfig::default();
+        apply_config_text(&mut config, "single_model_filename\tmissing.gguf\nlanguage_models\t{\"en\":null,\"fr\":\"arabic.gguf\"}\nselection_mode\tfollow_keyboard\n").unwrap();
+        assert_eq!(
+            config.speech.single_model_filename.as_deref(),
+            Some("missing.gguf")
+        );
+        assert_eq!(config.speech.language_models["en"], None);
+        assert_eq!(
+            config.speech.language_models["fr"].as_deref(),
+            Some("arabic.gguf")
+        );
+        apply_config_text(&mut config, "selection_mode\tsingle_model\n").unwrap();
+        assert_eq!(
+            config.speech.single_model_filename.as_deref(),
+            Some("missing.gguf")
+        );
+        assert_eq!(config.speech.language_models["en"], None);
+        apply_config_text(&mut config, "language_models\t{\"fr\":\"../bad.gguf\"}\n").unwrap();
+        assert!(config.validate().is_err());
     }
 
     #[test]

@@ -24,7 +24,7 @@ pub struct WorkerConfig {
     pub log_path: PathBuf,
     pub log_level: LogLevel,
     pub inference_device: InferenceDevice,
-    pub speech_language: crate::config::SpeechLanguage,
+    pub speech_language: String,
     pub idle_timeout: Duration,
     pub shutdown_grace: Duration,
 }
@@ -102,12 +102,18 @@ impl WorkerSupervisor {
     pub fn worker_pid(&self) -> Option<u32> {
         nonzero_pid(&self.pid_tracker)
     }
+    /// Selection changes apply at recording start. Updating runtime preferences
+    /// must not replace a warm worker with an unrelated saved selection.
+    pub fn update_runtime_config(&mut self, mut next: WorkerConfig) -> Result<()> {
+        next.model_path = self.config.model_path.clone();
+        next.speech_language = self.config.speech_language.clone();
+        self.replace_config(next)
+    }
     pub fn replace_config(&mut self, next: WorkerConfig) -> Result<()> {
         if self.config.runtime_dir != next.runtime_dir
             || self.config.model_path != next.model_path
             || self.config.log_level != next.log_level
             || self.config.inference_device != next.inference_device
-            || self.config.speech_language != next.speech_language
             || self.config.idle_timeout != next.idle_timeout
             || self.config.shutdown_grace != next.shutdown_grace
         {

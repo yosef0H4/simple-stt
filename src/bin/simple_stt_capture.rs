@@ -11,7 +11,7 @@ use simple_stt::capture::screen_context;
 use simple_stt::capture::state::ServiceState;
 use simple_stt::cleanup::{self, CleanupHistoryEntry};
 use simple_stt::common::shell_protocol::{NoticeLevel, ServiceEvent, ShellCommand, ShellResponse};
-use simple_stt::config::{AppConfig, CleanupConfig, SpeechLanguage};
+use simple_stt::config::{AppConfig, CleanupConfig, ModelSelectionMode};
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -48,7 +48,7 @@ struct Args {
 #[derive(Debug)]
 struct Recording {
     session_id: u64,
-    speech_language: SpeechLanguage,
+    worker_config: WorkerConfig,
     screen_context: Arc<ScreenCaptureSlot>,
     samples: Vec<i16>,
     started: Instant,
@@ -239,7 +239,7 @@ fn main() -> Result<()> {
     }
     let mut capture_gain = config.audio.gain;
 
-    let supervisor = WorkerSupervisor::new(worker_config(&config, SpeechLanguage::English)?);
+    let supervisor = WorkerSupervisor::new(idle_worker_config(&config)?);
     let worker_pid = supervisor.pid_tracker();
     let worker = Arc::new(Mutex::new(supervisor));
     let (control_tx, control_rx) = unbounded::<ControlRequest>();
@@ -608,31 +608,21 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     });
                 }
             }
-            let language = match simple_stt::capture::input_language::resolve_speech_language(
-                config.speech.language_mode,
+            let resolved = match resolve_recording_model(
+                config,
+                simple_stt::capture::input_language::active_keyboard_language,
             ) {
-                Ok(language) => language,
-                Err(error) => {
-                    let message = error.to_string();
-                    overlay.notify_warning(&message, Duration::from_secs(4));
-                    events.push(terminal_notice_event_for_session(
-                        NoticeLevel::Warning,
-                        &message,
-                        session_id,
-                    ));
-                    return ShellResponse::error(message);
-                }
+                Ok(resolved) => resolved,
+                Err(error) => return ShellResponse::error(error.to_string()),
             };
-            if !selected_model_available(config, language) {
-                let message = missing_model_message(language);
-                overlay.notify_warning(message, Duration::from_secs(4));
-                events.push(terminal_notice_event_for_session(
-                    NoticeLevel::Warning,
-                    message,
-                    session_id,
-                ));
-                return ShellResponse::error(message);
-            }
+            let Some((language, model_path)) = resolved else {
+                overlay.hide();
+                return skipped_recording_response();
+            };
+            let frozen_worker = match worker_config(config, &language, model_path) {
+                Ok(worker) => worker,
+                Err(error) => return ShellResponse::error(error.to_string()),
+            };
             let preferred_restored = match refresh_audio_capture(
                 config,
                 capture,
@@ -653,7 +643,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             recording_active.store(true, Ordering::Relaxed);
             *active = Some(Recording {
                 session_id,
-                speech_language: language,
+                worker_config: frozen_worker.clone(),
                 screen_context: Arc::new(ScreenCaptureSlot {
                     value: Mutex::new(
                         if config.cleanup.enabled && config.cleanup.screenshot.enabled {
@@ -721,7 +711,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 .values
                 .insert("language".into(), language.as_str().into());
             events.push(event);
-            if !cancel_worker && selected_model_available(config, language) {
+            if !cancel_worker {
                 warming.insert(session_id);
                 overlay.notify_info("🎙 Loading speech model…", None);
                 let mut loading = ServiceEvent::simple("model_loading");
@@ -731,7 +721,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 let generation = cancel_generation.load(Ordering::SeqCst);
                 let cancel_generation = Arc::clone(cancel_generation);
                 let tx = background_tx.clone();
-                let next_worker = worker_config(config, language);
+                let next_worker: Result<WorkerConfig> = Ok(frozen_worker);
                 std::thread::spawn(move || {
                     if cancel_generation.load(Ordering::SeqCst) != generation {
                         return;
@@ -773,7 +763,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             recording_active.store(false, Ordering::Relaxed);
             let duration_ms = recording.started.elapsed().as_millis();
-            let language = recording.speech_language;
+            let frozen_worker = recording.worker_config;
             let samples = recording.samples;
             let screen_context = Arc::clone(&recording.screen_context);
             tracing::info!(
@@ -792,10 +782,14 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 ));
                 return ShellResponse::ok("recording rejected as too short");
             }
-            if !selected_model_available(config, language) {
-                notify_missing_model(overlay, events, Some(session_id), language);
+            if !frozen_worker.model_path.is_file() {
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
-                return ShellResponse::ok("transcription skipped because speech model is missing");
+                events.push(terminal_notice_event_for_session(
+                    NoticeLevel::Info,
+                    "Dictation skipped",
+                    session_id,
+                ));
+                return skipped_recording_response();
             }
             transcribing.insert(session_id);
             overlay.set_primary(OverlayPrimary::Transcribing);
@@ -812,7 +806,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let generation = cancel_generation.load(Ordering::SeqCst);
             let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
-            let next_worker = worker_config(config, language);
+            let next_worker: Result<WorkerConfig> = Ok(frozen_worker);
             std::thread::spawn(move || {
                 if cancel_generation.load(Ordering::SeqCst) != generation {
                     return;
@@ -908,7 +902,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             Ok(next) => {
                 let audio_changed = next.audio != config.audio
                     || next.diagnostics.log_level != config.diagnostics.log_level;
-                match worker_config(&next, SpeechLanguage::English) {
+                match idle_worker_config(&next) {
                     Ok(next_worker) => {
                         *config = next;
                         if audio_changed {
@@ -924,17 +918,19 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                         }
                         let worker = Arc::clone(worker);
                         let tx = background_tx.clone();
-                        std::thread::spawn(move || {
-                            let result = worker
-                                .lock()
-                                .map_err(|_| "inference-worker mutex poisoned".to_owned())
-                                .and_then(|mut worker| {
-                                    worker
-                                        .replace_config(next_worker)
-                                        .map_err(|error| error.to_string())
-                                });
-                            let _ = tx.send(BackgroundResult::WorkerConfigReplaced { result });
-                        });
+                        if active.is_none() && transcribing.is_empty() && warming.is_empty() {
+                            std::thread::spawn(move || {
+                                let result = worker
+                                    .lock()
+                                    .map_err(|_| "inference-worker mutex poisoned".to_owned())
+                                    .and_then(|mut worker| {
+                                        worker
+                                            .update_runtime_config(next_worker)
+                                            .map_err(|error| error.to_string())
+                                    });
+                                let _ = tx.send(BackgroundResult::WorkerConfigReplaced { result });
+                            });
+                        }
                         tracing::info!(
                             audio_changed,
                             "configuration reload accepted; worker changes queued"
@@ -963,10 +959,27 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             });
             ShellResponse::ok("speech-model worker shutdown requested")
         }
-        ShellCommand::TestModel { language } => {
-            if !selected_model_available(config, language) {
-                notify_missing_model(overlay, events, None, language);
-                return ShellResponse::ok("model test skipped because speech model is missing");
+        ShellCommand::TestModel { language, filename } => {
+            let language_id = if language == simple_stt::config::SpeechLanguage::Arabic {
+                "ar"
+            } else {
+                "en"
+            };
+            let filename = filename.or_else(|| {
+                config
+                    .speech
+                    .model_filename_for(language_id)
+                    .map(str::to_owned)
+            });
+            let Some(filename) = filename else {
+                return ShellResponse::error("No model selected for testing");
+            };
+            if let Err(error) = simple_stt::config::validate_model_filename(&filename) {
+                return ShellResponse::error(error.to_string());
+            }
+            let model_path = config.model_dir_path().join(&filename);
+            if !model_path.is_file() {
+                return ShellResponse::error("Model is not installed");
             }
             let audio = simple_stt::models::smoke_audio_path_for(language);
             if let Err(error) = simple_stt::models::ensure_smoke_audio(&audio) {
@@ -980,7 +993,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let generation = cancel_generation.load(Ordering::SeqCst);
             let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
-            let next_worker = worker_config(config, language);
+            let next_worker = worker_config(config, language_id, model_path);
             std::thread::spawn(move || {
                 if cancel_generation.load(Ordering::SeqCst) != generation {
                     return;
@@ -1516,47 +1529,49 @@ fn terminal_notice_event_for_session(
     event.values.insert("terminal".into(), "true".into());
     event
 }
-fn selected_model_available(config: &AppConfig, language: SpeechLanguage) -> bool {
-    config.model_path_for(language).is_file()
-}
-fn notify_missing_model(
-    overlay: &OverlayHandle,
-    events: &mut EventBuffer,
-    session_id: Option<u64>,
-    language: SpeechLanguage,
-) {
-    let message = missing_model_message(language);
-    overlay.notify_warning(format!("🎙 {message}"), Duration::from_secs(4));
-    match session_id {
-        Some(session_id) => events.push(terminal_notice_event_for_session(
-            NoticeLevel::Warning,
-            message,
-            session_id,
-        )),
-        None => events.push(notice_event(NoticeLevel::Warning, message)),
-    }
+fn skipped_recording_response() -> ShellResponse {
+    let mut response = ShellResponse::ok("dictation skipped");
+    response.values.insert("recording".into(), "skipped".into());
+    response
 }
 
-fn missing_model_message(language: SpeechLanguage) -> &'static str {
-    match language {
-        SpeechLanguage::English => {
-            "English speech model is not installed. Open Settings > Models to download it."
+fn resolve_recording_model(
+    config: &AppConfig,
+    keyboard: impl FnOnce() -> Result<String>,
+) -> Result<Option<(String, PathBuf)>> {
+    let language = match config.speech.selection_mode {
+        ModelSelectionMode::SingleModel => "single".to_owned(),
+        ModelSelectionMode::FollowKeyboard => {
+            if !config.speech.language_models.values().any(Option::is_some) {
+                return Ok(None);
+            }
+            keyboard()?
         }
-        SpeechLanguage::Arabic => {
-            "Arabic speech model is not installed. Open Settings > Models to download it."
-        }
-    }
+    };
+    Ok(config
+        .model_path_for(&language)
+        .filter(|path| path.is_file())
+        .map(|path| (language, path)))
 }
 
-fn worker_config(config: &AppConfig, language: SpeechLanguage) -> Result<WorkerConfig> {
+fn idle_worker_config(config: &AppConfig) -> Result<WorkerConfig> {
+    let filename = config
+        .speech
+        .assigned_models()
+        .next()
+        .unwrap_or("__unassigned.gguf");
+    worker_config(config, "idle", config.model_dir_path().join(filename))
+}
+
+fn worker_config(config: &AppConfig, language: &str, model_path: PathBuf) -> Result<WorkerConfig> {
     Ok(WorkerConfig {
         executable: sibling_executable("simple-stt-infer")?,
         runtime_dir: config.parakeet_runtime_dir_path(),
-        model_path: config.model_path_for(language),
+        model_path,
         log_path: AppConfig::infer_log_path(),
         log_level: config.diagnostics.log_level.clone(),
         inference_device: config.speech.inference_device,
-        speech_language: language,
+        speech_language: language.into(),
         idle_timeout: Duration::from_secs(config.speech.idle_worker_timeout_secs),
         shutdown_grace: Duration::from_millis(config.speech.worker_shutdown_grace_ms),
     })
@@ -1572,6 +1587,66 @@ fn sibling_executable(stem: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inactive_selections_skip_before_keyboard_or_worker_setup() {
+        let mut config = AppConfig::default();
+        assert!(
+            resolve_recording_model(&config, || panic!("single model must ignore keyboard"))
+                .unwrap()
+                .is_none()
+        );
+        config.speech.single_model_filename = Some("missing.gguf".into());
+        assert!(
+            resolve_recording_model(&config, || panic!("missing model must skip"))
+                .unwrap()
+                .is_none()
+        );
+        config.speech.selection_mode = ModelSelectionMode::FollowKeyboard;
+        config.speech.language_models.insert("ar".into(), None);
+        assert!(
+            resolve_recording_model(&config, || panic!("all None must skip"))
+                .unwrap()
+                .is_none()
+        );
+        config
+            .speech
+            .language_models
+            .insert("en".into(), Some("missing.gguf".into()));
+        for language in ["en", "ar", "fr"] {
+            assert!(resolve_recording_model(&config, || Ok(language.into()))
+                .unwrap()
+                .is_none());
+        }
+        let response = skipped_recording_response();
+        assert!(response.ok);
+        assert_eq!(response.values["recording"], "skipped");
+        assert!(response.events.is_empty());
+    }
+
+    #[test]
+    fn selection_is_permissive_and_recording_worker_is_frozen() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("arabic.gguf"), b"fixture").unwrap();
+        let mut config = AppConfig::default();
+        config.speech.model_dir = directory.path().to_string_lossy().into();
+        config.speech.selection_mode = ModelSelectionMode::FollowKeyboard;
+        config
+            .speech
+            .language_models
+            .insert("fr".into(), Some("arabic.gguf".into()));
+        let (language, path) = resolve_recording_model(&config, || Ok("fr".into()))
+            .unwrap()
+            .unwrap();
+        let frozen = worker_config(&config, &language, path.clone()).unwrap();
+        config.speech.language_models.insert("fr".into(), None);
+        config.speech.inference_device = simple_stt::config::InferenceDevice::Cpu;
+        assert_eq!(frozen.model_path, path);
+        assert_eq!(frozen.speech_language, "fr");
+        assert!(resolve_recording_model(&config, || Ok("fr".into()))
+            .unwrap()
+            .is_none());
+    }
 
     #[test]
     fn event_buffer_assigns_monotonic_sequences() {

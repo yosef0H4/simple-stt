@@ -71,22 +71,49 @@ Read `artifacts\gui-loop\report.txt` and require `RESULT: PASS` before continuin
 
 ## Required pre-commit validation
 
-Run the complete Windows validation suite before committing code changes:
+Before committing code changes, run the validation appropriate to the current
+platform. On every platform, run:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --all-targets
+cargo build --bin simple-stt-settings
+python scripts/test-settings-selection-api.py
+python scripts/test-cleanup-settings-e2e.py
+python scripts/verify-static.py
+python tools/ipc-poc/test_poc.py
+```
+
+On Linux, also run `python scripts/test-linux-static.py`. For Settings changes,
+run `node scripts/test-settings-model-selection.cjs` with Playwright available.
+For keyboard routing or inference changes, run the applicable real-device tests
+documented in `docs/testing.md`.
+
+On Windows, run the complete native suite:
 
 ```bat
 scripts\test-full.cmd
 ```
 
-This is the authoritative local validation command. It runs:
+This is the authoritative Windows validation command. It runs:
 
 ```text
 cargo test --all-targets
+cargo build --bin simple-stt-settings
+python scripts\test-settings-selection-api.py
+python scripts\test-cleanup-settings-e2e.py
 python scripts\verify-static.py
 python tools\ipc-poc\test_poc.py
 scripts\test-ahk-full.cmd
 ```
 
 `scripts\test-ahk-full.cmd` rebuilds the current release binaries before executing AHK smoke tests. This is intentional: do not validate AHK behavior against stale `target\release` binaries.
+
+When Windows-specific code changes on Linux, also cross-compile and run Clippy
+for the Windows target when its toolchain is available. Report native Windows
+runtime checks as unvalidated when no Windows host is available; their absence
+does not block a commit after the current platform's validation passes.
 
 ## Targeted test commands
 
