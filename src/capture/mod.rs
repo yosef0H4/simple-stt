@@ -1,5 +1,6 @@
 pub mod audio;
 pub mod inference_supervisor;
+pub mod input_language;
 pub mod ipc_server;
 pub mod overlay;
 pub mod process;

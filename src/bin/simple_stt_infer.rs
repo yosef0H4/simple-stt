@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use simple_stt::config::{InferenceDevice, LogLevel};
+use simple_stt::config::{InferenceDevice, LogLevel, SpeechLanguage};
 use simple_stt::infer::parakeet_native::ParakeetNative;
 use simple_stt::infer::protocol::{read_frame, write_frame, Frame, MessageType};
 use std::io::{stdin, stdout, BufReader};
@@ -22,6 +22,8 @@ struct Args {
     log_level: LogLevel,
     #[arg(long, value_enum, default_value = "auto")]
     inference_device: InferenceDevice,
+    #[arg(long, value_enum, default_value = "english")]
+    language: SpeechLanguage,
     #[arg(long, default_value_t = 180)]
     idle_timeout_secs: u64,
 }
@@ -30,7 +32,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     simple_stt::logging::init_component("infer", &args.log_path, &args.log_level)?;
     apply_inference_device(&args.inference_device);
-    tracing::info!(pid = std::process::id(), model = %args.model_path.display(), inference_device = args.inference_device.as_str(), "disposable inference worker started");
+    tracing::info!(pid = std::process::id(), model = %args.model_path.display(), inference_device = args.inference_device.as_str(), language = args.language.as_str(), "disposable inference worker started");
     let mut input = BufReader::new(stdin());
     let mut output = stdout();
     let mut engine: Option<ParakeetNative> = None;
@@ -115,11 +117,9 @@ fn main() -> Result<()> {
     );
     #[cfg(target_os = "linux")]
     unsafe {
-        // The Linux Parakeet runtime owns a process-global CUDA backend whose
-        // C++ exit handler can run after the CUDA driver has begun unloading.
         // The per-model context is already freed above. Exit directly so the
-        // kernel reclaims the remaining process-owned CUDA allocations without
-        // invoking that unsafe native static destructor.
+        // kernel reclaims any remaining process-global native backend state
+        // without depending on C++ static destructor ordering.
         libc::_exit(0);
     }
     #[cfg(not(target_os = "linux"))]
@@ -129,8 +129,8 @@ fn main() -> Result<()> {
 fn apply_inference_device(device: &InferenceDevice) {
     match device.effective() {
         InferenceDevice::Cpu => std::env::set_var("PARAKEET_DEVICE", "cpu"),
-        InferenceDevice::NvidiaGpu => std::env::remove_var("PARAKEET_DEVICE"),
-        InferenceDevice::Auto => unreachable!("auto must resolve before applying inference device"),
+        InferenceDevice::Gpu => std::env::set_var("PARAKEET_DEVICE", "Vulkan0"),
+        InferenceDevice::Auto => std::env::remove_var("PARAKEET_DEVICE"),
     }
 }
 

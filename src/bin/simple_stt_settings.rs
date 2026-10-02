@@ -64,6 +64,8 @@ struct ActionRequest {
     action: String,
     #[serde(default)]
     filename: String,
+    #[serde(default)]
+    language: simple_stt::config::SpeechLanguage,
 }
 
 #[derive(Deserialize)]
@@ -325,7 +327,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
     raw = fs::read(&path)?;
     let models = simple_stt::models::catalog_for_config(&config)
         .into_iter()
-        .map(|model| json!({"family":model.family,"quant":model.quant,"file":model.file,"size_mb":model.size_mb,"recommended":model.recommended,"installed":model.installed,"languages":model.languages}))
+        .map(|model| json!({"family":model.family,"quant":model.quant,"file":model.file,"size_mb":model.size_mb,"recommended":model.recommended,"installed":model.installed,"languages":model.languages,"download_url":model.download_url}))
         .collect::<Vec<_>>();
     let service_online = capture_request(state, ShellCommand::Ping).is_ok();
     let microphones = if service_online {
@@ -592,7 +594,9 @@ fn action_response(
         "remove_model" => ShellCommand::RemoveModel {
             filename: body.filename,
         },
-        "test_model" => ShellCommand::TestModel,
+        "test_model" => ShellCommand::TestModel {
+            language: body.language,
+        },
         _ => anyhow::bail!("unsupported service action"),
     };
     let response = capture_request(state, command)?;

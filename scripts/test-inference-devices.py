@@ -51,11 +51,14 @@ def request(process, kind: int, body: bytes = b"", session_id: int = 0):
     return read_frame(process.stdout)
 
 
-def run_mode(root: Path, mode: str) -> str:
-    runtime = root / "external" / "parakeet-runtime" / "parakeet-windows-cuda"
-    model = runtime / "models" / "tdt_ctc-110m-f16.gguf"
-    audio = root / "fixtures" / "parakeet-smoke.wav"
+def run_mode(root: Path, mode: str, language: str) -> str:
+    runtime = root / "external" / "parakeet-runtime" / "parakeet-windows-vulkan"
+    model_name = "lemura-arabic-asr-lite-q8_0.gguf" if language == "arabic" else "tdt_ctc-110m-q8_0.gguf"
+    model = root / "external" / "parakeet-runtime" / "models" / model_name
+    audio = root / "fixtures" / "asr" / "arabic-sa.wav" if language == "arabic" else root / "fixtures" / "parakeet-smoke.wav"
     exe = root / "target" / "release" / "simple-stt-infer.exe"
+    if not exe.exists():
+        exe = root / "simple-stt-infer.exe"
     log = root / "artifacts" / f"simple-stt-infer-{mode}.log"
     for required in [runtime / "bin" / "parakeet.dll", model, audio, exe]:
         if not required.exists():
@@ -63,7 +66,7 @@ def run_mode(root: Path, mode: str) -> str:
     command = [
         str(exe), "--runtime-dir", str(runtime), "--model-path", str(model),
         "--log-path", str(log), "--log-level", "debug",
-        "--inference-device", mode, "--idle-timeout-secs", "60",
+        "--inference-device", mode, "--language", language, "--idle-timeout-secs", "60",
     ]
     started = time.perf_counter()
     env = os.environ.copy()
@@ -98,11 +101,11 @@ def run_mode(root: Path, mode: str) -> str:
         native_log = process.stderr.read().decode("utf-8", errors="replace")
         if mode == "cpu" and "using GPU device" in native_log:
             raise RuntimeError(f"{mode}: native runtime selected a GPU despite CPU mode: {native_log}")
-        if mode == "nvidia_gpu" and "using GPU device: CUDA" not in native_log:
-            raise RuntimeError(f"{mode}: native runtime did not report CUDA selection: {native_log}")
+        if mode == "gpu" and "Vulkan" not in native_log:
+            raise RuntimeError(f"{mode}: native runtime did not report Vulkan selection: {native_log}")
         elapsed = time.perf_counter() - started
-        backend = "cpu" if mode == "cpu" else "CUDA"
-        print(f"PASS {mode}: backend={backend} {elapsed:.2f}s transcript={transcript!r}")
+        backend = "cpu" if mode == "cpu" else "Vulkan"
+        print(f"PASS {language}/{mode}: backend={backend} {elapsed:.2f}s transcript={transcript!r}")
         return transcript
     finally:
         if process.poll() is None:
@@ -112,15 +115,19 @@ def run_mode(root: Path, mode: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["cpu", "nvidia_gpu", "both"], default="both")
+    parser.add_argument("--mode", choices=["cpu", "gpu", "both"], default="both")
+    parser.add_argument("--language", choices=["english", "arabic", "both"], default="both")
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     args = parser.parse_args()
-    root = Path(__file__).resolve().parents[1]
-    modes = ["cpu", "nvidia_gpu"] if args.mode == "both" else [args.mode]
-    transcripts = [run_mode(root, mode) for mode in modes]
-    if len(transcripts) == 2 and transcripts[0] != transcripts[1]:
-        raise RuntimeError(f"CPU/GPU transcript mismatch: {transcripts!r}")
-    if len(transcripts) == 2:
-        print("PASS cpu_vs_nvidia_gpu: transcripts match")
+    root = args.root.resolve()
+    modes = ["cpu", "gpu"] if args.mode == "both" else [args.mode]
+    languages = ["english", "arabic"] if args.language == "both" else [args.language]
+    for language in languages:
+        transcripts = [run_mode(root, mode, language) for mode in modes]
+        if len(transcripts) == 2 and transcripts[0] != transcripts[1]:
+            raise RuntimeError(f"{language} CPU/GPU transcript mismatch: {transcripts!r}")
+        if len(transcripts) == 2:
+            print(f"PASS {language} cpu_vs_gpu: transcripts match")
     return 0
 
 

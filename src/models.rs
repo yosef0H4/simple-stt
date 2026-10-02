@@ -1,9 +1,36 @@
 use crate::config::{replace_file_atomic, validate_model_filename, AppConfig, InferenceDevice};
 use anyhow::{Context, Result};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+
+const ENGLISH_Q8_SHA256: &str = "614feee3a990cf0e672b0314f4da0c80ae8da9094507f5ccb7c42e43b5fc5a12";
+const ARABIC_Q8_SHA256: &str = "b0aa3f0f316551a45bbd76d1ac7674102a3b221d5fd8c4cd6cac1c2bc4ccce86";
+pub const ARABIC_Q8_URL: &str = "https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF/resolve/main/lemura-arabic-asr-lite-q8_0.gguf";
+
+pub fn pinned_model_sha256(filename: &str) -> Option<&'static str> {
+    match filename {
+        "tdt_ctc-110m-q8_0.gguf" => Some(ENGLISH_Q8_SHA256),
+        "lemura-arabic-asr-lite-q8_0.gguf" => Some(ARABIC_Q8_SHA256),
+        _ => None,
+    }
+}
+
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut input = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
 
 pub const BASE_URL: &str = "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main";
 pub const CATALOG_URL: &str = "https://huggingface.co/api/models/mudler/parakeet-cpp-gguf/tree/main?recursive=false&expand=false";
@@ -17,6 +44,7 @@ pub struct ModelSpec {
     pub recommended: bool,
     pub installed: bool,
     pub languages: Vec<String>,
+    pub download_url: Option<String>,
 }
 
 const V3_LANGUAGES: &[&str] = &[
@@ -172,8 +200,19 @@ pub fn catalog() -> Vec<ModelSpec> {
                 recommended: false,
                 installed: false,
                 languages: languages_for_family(family),
+                download_url: Some(format!("{BASE_URL}/{family}-{quant}.gguf")),
             })
         })
+        .chain(std::iter::once(ModelSpec {
+            family: "Lemura Arabic ASR Lite".into(),
+            quant: "q8_0".into(),
+            file: "lemura-arabic-asr-lite-q8_0.gguf".into(),
+            size_mb: 159,
+            recommended: false,
+            installed: false,
+            languages: vec!["Arabic (ar)".into()],
+            download_url: Some(ARABIC_Q8_URL.into()),
+        }))
         .collect()
 }
 pub fn find_by_file(file: &str) -> Option<ModelSpec> {
@@ -226,11 +265,12 @@ pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
         models.entry(file.clone()).or_insert_with(|| ModelSpec {
             family: "online".into(),
             quant: "unknown".into(),
-            file,
+            file: file.clone(),
             size_mb: 0,
             recommended,
             installed: false,
             languages: Vec::new(),
+            download_url: Some(format!("{BASE_URL}/{file}")),
         });
     }
     for file in installed_model_files(config) {
@@ -239,13 +279,30 @@ pub fn catalog_for_config(config: &AppConfig) -> Vec<ModelSpec> {
             .entry(file.clone())
             .and_modify(|model| model.installed = true)
             .or_insert_with(|| ModelSpec {
-                family: "local".into(),
-                quant: "unknown".into(),
-                file,
-                size_mb: 0,
+                family: if file.starts_with("lemura-arabic-asr-lite-") {
+                    "Lemura Arabic ASR Lite"
+                } else {
+                    "local"
+                }
+                .into(),
+                quant: if file.ends_with("-q8_0.gguf") {
+                    "q8_0"
+                } else {
+                    "unknown"
+                }
+                .into(),
+                file: file.clone(),
+                size_mb: fs::metadata(config.model_dir_path().join(&file))
+                    .map(|metadata| (metadata.len() / 1_000_000) as u32)
+                    .unwrap_or(0),
                 recommended,
                 installed: true,
-                languages: Vec::new(),
+                languages: if file.starts_with("lemura-arabic-asr-lite-") {
+                    vec!["Arabic (ar)".into()]
+                } else {
+                    Vec::new()
+                },
+                download_url: None,
             });
     }
     models.into_values().collect()
@@ -298,9 +355,9 @@ pub fn downloadable_models(config: &AppConfig) -> Vec<ModelSpec> {
 
 pub fn recommended_model_for_device(device: &InferenceDevice) -> &'static str {
     match device.effective() {
-        InferenceDevice::NvidiaGpu => "tdt_ctc-110m-f16.gguf",
-        InferenceDevice::Cpu => "tdt_ctc-110m-q4_k.gguf",
-        InferenceDevice::Auto => unreachable!("auto must resolve before model recommendation"),
+        InferenceDevice::Gpu | InferenceDevice::Cpu | InferenceDevice::Auto => {
+            "tdt_ctc-110m-q8_0.gguf"
+        }
     }
 }
 
@@ -317,8 +374,10 @@ fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32
     let preferred_family =
         file.starts_with("tdt_ctc-110m") || file.starts_with("realtime_eou_120m-v1");
     match device.effective() {
-        InferenceDevice::NvidiaGpu => {
-            if file.ends_with("-f16.gguf") && preferred_family && size_mb.unwrap_or(u32::MAX) <= 300
+        InferenceDevice::Gpu | InferenceDevice::Auto => {
+            if file.ends_with("-q8_0.gguf")
+                && preferred_family
+                && size_mb.unwrap_or(u32::MAX) <= 300
             {
                 Some(if file.starts_with("tdt_ctc-110m") {
                     0
@@ -341,7 +400,6 @@ fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32
                 None
             }
         }
-        InferenceDevice::Auto => unreachable!("auto must resolve before model ranking"),
     }
 }
 
@@ -361,10 +419,13 @@ where
         return Ok(target);
     }
     let partial = target.with_extension(format!("gguf.partial.{:016x}", rand::random::<u64>()));
-    let url = format!("{BASE_URL}/{}", spec.file);
+    let url = spec
+        .download_url
+        .as_deref()
+        .context("this locally installed model has no published download source")?;
     tracing::info!(%url, target = %target.display(), partial = %partial.display(), "model download begin");
     let result = (|| -> Result<u64> {
-        let mut response = reqwest::blocking::get(&url)?.error_for_status()?;
+        let mut response = reqwest::blocking::get(url)?.error_for_status()?;
         let total = response.content_length();
         let mut output = fs::File::create(&partial)
             .with_context(|| format!("creating {}", partial.display()))?;
@@ -381,6 +442,14 @@ where
         }
         output.flush()?;
         output.sync_all()?;
+        if let Some(expected) = pinned_model_sha256(&spec.file) {
+            let actual = sha256_file(&partial)?;
+            anyhow::ensure!(
+                actual == expected,
+                "downloaded model checksum mismatch: {}",
+                spec.file
+            );
+        }
         replace_file_atomic(&partial, &target)
             .with_context(|| format!("renaming partial model to {}", target.display()))?;
         Ok(downloaded)
@@ -400,7 +469,8 @@ where
 pub fn remove_model(config: &AppConfig, filename: &str) -> Result<()> {
     validate_model_filename(filename)?;
     anyhow::ensure!(
-        filename != config.speech.selected_model_filename,
+        filename != config.speech.english_model_filename
+            && filename != config.speech.arabic_model_filename,
         "select another model before removing the active model"
     );
     anyhow::ensure!(
@@ -419,6 +489,15 @@ pub fn smoke_audio_path() -> PathBuf {
         .join("fixtures")
         .join("parakeet-smoke.wav")
 }
+pub fn smoke_audio_path_for(language: crate::config::SpeechLanguage) -> PathBuf {
+    match language {
+        crate::config::SpeechLanguage::English => smoke_audio_path(),
+        crate::config::SpeechLanguage::Arabic => crate::config::runtime_root()
+            .join("fixtures")
+            .join("asr")
+            .join("arabic-sa.wav"),
+    }
+}
 pub fn ensure_smoke_audio(path: &Path) -> Result<()> {
     anyhow::ensure!(
         path.exists(),
@@ -434,6 +513,25 @@ mod tests {
     #[test]
     fn catalog_contains_default() {
         assert!(find_by_file("tdt_ctc-110m-f16.gguf").is_some());
+    }
+    #[test]
+    fn arabic_model_is_downloadable_without_a_local_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = AppConfig::default();
+        config.speech.model_dir = temp.path().display().to_string();
+        let model = downloadable_models(&config)
+            .into_iter()
+            .find(|model| model.file == config.speech.arabic_model_filename)
+            .unwrap();
+        assert_eq!(model.languages, ["Arabic (ar)"]);
+        assert_eq!(model.download_url.as_deref(), Some(ARABIC_Q8_URL));
+        assert_eq!(pinned_model_sha256(&model.file).unwrap().len(), 64);
+        fs::write(temp.path().join(&model.file), b"fixture").unwrap();
+        let installed = installed_models(&config)
+            .into_iter()
+            .find(|m| m.file == model.file)
+            .unwrap();
+        assert_eq!(installed.download_url, model.download_url);
     }
     #[test]
     fn catalog_preserves_legacy_families() {
@@ -461,10 +559,10 @@ mod tests {
             .any(|value| value == "Ukrainian (uk)"));
     }
     #[test]
-    fn gpu_and_cpu_recommendations_are_device_specific() {
+    fn gpu_prefers_q8_while_cpu_allows_compact_model() {
         assert!(is_recommended_for_device(
-            "tdt_ctc-110m-f16.gguf",
-            &InferenceDevice::NvidiaGpu
+            "tdt_ctc-110m-q8_0.gguf",
+            &InferenceDevice::Gpu
         ));
         assert!(is_recommended_for_device(
             "tdt_ctc-110m-q4_k.gguf",
@@ -484,7 +582,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
         config.speech.model_dir = temp.path().display().to_string();
-        config.speech.selected_model_filename = "tdt_ctc-110m-f16.gguf".into();
+        config.speech.english_model_filename = "tdt_ctc-110m-f16.gguf".into();
         let removable = "tdt_ctc-110m-q4_k.gguf";
         let path = temp.path().join(removable);
         fs::write(&path, b"fixture").unwrap();
@@ -496,7 +594,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
         config.speech.model_dir = temp.path().display().to_string();
-        let selected = config.speech.selected_model_filename.clone();
+        let selected = config.speech.english_model_filename.clone();
         let path = temp.path().join(&selected);
         fs::write(&path, b"fixture").unwrap();
         assert!(remove_model(&config, &selected).is_err());

@@ -18,6 +18,11 @@ external/localvqe-runtime/
 external/AutoHotkey/
 external/TTS-anywhere/
 models/
+*.gguf
+*.nemo
+# Local conversion parity tools; not part of the app or release workflow
+scripts/compare-lemura-models.py
+scripts/transcribe-lemura-reference.py
 parakeet-windows-cuda-sm86.zip
 
 # Generated diagnostics and packages

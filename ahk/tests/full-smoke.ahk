@@ -140,6 +140,52 @@ WaitForWorkerUnloaded(timeoutMs := 10000) {
     return false
 }
 
+KeyboardLanguageSmoke() {
+    global SmokeCtl, SmokeTypingGui
+    settings := ConfigStore(SmokeCtl)
+    settings.Set("language_mode", "follow_keyboard")
+    settings.SaveSync()
+    response := CallCtl("reload-config")
+    Assert(response["ok"], "language-mode reload failed")
+    window := Gui("+AlwaysOnTop", "SimpleStt Language Smoke")
+    edit := window.AddEdit("w360 h80")
+    window.Show("w390 h120")
+    SmokeTypingGui := window
+    WinActivate("ahk_id " . window.Hwnd)
+    threadId := DllCall("GetWindowThreadProcessId", "Ptr", window.Hwnd, "Ptr", 0, "UInt")
+    originalLayout := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
+    try {
+        for language in [Map("klid", "00000409", "name", "english", "session", 7201), Map("klid", "00000401", "name", "arabic", "session", 7202)] {
+            layout := DllCall("LoadKeyboardLayoutW", "Str", language["klid"], "UInt", 1, "Ptr")
+            Assert(layout != 0, "test keyboard layout unavailable: " . language["name"])
+            DllCall("ActivateKeyboardLayout", "Ptr", layout, "UInt", 0, "Ptr")
+            Sleep(150)
+            activeLayout := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
+            Assert((activeLayout & 0x3ff) = (layout & 0x3ff), "test window did not switch keyboard layout")
+            response := CallCtl("start-recording --session-id " . language["session"] . " --target-window " . window.Hwnd)
+            Assert(response["ok"], "language recording start failed: " . response["message"])
+            event := WaitForEvent("recording_started")
+            Assert(event["values"]["language"] = language["name"], "recording selected the wrong speech language")
+            response := CallCtl("cancel")
+            Assert(response["ok"], "language test cancellation failed")
+        }
+        WinActivate("ahk_id " . window.Hwnd)
+        WinWaitActive("ahk_id " . window.Hwnd, , 2)
+        edit.Focus()
+        Sleep(100)
+        SendText("مرحبا")
+        Sleep(100)
+        Assert(InStr(edit.Value, "مرحبا"), "Arabic text did not stay in the controlled edit box: " . edit.Value)
+    } finally {
+        DllCall("ActivateKeyboardLayout", "Ptr", originalLayout, "UInt", 0, "Ptr")
+        window.Destroy()
+        SmokeTypingGui := ""
+        settings.Set("language_mode", "english")
+        settings.SaveSync()
+        CallCtl("reload-config")
+    }
+}
+
 TypingSmoke() {
     global SmokeTypingGui
     logger := ShellLog(A_Temp . "\simple-stt-full-smoke-typing.log")
@@ -269,6 +315,14 @@ try {
     response := CallCtl("start-recording --session-id 7001")
     Assert(response["ok"], "start-recording warm-up failed: " . response["message"])
     Assert(WaitForWorkerLoaded(), "worker PID not visible while recording was still active")
+
+    Info("testing foreground keyboard language in a controlled edit window")
+    KeyboardLanguageSmoke()
+
+    Info("testing the Arabic model with real inference")
+    response := CallCtl("test-model --language arabic")
+    Assert(response["ok"], "Arabic model test queue failed: " . response["message"])
+    WaitForEvent("model_test_complete")
 
     Info("restarting isolated capture service")
     StopCapture()

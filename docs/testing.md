@@ -33,7 +33,7 @@ The combined validation suite covers:
 ```text
 Rust unit tests
 real-child-process worker lifecycle integration tests
-nested schema-v7 normalization and malformed-file preservation
+nested schema-v8 normalization and malformed-file preservation
 AI cleanup provider response parsing, Unicode preservation, and raw-text fallback
 AI credential separation from portable configuration
 install-relative runtime path behavior
@@ -57,6 +57,22 @@ restoration of a custom non-text clipboard format
 
 The end-to-end smoke uses isolated temporary config and state files. It does not overwrite `%APPDATA%\simple-stt\config.json` or reuse the live shell discovery file.
 
+The Windows AHK full smoke also uses a controlled edit window to switch the foreground thread between installed English and Arabic keyboard layouts. It checks the recording-start language event, runs the Arabic model test, and restores the original layout. The native inference check runs both English and Arabic models on CPU and Vulkan:
+
+```powershell
+python scripts/test-inference-devices.py --mode both --language both
+```
+
+The saved Arabic fixtures include four synthetic prompts and three human FLEURS clips. Conversion parity was checked locally before publishing the finished Q8 GGUF. Checkpoints, conversion environments, and NeMo/F16 comparison scripts are not part of this repository or required for installation.
+
+For experimental memory and latency comparisons across 50 alternating switches:
+
+```powershell
+python scripts/benchmark-language-switch.py --switches 50
+```
+
+On Linux, run `python scripts/test-linux-static.py` alongside the normal Rust tests. Follow-keyboard selection currently requires Windows; fixed English and Arabic modes share the same worker and model paths on Linux.
+
 ## Run Rust tests only
 
 ```powershell
@@ -72,7 +88,7 @@ shell JSON Unicode and malformed JSON
 escaped helper protocol Unicode/control-character round trip
 worker framed protocol PCM and Unicode transcript framing
 protocol-version and malformed-size rejection
-schema-v7 normalization, unknown-field removal, and malformed-file preservation
+schema-v8 normalization, unknown-field removal, and malformed-file preservation
 AI cleanup defaults, nested invalid-value recovery, OAuth PKCE, and Codex SSE parsing
 approved model-name restriction
 lazy launch / warm reuse / model replacement / idle policy

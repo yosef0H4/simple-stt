@@ -56,7 +56,10 @@ enum CommandKind {
     },
     ReloadConfig,
     UnloadModel,
-    TestModel,
+    TestModel {
+        #[arg(long, value_enum, default_value = "english")]
+        language: simple_stt::config::SpeechLanguage,
+    },
     DownloadModel {
         #[arg(long)]
         filename: String,
@@ -217,7 +220,7 @@ fn translate(command: CommandKind) -> ShellCommand {
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
         CommandKind::ReloadConfig => ShellCommand::ReloadConfig,
         CommandKind::UnloadModel => ShellCommand::UnloadModel,
-        CommandKind::TestModel => ShellCommand::TestModel,
+        CommandKind::TestModel { language } => ShellCommand::TestModel { language },
         CommandKind::DownloadModel { filename } => ShellCommand::DownloadModel { filename },
         CommandKind::ListInputs => ShellCommand::ListInputs,
         CommandKind::ListModels => ShellCommand::ListModels,
@@ -398,7 +401,19 @@ fn config_show() -> Result<ShellResponse> {
     );
     response.values.insert(
         "selected_model_filename".into(),
-        config.speech.selected_model_filename.clone(),
+        config.speech.english_model_filename.clone(),
+    );
+    response.values.insert(
+        "english_model_filename".into(),
+        config.speech.english_model_filename.clone(),
+    );
+    response.values.insert(
+        "arabic_model_filename".into(),
+        config.speech.arabic_model_filename.clone(),
+    );
+    response.values.insert(
+        "language_mode".into(),
+        config.speech.language_mode.as_str().into(),
     );
     response.values.insert(
         "config_path".into(),
@@ -500,7 +515,9 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
         "audio_device_contains" => &mut config.audio.preferred_device_id,
         "parakeet_runtime_dir" => &mut config.speech.runtime_dir,
         "model_dir" => &mut config.speech.model_dir,
-        "selected_model_filename" => &mut config.speech.selected_model_filename,
+        "selected_model_filename" => &mut config.speech.english_model_filename,
+        "english_model_filename" => &mut config.speech.english_model_filename,
+        "arabic_model_filename" => &mut config.speech.arabic_model_filename,
         _ => return false,
     };
     *target = value.to_owned();
@@ -525,6 +542,14 @@ fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
         "text_delivery_mode" => config.output.delivery_mode = parse_text_delivery_mode(value)?,
         "log_level" => config.diagnostics.log_level = parse_log_level(value)?,
         "inference_device" => config.speech.inference_device = parse_inference_device(value)?,
+        "language_mode" => {
+            config.speech.language_mode = match value {
+                "english" => simple_stt::config::SpeechLanguageMode::English,
+                "arabic" => simple_stt::config::SpeechLanguageMode::Arabic,
+                "follow_keyboard" => simple_stt::config::SpeechLanguageMode::FollowKeyboard,
+                _ => anyhow::bail!("invalid language_mode: {value}"),
+            }
+        }
         "ui_theme" => config.general.ui_theme = parse_ui_theme(value)?,
         _ => return Ok(false),
     }
@@ -580,7 +605,7 @@ fn parse_log_level(value: &str) -> Result<LogLevel> {
 fn parse_inference_device(value: &str) -> Result<InferenceDevice> {
     match value {
         "cpu" => Ok(InferenceDevice::Cpu),
-        "nvidia_gpu" => Ok(InferenceDevice::NvidiaGpu),
+        "gpu" | "nvidia_gpu" => Ok(InferenceDevice::Gpu),
         "auto" => Ok(InferenceDevice::Auto),
         _ => anyhow::bail!("invalid inference_device: {value}"),
     }
@@ -700,7 +725,7 @@ mod tests {
             config.output.delivery_mode,
             TextDeliveryMode::PasteCtrlShiftV
         );
-        assert_eq!(config.speech.inference_device, InferenceDevice::NvidiaGpu);
+        assert_eq!(config.speech.inference_device, InferenceDevice::Gpu);
     }
 
     #[test]

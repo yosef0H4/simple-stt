@@ -24,6 +24,7 @@ pub struct WorkerConfig {
     pub log_path: PathBuf,
     pub log_level: LogLevel,
     pub inference_device: InferenceDevice,
+    pub speech_language: crate::config::SpeechLanguage,
     pub idle_timeout: Duration,
     pub shutdown_grace: Duration,
 }
@@ -106,6 +107,7 @@ impl WorkerSupervisor {
             || self.config.model_path != next.model_path
             || self.config.log_level != next.log_level
             || self.config.inference_device != next.inference_device
+            || self.config.speech_language != next.speech_language
             || self.config.idle_timeout != next.idle_timeout
             || self.config.shutdown_grace != next.shutdown_grace
         {
@@ -265,6 +267,8 @@ impl WorkerSupervisor {
             .arg(self.config.log_level.as_str())
             .arg("--inference-device")
             .arg(self.config.inference_device.effective().as_str())
+            .arg("--language")
+            .arg(self.config.speech_language.as_str())
             .arg("--idle-timeout-secs")
             .arg(self.config.idle_timeout.as_secs().to_string())
             .stdin(Stdio::piped())
@@ -281,10 +285,12 @@ impl WorkerSupervisor {
             InferenceDevice::Cpu => {
                 command.env("PARAKEET_DEVICE", "cpu");
             }
-            InferenceDevice::NvidiaGpu => {
+            InferenceDevice::Gpu => {
+                command.env("PARAKEET_DEVICE", "Vulkan0");
+            }
+            InferenceDevice::Auto => {
                 command.env_remove("PARAKEET_DEVICE");
             }
-            InferenceDevice::Auto => unreachable!("auto must resolve before worker launch"),
         }
         let mut child = match command.spawn() {
             Ok(child) => child,

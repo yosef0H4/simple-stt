@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-pub const SHELL_PROTOCOL_VERSION: u32 = 2;
+pub const SHELL_PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -54,7 +54,9 @@ pub enum ShellCommand {
     },
     ReloadConfig,
     UnloadModel,
-    TestModel,
+    TestModel {
+        language: crate::config::SpeechLanguage,
+    },
     DownloadModel {
         filename: String,
     },

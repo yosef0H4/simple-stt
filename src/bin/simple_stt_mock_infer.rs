@@ -20,8 +20,10 @@ struct Args {
     log_path: PathBuf,
     #[arg(long, default_value = "normal")]
     log_level: String,
-    #[arg(long, default_value = "nvidia_gpu")]
+    #[arg(long, default_value = "auto")]
     inference_device: String,
+    #[arg(long, default_value = "english")]
+    language: String,
     #[arg(long, default_value_t = 180)]
     idle_timeout_secs: u64,
 }

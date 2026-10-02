@@ -20,6 +20,7 @@ fn worker_config(model_name: &str, idle: Duration, grace: Duration) -> WorkerCon
         log_path: root.join("simple-stt-mock-infer.log"),
         log_level: LogLevel::Debug,
         inference_device: InferenceDevice::Cpu,
+        speech_language: simple_stt::config::SpeechLanguage::English,
         idle_timeout: idle,
         shutdown_grace: grace,
     }
@@ -141,11 +142,30 @@ fn device_switch_recycles_worker_before_next_request() {
         Duration::from_secs(10),
         Duration::from_millis(300),
     );
-    second.inference_device = InferenceDevice::NvidiaGpu;
+    second.inference_device = InferenceDevice::Gpu;
 
     worker.replace_config(second).unwrap();
     assert_eq!(worker.worker_pid(), None);
 
+    worker.transcribe_pcm(2, &[2]).unwrap();
+    assert_ne!(worker.worker_pid(), Some(first_pid));
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
+fn language_switch_recycles_worker_even_when_model_path_is_unchanged() {
+    let first = worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    );
+    let mut worker = WorkerSupervisor::new(first.clone());
+    worker.transcribe_pcm(1, &[1]).unwrap();
+    let first_pid = worker.worker_pid().unwrap();
+    let mut second = first;
+    second.speech_language = simple_stt::config::SpeechLanguage::Arabic;
+    worker.replace_config(second).unwrap();
+    assert_eq!(worker.worker_pid(), None);
     worker.transcribe_pcm(2, &[2]).unwrap();
     assert_ne!(worker.worker_pid(), Some(first_pid));
     worker.shutdown_now().unwrap();

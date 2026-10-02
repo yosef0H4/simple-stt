@@ -23,9 +23,9 @@ if ($RequireAhk2Exe) {
     if (-not (Test-Path -LiteralPath $Compiler)) { throw "Ahk2Exe not found: $Compiler" }
     Write-Host "Ahk2Exe: $Compiler"
 }
-$Runtime = Join-Path $Root "external\parakeet-runtime\parakeet-windows-cuda"
+$Runtime = Join-Path $Root "external\parakeet-runtime\parakeet-windows-vulkan"
 $Dll = Join-Path $Runtime "bin\parakeet.dll"
-$Model = Join-Path $Runtime "models\tdt_ctc-110m-f16.gguf"
+$Model = Join-Path $Root "external\parakeet-runtime\models\tdt_ctc-110m-q8_0.gguf"
 foreach ($Path in @($Dll, $Model)) {
     if (Test-Path -LiteralPath $Path) { Write-Host "Runtime file: $Path" }
     elseif ($RequireRuntime) { throw "Missing runtime file: $Path" }

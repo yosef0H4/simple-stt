@@ -1,5 +1,5 @@
 param(
-    [string]$RuntimeUrl = "https://github.com/yosef0H4/parakeet-windows-cuda-build/releases/download/v0.0.1-sm86/parakeet-windows-cuda-sm86.zip",
+    [string]$RuntimeUrl = "https://github.com/mudler/parakeet.cpp/releases/download/v0.5.0/parakeet-v0.5.0-lib-win-vulkan-x64.zip",
     [switch]$SkipToolInstall,
     [switch]$SkipRuntime,
     [switch]$SkipBuild,
@@ -9,9 +9,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
-$RuntimeDir = Join-Path $Root "external\parakeet-runtime\parakeet-windows-cuda"
+$RuntimeDir = Join-Path $Root "external\parakeet-runtime\parakeet-windows-vulkan"
 $RuntimeDll = Join-Path $RuntimeDir "bin\parakeet.dll"
-$RuntimeModel = Join-Path $RuntimeDir "models\tdt_ctc-110m-f16.gguf"
+$RuntimeModel = Join-Path $Root "external\parakeet-runtime\models\tdt_ctc-110m-q8_0.gguf"
 
 function Have-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
@@ -94,6 +94,9 @@ function Install-ParakeetRuntime {
     try {
         Write-Host "Downloading Parakeet runtime..."
         Invoke-WebRequest -Uri $RuntimeUrl -OutFile $ZipPath
+        if ((Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash -ne '4527898049EE1566C4B3E12C8A40DDCCE154D2FC5C1661AC00A95B64CD6E512C') {
+            throw 'Downloaded Vulkan runtime archive failed SHA256 verification.'
+        }
         Write-Host "Extracting Parakeet runtime..."
         Expand-Archive -LiteralPath $ZipPath -DestinationPath $ExtractDir -Force
 
@@ -102,14 +105,14 @@ function Install-ParakeetRuntime {
         if (-not $Dll) {
             throw "Downloaded runtime did not contain bin\parakeet.dll."
         }
-        $RuntimeRoot = Split-Path -Parent (Split-Path -Parent $Dll.FullName)
-        $Model = Join-Path $RuntimeRoot "models\tdt_ctc-110m-f16.gguf"
-        if (-not (Test-Path -LiteralPath $Model)) {
-            throw "Downloaded runtime did not contain models\tdt_ctc-110m-f16.gguf."
+        New-Item -ItemType Directory -Path (Join-Path $RuntimeDir 'bin') -Force | Out-Null
+        Copy-Item -LiteralPath $Dll.FullName -Destination $RuntimeDll -Force
+        New-Item -ItemType Directory -Path (Split-Path -Parent $RuntimeModel) -Force | Out-Null
+        Invoke-WebRequest -Uri 'https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main/tdt_ctc-110m-q8_0.gguf' -OutFile $RuntimeModel
+        if ((Get-FileHash -LiteralPath $RuntimeModel -Algorithm SHA256).Hash -ne '614FEEE3A990CF0E672B0314F4DA0C80AE8DA9094507F5CCB7C42E43B5FC5A12') {
+            Remove-Item -LiteralPath $RuntimeModel -Force
+            throw 'Downloaded English Q8 model failed SHA256 verification.'
         }
-
-        New-Item -ItemType Directory -Path (Split-Path -Parent $RuntimeDir) -Force | Out-Null
-        Copy-DirectoryContents $RuntimeRoot $RuntimeDir
         Write-Host "Installed Parakeet runtime: $RuntimeDir"
     } finally {
         if (Test-Path -LiteralPath $TempRoot) {

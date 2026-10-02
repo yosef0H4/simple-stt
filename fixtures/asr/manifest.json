@@ -1,0 +1,48 @@
+[
+  {
+    "file": "arabic-sa.wav",
+    "voice": "ar-SA-ZariyahNeural",
+    "text": "مرحبا كيف حالك اليوم؟ أريد أن أكتب رسالة باللغة العربية."
+  },
+  {
+    "file": "arabic-gulf.wav",
+    "voice": "ar-AE-FatimaNeural",
+    "text": "السلام عليكم، بكرة عندنا اجتماع في المكتب الساعة العاشرة."
+  },
+  {
+    "file": "arabic-eg.wav",
+    "voice": "ar-EG-SalmaNeural",
+    "text": "أنا عايز أراجع الملف قبل ما أبعت الرسالة."
+  },
+  {
+    "file": "arabic-technical.wav",
+    "voice": "ar-SA-HamedNeural",
+    "text": "افتح تطبيق جيت هب ثم اكتب تحديث المشروع في الملف."
+  },
+  {
+    "file": "english.wav",
+    "voice": "en-US-AriaNeural",
+    "text": "Please open the project settings and save the new model."
+  },
+  {
+    "file": "real-fleurs-ar-eg-000.wav",
+    "text": "تشكلت في المحيط الأطلسي اليوم عاشر عاصفة مُسماة لموسم الأعاصير الأطلسية العاصفة شبه الاستوائية جيري",
+    "kind": "human",
+    "source": "https://huggingface.co/datasets/google/fleurs",
+    "license": "CC BY 4.0"
+  },
+  {
+    "file": "real-fleurs-ar-eg-001.wav",
+    "text": "تغادر الحافلات المحطة الداخلية بين المناطق عبر النهر في خلال اليوم على الرغم من أن معظمها وخاصة المتجهة منها إلى الشرق وجاكار/بومثانج تغادر بين 06:30 و 07:30",
+    "kind": "human",
+    "source": "https://huggingface.co/datasets/google/fleurs",
+    "license": "CC BY 4.0"
+  },
+  {
+    "file": "real-fleurs-ar-eg-002.wav",
+    "text": "يتمُّ دعم التعلُّم التفاعليّ في البرنامج داخليًا ويهدف إلى طرح الأسئلة والتحفيز وشرح الإجراءاتِ التي قد يكون من الصعب على الطالب التعامل معها بمفرده",
+    "kind": "human",
+    "source": "https://huggingface.co/datasets/google/fleurs",
+    "license": "CC BY 4.0"
+  }
+]

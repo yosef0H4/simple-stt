@@ -9,6 +9,24 @@ Simple STT source does not vendor Parakeet runtime binaries, GGUF model files, A
 - Parakeet/GGUF speech model files under `runtime/external/parakeet-runtime/.../models/`, when included in a packaged build.
 - Rust crate dependencies compiled into the Simple STT binaries, as recorded in `Cargo.lock`.
 
+The optional Arabic model `lemura-arabic-asr-lite-q8_0.gguf` is converted from
+[`lemuralabs/lemura-arabic-asr-lite`](https://huggingface.co/lemuralabs/lemura-arabic-asr-lite)
+by Lemura AI Labs. The source model is licensed under Creative Commons
+Attribution 4.0 International (CC BY 4.0). The GGUF is a format and
+quantization conversion; it retains the source model's license and attribution.
+Conversion used the `mudler/parakeet.cpp` v0.5.0 converter.
+The finished Q8 GGUF is distributed at
+https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF.
+
+The English Q8 model comes from
+[`mudler/parakeet-cpp-gguf`](https://huggingface.co/mudler/parakeet-cpp-gguf).
+The Windows Vulkan runtime is the official `mudler/parakeet.cpp` v0.5.0
+shared-library release.
+
+The three `fixtures/asr/real-fleurs-ar-eg-*.wav` recordings are resampled
+from the `ar_eg/test` split of [Google FLEURS](https://huggingface.co/datasets/google/fleurs),
+licensed under CC BY 4.0. They remain test fixtures and are not training data.
+
 See the upstream projects and bundled files for detailed license terms. Do not publish packaged runtime/model artifacts unless you have reviewed and satisfied the applicable upstream redistribution and attribution requirements.
 # Phosphor Icons
 

@@ -34,7 +34,7 @@ need(
 )
 need("src/infer/parakeet_native.rs", 'libparakeet.so', 'parakeet.so', 'parakeet_capi_load')
 need("src/capture/inference_supervisor.rs", 'LD_LIBRARY_PATH', 'DYLD_LIBRARY_PATH', 'add_native_library_search_env')
-need("src/config.rs", 'CONFIG_SCHEMA_VERSION: u32 = 7', 'pub struct GeneralConfig', 'pub struct AudioConfig', 'parakeet-linux', 'parakeet_native_library_candidates', 'screen context requires AI cleanup')
+need("src/config.rs", 'CONFIG_SCHEMA_VERSION: u32 = 8', 'pub struct GeneralConfig', 'pub struct AudioConfig', 'parakeet-linux-vulkan', 'parakeet_native_library_candidates', 'screen context requires AI cleanup')
 need("src/capture/process.rs", 'use anyhow::Context;', 'use anyhow::Result;', 'kill')
 need("Cargo.toml", 'name = "simple-stt-linux"', 'path = "src/bin/simple_stt_linux.rs"')
 linux_shell = need(

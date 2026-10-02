@@ -1,6 +1,6 @@
 [package]
 name = "simple-stt"
-version = "0.2.5"
+version = "0.3.0"
 edition = "2021"
 license = "GPL-2.0-only"
 description = "Thin AutoHotkey shell with persistent capture and disposable Parakeet inference worker"
@@ -51,6 +51,7 @@ windows-sys = { version = "0.60", features = [
   "Win32_System_Threading",
   "Win32_Storage_FileSystem",
   "Win32_UI_Controls",
+  "Win32_UI_Input_KeyboardAndMouse",
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }

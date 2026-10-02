@@ -6,7 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const CONFIG_SCHEMA_VERSION: u32 = 7;
+pub const CONFIG_SCHEMA_VERSION: u32 = 8;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 pub fn unique_atomic_temp_path(path: &Path) -> PathBuf {
@@ -106,7 +106,9 @@ pub struct AppDeliveryOverride {
 #[value(rename_all = "snake_case")]
 pub enum InferenceDevice {
     Cpu,
-    NvidiaGpu,
+    #[serde(alias = "nvidia_gpu")]
+    #[value(alias = "nvidia_gpu")]
+    Gpu,
     #[default]
     Auto,
 }
@@ -115,7 +117,7 @@ impl InferenceDevice {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Cpu => "cpu",
-            Self::NvidiaGpu => "nvidia_gpu",
+            Self::Gpu => "gpu",
             Self::Auto => "auto",
         }
     }
@@ -129,61 +131,42 @@ impl InferenceDevice {
 }
 
 pub fn auto_inference_device() -> InferenceDevice {
-    static RESOLVED: std::sync::OnceLock<InferenceDevice> = std::sync::OnceLock::new();
-    *RESOLVED.get_or_init(|| {
-        if std::env::var("SIMPLE_STT_AUTO_INFERENCE_DEVICE")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("cpu"))
-        {
-            return InferenceDevice::Cpu;
-        }
-        if std::env::var("SIMPLE_STT_AUTO_INFERENCE_DEVICE")
-            .is_ok_and(|value| value.eq_ignore_ascii_case("nvidia_gpu"))
-        {
-            return InferenceDevice::NvidiaGpu;
-        }
-        if nvidia_smi_has_usable_gpu() {
-            InferenceDevice::NvidiaGpu
-        } else {
-            InferenceDevice::Cpu
-        }
-    })
+    InferenceDevice::Auto
 }
 
-fn nvidia_smi_has_usable_gpu() -> bool {
-    let mut child = match std::process::Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.free", "--format=csv,noheader,nounits"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(_) => return false,
-    };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(2_500);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let Ok(output) = child.wait_with_output() else {
-                    return false;
-                };
-                if !status.success() {
-                    return false;
-                }
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                return stdout
-                    .lines()
-                    .filter_map(|line| line.trim().parse::<u64>().ok())
-                    .any(|free_mb| free_mb >= 1024);
-            }
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return false;
-            }
-            Err(_) => return false,
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, ValueEnum, Default)]
+#[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
+pub enum SpeechLanguage {
+    #[default]
+    English,
+    Arabic,
+}
+
+impl SpeechLanguage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::English => "english",
+            Self::Arabic => "arabic",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechLanguageMode {
+    FollowKeyboard,
+    #[default]
+    English,
+    Arabic,
+}
+
+impl SpeechLanguageMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::FollowKeyboard => "follow_keyboard",
+            Self::English => "english",
+            Self::Arabic => "arabic",
         }
     }
 }
@@ -308,9 +291,20 @@ pub struct SpeechConfig {
     pub inference_device: InferenceDevice,
     pub runtime_dir: String,
     pub model_dir: String,
-    pub selected_model_filename: String,
+    pub language_mode: SpeechLanguageMode,
+    pub english_model_filename: String,
+    pub arabic_model_filename: String,
     pub idle_worker_timeout_secs: u64,
     pub worker_shutdown_grace_ms: u64,
+}
+
+impl SpeechConfig {
+    pub fn model_filename_for(&self, language: SpeechLanguage) -> &str {
+        match language {
+            SpeechLanguage::English => &self.english_model_filename,
+            SpeechLanguage::Arabic => &self.arabic_model_filename,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -416,7 +410,9 @@ impl Default for AppConfig {
                 inference_device: InferenceDevice::Auto,
                 runtime_dir: default_parakeet_runtime_dir(),
                 model_dir: default_model_dir(),
-                selected_model_filename: "tdt_ctc-110m-f16.gguf".to_owned(),
+                language_mode: SpeechLanguageMode::English,
+                english_model_filename: "tdt_ctc-110m-q8_0.gguf".to_owned(),
+                arabic_model_filename: "lemura-arabic-asr-lite-q8_0.gguf".to_owned(),
                 idle_worker_timeout_secs: 180,
                 worker_shutdown_grace_ms: 2_000,
             },
@@ -482,11 +478,11 @@ impl Default for AppConfig {
 fn default_parakeet_runtime_dir() -> String {
     #[cfg(windows)]
     {
-        r"external\parakeet-runtime\parakeet-windows-cuda".to_owned()
+        r"external\parakeet-runtime\parakeet-windows-vulkan".to_owned()
     }
     #[cfg(target_os = "linux")]
     {
-        "external/parakeet-runtime/parakeet-linux".to_owned()
+        "external/parakeet-runtime/parakeet-linux-vulkan".to_owned()
     }
     #[cfg(all(not(windows), not(target_os = "linux")))]
     {
@@ -497,7 +493,7 @@ fn default_parakeet_runtime_dir() -> String {
 fn default_model_dir() -> String {
     #[cfg(windows)]
     {
-        r"external\parakeet-runtime\parakeet-windows-cuda\models".to_owned()
+        r"external\parakeet-runtime\models".to_owned()
     }
     #[cfg(target_os = "linux")]
     {
@@ -596,7 +592,21 @@ impl AppConfig {
             !self.speech.model_dir.trim().is_empty(),
             "model_dir must not be empty"
         );
-        validate_model_filename(&self.speech.selected_model_filename)?;
+        validate_model_filename(&self.speech.english_model_filename)?;
+        validate_model_filename(&self.speech.arabic_model_filename)?;
+        anyhow::ensure!(
+            !self
+                .speech
+                .english_model_filename
+                .starts_with("lemura-arabic-asr-lite-"),
+            "the Arabic-only Lemura model cannot be used for English"
+        );
+        anyhow::ensure!(
+            !["tdt", "ctc-", "rnnt", "realtime_eou"]
+                .iter()
+                .any(|prefix| self.speech.arabic_model_filename.starts_with(prefix)),
+            "an English-only Parakeet model cannot be used for Arabic"
+        );
         anyhow::ensure!(
             (15_000..=120_000).contains(&self.cleanup.timeout_ms),
             "cleanup timeout_ms must be in [15000, 120000]"
@@ -685,9 +695,45 @@ impl AppConfig {
             fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-        let value = Self::normalize_json(&parsed);
+        let mut value = Self::normalize_json(&parsed);
+        value.migrate_legacy_runtime(&parsed)?;
         value.save_to(path)?;
         Ok(value)
+    }
+
+    fn migrate_legacy_runtime(&mut self, input: &serde_json::Value) -> Result<()> {
+        if input["schema_version"].as_u64().unwrap_or(0) >= u64::from(CONFIG_SCHEMA_VERSION) {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        {
+            let speech = &input["speech"];
+            let old_runtime = r"external\parakeet-runtime\parakeet-windows-cuda";
+            let old_models = r"external\parakeet-runtime\parakeet-windows-cuda\models";
+            if speech["runtime_dir"].as_str() == Some(old_runtime) {
+                self.speech.runtime_dir = default_parakeet_runtime_dir();
+            }
+            if speech["model_dir"].as_str() == Some(old_models) {
+                let source = self
+                    .resolve_from_runtime_root(old_models)
+                    .join(&self.speech.english_model_filename);
+                self.speech.model_dir = default_model_dir();
+                let destination = self
+                    .model_dir_path()
+                    .join(&self.speech.english_model_filename);
+                if source.is_file() && !destination.exists() {
+                    if let Some(parent) = destination.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::copy(&source, &destination).with_context(|| {
+                        format!("migrating English model from {}", source.display())
+                    })?;
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        let _ = input;
+        Ok(())
     }
 
     pub fn normalize_json(input: &serde_json::Value) -> Self {
@@ -703,6 +749,18 @@ impl AppConfig {
             cleanup: normalize_section(&defaults.cleanup, section("cleanup")),
             diagnostics: normalize_section(&defaults.diagnostics, section("diagnostics")),
         };
+        if let Some(old_model) = section("speech")
+            .and_then(|speech| speech.get("selected_model_filename"))
+            .and_then(serde_json::Value::as_str)
+        {
+            if section("speech")
+                .and_then(|speech| speech.get("english_model_filename"))
+                .is_none()
+                && validate_model_filename(old_model).is_ok()
+            {
+                normalized.speech.english_model_filename = old_model.to_owned();
+            }
+        }
         if normalized.general.record_hotkey.trim().is_empty() {
             normalized.general.record_hotkey = defaults.general.record_hotkey;
         }
@@ -753,8 +811,20 @@ impl AppConfig {
         if normalized.speech.model_dir.trim().is_empty() {
             normalized.speech.model_dir = defaults.speech.model_dir;
         }
-        if validate_model_filename(&normalized.speech.selected_model_filename).is_err() {
-            normalized.speech.selected_model_filename = defaults.speech.selected_model_filename;
+        if validate_model_filename(&normalized.speech.english_model_filename).is_err()
+            || normalized
+                .speech
+                .english_model_filename
+                .starts_with("lemura-arabic-asr-lite-")
+        {
+            normalized.speech.english_model_filename = defaults.speech.english_model_filename;
+        }
+        if validate_model_filename(&normalized.speech.arabic_model_filename).is_err()
+            || ["tdt", "ctc-", "rnnt", "realtime_eou"]
+                .iter()
+                .any(|prefix| normalized.speech.arabic_model_filename.starts_with(prefix))
+        {
+            normalized.speech.arabic_model_filename = defaults.speech.arabic_model_filename;
         }
         if !(15_000..=120_000).contains(&normalized.cleanup.timeout_ms) {
             normalized.cleanup.timeout_ms = defaults.cleanup.timeout_ms;
@@ -854,8 +924,11 @@ impl AppConfig {
         self.resolve_from_runtime_root(&self.speech.model_dir)
     }
     pub fn selected_model_path(&self) -> PathBuf {
+        self.model_path_for(SpeechLanguage::English)
+    }
+    pub fn model_path_for(&self, language: SpeechLanguage) -> PathBuf {
         self.model_dir_path()
-            .join(&self.speech.selected_model_filename)
+            .join(self.speech.model_filename_for(language))
     }
     pub fn validate_parakeet_files(&self) -> Result<()> {
         let runtime = self.parakeet_runtime_dir_path();
@@ -1299,7 +1372,33 @@ mod tests {
         let normalized = fs::read_to_string(path).unwrap();
         assert!(!normalized.contains("typo"));
         assert!(!normalized.contains("obsolete"));
-        assert!(normalized.contains("selected_model_filename"));
+        assert!(normalized.contains("english_model_filename"));
+    }
+
+    #[test]
+    fn schema_seven_english_model_is_preserved() {
+        let legacy = serde_json::json!({
+            "schema_version": 7,
+            "speech": {"selected_model_filename": "tdt_ctc-110m-f16.gguf", "inference_device": "nvidia_gpu"}
+        });
+        let migrated = AppConfig::normalize_json(&legacy);
+        assert_eq!(
+            migrated.speech.english_model_filename,
+            "tdt_ctc-110m-f16.gguf"
+        );
+        assert_eq!(migrated.speech.language_mode, SpeechLanguageMode::English);
+        assert_eq!(migrated.speech.inference_device, InferenceDevice::Gpu);
+        assert_eq!(migrated.schema_version, CONFIG_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn specialist_models_cannot_be_assigned_to_the_other_language() {
+        let mut config = AppConfig::default();
+        config.speech.arabic_model_filename = "tdt_ctc-110m-q8_0.gguf".into();
+        assert!(config.validate().is_err());
+        config.speech.arabic_model_filename = "lemura-arabic-asr-lite-q8_0.gguf".into();
+        config.speech.english_model_filename = "lemura-arabic-asr-lite-q8_0.gguf".into();
+        assert!(config.validate().is_err());
     }
 
     #[test]

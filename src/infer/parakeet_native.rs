@@ -87,6 +87,13 @@ impl Api {
         let lib = unsafe { Library::new(&library_path) }
             .with_context(|| format!("loading {}", library_path.display()))?;
         unsafe {
+            let abi_version: unsafe extern "C" fn() -> c_int =
+                sym(&lib, b"parakeet_capi_abi_version\0")?;
+            let actual_abi = abi_version();
+            anyhow::ensure!(
+                actual_abi == 6,
+                "unsupported parakeet.cpp C ABI {actual_abi}; expected 6 (v0.5.0)"
+            );
             Ok(Self {
                 load: sym(&lib, b"parakeet_capi_load\0")?,
                 free: sym(&lib, b"parakeet_capi_free\0")?,

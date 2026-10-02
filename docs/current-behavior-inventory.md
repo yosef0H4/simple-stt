@@ -142,8 +142,9 @@ The original fixture was preserved and copied to active install-relative `fixtur
 The repository intentionally does not bundle the large native Parakeet runtime or GGUF models. The following are expected externally:
 
 ```text
-external\\parakeet-runtime\\parakeet-windows-cuda\\bin\\parakeet.dll
-external\\parakeet-runtime\\parakeet-windows-cuda\\models\\<approved model>.gguf
+external\\parakeet-runtime\\parakeet-windows-vulkan\\bin\\parakeet.dll
+external\\parakeet-runtime\\models\\tdt_ctc-110m-q8_0.gguf
+external\\parakeet-runtime\\models\\lemura-arabic-asr-lite-q8_0.gguf
 ```
 
-A Windows target, AutoHotkey v2 for development, Cargo/Rust, CPAL-compatible microphone device, and CUDA-capable Parakeet runtime are required for end-to-end validation.
+A Windows target, AutoHotkey v2 for development, Cargo/Rust, CPAL-compatible microphone device, and the Vulkan Parakeet runtime are required for Windows end-to-end validation. Linux manual-language operation uses the matching Linux Vulkan runtime and the same model directory.

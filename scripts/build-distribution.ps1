@@ -11,8 +11,11 @@ $Artifacts = Join-Path $Root 'artifacts'
 $Portable = Join-Path $Artifacts 'simple-stt-portable'
 $Dist = Join-Path $Artifacts 'dist'
 $Runtime = Join-Path $Portable 'runtime'
-$ParakeetSource = Join-Path $Root 'external\parakeet-runtime\parakeet-windows-cuda'
-$ParakeetDest = Join-Path $Runtime 'external\parakeet-runtime\parakeet-windows-cuda'
+$ParakeetSource = Join-Path $Root 'external\parakeet-runtime\parakeet-windows-vulkan'
+$ParakeetDest = Join-Path $Runtime 'external\parakeet-runtime\parakeet-windows-vulkan'
+$ModelSource = Join-Path $Root 'external\parakeet-runtime\models'
+$ModelDest = Join-Path $Runtime 'external\parakeet-runtime\models'
+$ArabicModel = Join-Path $ModelSource 'lemura-arabic-asr-lite-q8_0.gguf'
 $ResolvedTargetDir = if ($CargoTargetDir) {
     [System.IO.Path]::GetFullPath($CargoTargetDir)
 } elseif ($env:CARGO_TARGET_DIR) {
@@ -64,9 +67,14 @@ $Iscc = Resolve-Tool $Iscc @(
 Require-File (Join-Path $Root 'ahk\simple-stt.ahk')
 Require-File (Join-Path $Root 'ahk\hotkey-recorder.ahk')
 Require-File (Join-Path $Root 'fixtures\parakeet-smoke.wav')
+Require-File (Join-Path $Root 'fixtures\asr\arabic-sa.wav')
 Require-File (Join-Path $ParakeetSource 'bin\parakeet.dll')
 if ($IncludeModel) {
-    Require-File (Join-Path $ParakeetSource 'models\tdt_ctc-110m-f16.gguf')
+    Require-File $ArabicModel
+    if ((Get-Sha256 $ArabicModel) -ne 'B0AA3F0F316551A45BBD76D1AC7674102A3B221D5FD8C4CD6CAC1C2BC4CCCE86') {
+        throw 'Arabic model checksum differs from the validated Q8 conversion.'
+    }
+    Require-File (Join-Path $ModelSource 'tdt_ctc-110m-q8_0.gguf')
 }
 
 $BuildRelease = Join-Path $PSScriptRoot 'build-release.ps1'
@@ -92,11 +100,16 @@ Copy-Item -LiteralPath (Join-Path $Root 'START_HERE.txt') -Destination $Portable
 Set-Content -LiteralPath (Join-Path $Portable 'simple-stt.cmd') -Encoding ASCII -Value '@echo off','start "" "%~dp0runtime\AutoHotkey64.exe" "%~dp0runtime\simple-stt.ahk"'
 New-Item -ItemType Directory -Path (Join-Path $Runtime 'fixtures') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'fixtures\parakeet-smoke.wav') -Destination (Join-Path $Runtime 'fixtures') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'fixtures\asr') -Destination (Join-Path $Runtime 'fixtures\asr') -Recurse -Force
 New-Item -ItemType Directory -Path (Split-Path -Parent $ParakeetDest) -Force | Out-Null
 if ($IncludeModel) {
     Copy-Item -LiteralPath $ParakeetSource -Destination $ParakeetDest -Recurse -Force
+    New-Item -ItemType Directory -Path $ModelDest -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $ModelSource 'tdt_ctc-110m-q8_0.gguf') -Destination $ModelDest -Force
+    Copy-Item -LiteralPath $ArabicModel -Destination $ModelDest -Force
 } else {
     Copy-DirectoryExcludingModels $ParakeetSource $ParakeetDest
+    New-Item -ItemType Directory -Path $ModelDest -Force | Out-Null
 }
 $Required = @(
     'runtime\simple-stt.ahk',
@@ -107,10 +120,11 @@ $Required = @(
     'runtime\simple-stt-ctl.exe',
     'runtime\simple-stt-settings.exe',
     'runtime\fixtures\parakeet-smoke.wav',
-    'runtime\external\parakeet-runtime\parakeet-windows-cuda\bin\parakeet.dll'
+    'runtime\external\parakeet-runtime\parakeet-windows-vulkan\bin\parakeet.dll'
 )
 if ($IncludeModel) {
-    $Required += 'runtime\external\parakeet-runtime\parakeet-windows-cuda\models\tdt_ctc-110m-f16.gguf'
+    $Required += 'runtime\external\parakeet-runtime\models\tdt_ctc-110m-q8_0.gguf'
+    $Required += 'runtime\external\parakeet-runtime\models\lemura-arabic-asr-lite-q8_0.gguf'
 }
 foreach ($RelativePath in $Required) { Require-File (Join-Path $Portable $RelativePath) }
 

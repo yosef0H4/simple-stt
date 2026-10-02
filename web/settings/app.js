@@ -898,8 +898,15 @@ function build() {
     options: [
       ["auto", "Automatic"],
       ["cpu", "CPU"],
-      ["nvidia_gpu", "NVIDIA GPU"],
+      ["gpu", "GPU (Vulkan)"],
     ],
+  });
+  field(engine, {
+    label: "Speech language",
+    description: state.platform === "linux" ? "Choose a fixed language on Linux." : "Follow the active keyboard layout or choose a fixed language.",
+    path: "speech.language_mode",
+    type: "select",
+    options: state.platform === "linux" ? [["english", "English"], ["arabic", "Arabic"]] : [["english", "English"], ["arabic", "Arabic"], ["follow_keyboard", "Follow keyboard"]],
   });
   renderModels();
   const delivery = group(
@@ -1422,6 +1429,11 @@ function renderModels() {
   refresh.onclick = () => action("refresh_models").then(refreshState);
   head.append(refresh);
   root.append(document.createRange().createContextualFragment(groupIcon("Speech model")), head);
+  const arabicInstalled = state.models.some((model) => model.file === config.speech.arabic_model_filename && model.installed);
+  const status = document.createElement("p");
+  status.className = "model-status";
+  status.textContent = `English model: ${config.speech.english_model_filename} · Arabic model: ${arabicInstalled ? config.speech.arabic_model_filename : "choose an installed model below"}`;
+  root.append(status);
   const languageText = (m) =>
       (m.languages || []).join(", ") ||
       "Language not declared for this local model",
@@ -1431,7 +1443,6 @@ function renderModels() {
         : languageText(m);
   const searchField = document.createElement("label");
   searchField.className = "model-search-field";
-  searchField.dataset.settingPath = "speech.selected_model_filename";
   searchField.innerHTML = "<strong>Find a model</strong>";
   const search = document.createElement("input");
   search.id = "model-search";
@@ -1462,7 +1473,8 @@ function renderModels() {
         ...(model.languages || []),
         model.installed ? "installed downloaded local" : "available download",
         model.recommended ? "recommended" : "",
-        model.file === config.speech.selected_model_filename ? "selected" : "",
+        model.file === config.speech.english_model_filename ? "selected" : "",
+        model.file === config.speech.arabic_model_filename ? "selected" : "",
       ]
         .join(" ")
         .toLowerCase();
@@ -1482,9 +1494,14 @@ function renderModels() {
     }
     const visibleMatches = terms.length ? matches : matches.slice(0, visibleModelLimit);
     for (const model of visibleMatches) {
+      const assignedEnglish = model.file === config.speech.english_model_filename;
+      const assignedArabic = model.file === config.speech.arabic_model_filename;
+      const selected = assignedEnglish || assignedArabic;
+      const knownArabic = model.file.startsWith("lemura-arabic-asr-lite-");
+      const knownEnglish = (model.languages || []).some((language) => language.startsWith("English (")) && !knownArabic;
       const row = document.createElement("article");
       row.className = "model-result";
-      if (model.file === config.speech.selected_model_filename)
+      if (selected)
         row.dataset.selected = "true";
       const copy = document.createElement("div");
       copy.className = "model-result-copy";
@@ -1493,6 +1510,8 @@ function renderModels() {
       badges.className = "model-badges";
       if (model.recommended) badges.innerHTML += "<span>Recommended</span>";
       if (model.installed) badges.innerHTML += "<span>Installed</span>";
+      if (assignedEnglish) badges.innerHTML += "<span>English model</span>";
+      if (assignedArabic) badges.innerHTML += "<span>Arabic model</span>";
       copy.append(badges);
       const actions = document.createElement("div");
       actions.className = "model-actions";
@@ -1506,25 +1525,37 @@ function renderModels() {
         primary.title = "Downloading";
         primary.disabled = true;
         primary.dataset.state = "loading";
-      } else if (!model.installed) {
+      } else if (!model.installed && model.download_url) {
         primary.innerHTML = actionIcon("download");
         primary.className = "icon-button";
         primary.setAttribute("aria-label", `Download ${model.family} ${model.quant}`);
         primary.title = "Download model";
         primary.onclick = () => download(model.file);
-      } else if (model.file === config.speech.selected_model_filename) {
-        primary.innerHTML = `${actionIcon("check")}Selected`;
+      } else if (!model.installed) {
+        primary.textContent = "Install model to assign";
         primary.disabled = true;
-      } else {
-        primary.innerHTML = `${actionIcon("check")}Select`;
-        primary.className = "primary";
-        primary.onclick = () => {
-          set("speech.selected_model_filename", model.file);
-          drawResults();
-        };
       }
-      actions.append(primary);
-      if (model.file === config.speech.selected_model_filename) {
+      if (model.installed) {
+        for (const [language, allowed, assigned] of [
+          ["English", !knownArabic, assignedEnglish],
+          ["Arabic", !knownEnglish, assignedArabic],
+        ]) {
+          if (!allowed) continue;
+          const assign = document.createElement("button");
+          assign.type = "button";
+          assign.textContent = assigned ? `${language} selected` : `Use for ${language}`;
+          assign.disabled = assigned;
+          if (!assigned) assign.className = "primary";
+          assign.onclick = () => {
+            set(`speech.${language.toLowerCase()}_model_filename`, model.file);
+            drawResults();
+          };
+          actions.append(assign);
+        }
+      } else {
+        actions.append(primary);
+      }
+      if (selected) {
         const test = document.createElement("button");
         test.type = "button";
         test.className = "icon-button";
@@ -1534,7 +1565,7 @@ function renderModels() {
         test.title = dirty
           ? "Save your selection before testing"
           : "Run the bundled speech sample";
-        test.onclick = () => action("test_model", model.file);
+        test.onclick = () => action("test_model", model.file, assignedArabic ? "arabic" : "english");
         actions.append(test);
       }
       if (model.installed) {
@@ -1547,10 +1578,10 @@ function renderModels() {
           `Remove ${model.family} ${model.quant}`,
         );
         remove.title =
-          model.file === config.speech.selected_model_filename
+          selected
             ? "Select another model before removing this one"
             : "Remove downloaded model";
-        remove.disabled = model.file === config.speech.selected_model_filename;
+        remove.disabled = selected;
         remove.onclick = async () => {
           if (
             !window.confirm(
@@ -1721,7 +1752,7 @@ async function save(retriedRuntimeChange = false) {
     notice(e.message, "error");
   }
 }
-async function action(name, filename = "") {
+async function action(name, filename = "", language = "english") {
   if (!state.service_online) {
     notice("The capture service is offline.", "error");
     return;
@@ -1729,7 +1760,7 @@ async function action(name, filename = "") {
   try {
     const r = await api("/api/action", {
       method: "POST",
-      body: JSON.stringify({ action: name, filename }),
+      body: JSON.stringify({ action: name, filename, language }),
     });
     notice(r.message, "success");
     return r;

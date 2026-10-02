@@ -4,6 +4,7 @@ SIMPLE_STT SOURCE OVERHAUL
 Architecture:
   AutoHotkey v2 shell -> persistent simple-stt-capture.exe -> disposable simple-stt-infer.exe
   AutoHotkey uses disposable simple-stt-ctl.exe helpers for non-blocking local control.
+  The worker uses parakeet.cpp Vulkan with CPU fallback and separate English/Arabic models.
 
 Read first:
   docs\architecture.md
@@ -26,10 +27,17 @@ Outputs:
   artifacts\dist\simple-stt-setup.exe
   artifacts\dist\simple-stt-portable.zip
 
+The Windows setup downloads the English Q8 model during install. Select the optional
+Arabic model task to download Arabic Q8 from yosef0H4/lemura-arabic-asr-lite-GGUF.
+Both models can also be downloaded and assigned by language in Settings > Models.
+In Settings, choose English, Arabic, or Follow keyboard. Linux offers fixed English
+and Arabic modes; prepare its Vulkan runtime with scripts/bootstrap-linux-vulkan.sh.
+
 Static source checks and IPC POC:
   .\scripts\test-static.ps1
 
 Settings UI:
   use the tray's Open Settings command, or run target\debug\simple-stt-settings.exe
 
-The Linux editing environment did not build binaries. Run the documented Windows checks before release.
+Run scripts\test-full.cmd before shipping a Windows build. Linux static checks are
+available through python scripts\test-linux-static.py.
