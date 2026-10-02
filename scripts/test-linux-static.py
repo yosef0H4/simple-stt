@@ -5,10 +5,22 @@ These checks intentionally avoid Rust toolchain requirements so they can run in
 minimal CI containers. They do not replace `cargo test --all-targets`.
 """
 from pathlib import Path
+import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 errors: list[str] = []
+
+frontend_check = subprocess.run(
+    [sys.executable, str(ROOT / "scripts/verify-settings-frontend.py")],
+    cwd=ROOT,
+    capture_output=True,
+    text=True,
+)
+if frontend_check.returncode:
+    print(frontend_check.stdout, end="")
+    print(frontend_check.stderr, end="")
+    errors.append("Settings frontend build output is stale or exceeds its size budget")
 
 
 def need(path: str, *needles: str) -> str:

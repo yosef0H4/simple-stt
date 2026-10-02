@@ -85,8 +85,13 @@ python scripts/verify-static.py
 python tools/ipc-poc/test_poc.py
 ```
 
+For frontend changes, first run `npm ci` and `npm run build` in `web/settings`.
+Commit generated `dist/` assets with their sources; Cargo rejects stale assets.
+
 On Linux, also run `python scripts/test-linux-static.py`. For Settings changes,
-run `node scripts/test-settings-model-selection.cjs` with Playwright available.
+run `node scripts/test-settings-model-selection.cjs`,
+`node scripts/test-settings-overhaul.cjs`, and
+`node scripts/test-settings-contracts.cjs` with Playwright available.
 For keyboard routing or inference changes, run the applicable real-device tests
 documented in `docs/testing.md`.
 
@@ -105,6 +110,9 @@ python scripts\test-settings-selection-api.py
 python scripts\test-cleanup-settings-e2e.py
 python scripts\verify-static.py
 python tools\ipc-poc\test_poc.py
+node scripts\test-settings-model-selection.cjs
+node scripts\test-settings-overhaul.cjs
+node scripts\test-settings-contracts.cjs
 scripts\test-ahk-full.cmd
 ```
 

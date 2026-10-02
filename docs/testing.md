@@ -17,6 +17,15 @@ python scripts/verify-static.py
 python tools/ipc-poc/test_poc.py
 ```
 
+Build the Settings frontend before any Cargo build. Release packaging and the
+full-suite scripts run this automatically. Linux uses `scripts/test-full.sh`
+(with Playwright available) and `scripts/build-linux-release.sh`. During targeted
+development, run `cd web/settings && npm ci && npm run build`. The build writes
+`dist/index.html`, `dist/app.js`, `dist/styles.css`, and a deterministic
+`dist/manifest.json`. `python scripts/verify-settings-frontend.py` checks source
+and output hashes plus the 100 KiB gzipped JS/CSS and 300 KiB total asset budgets.
+The Rust build script independently rejects missing or stale frontend output.
+
 On Linux, also run `python scripts/test-linux-static.py`. Run the browser model
 selection regression for Settings changes and the relevant real-device tests
 below for keyboard routing or inference changes. Cross-compile and run Clippy
@@ -37,6 +46,9 @@ python scripts\test-settings-selection-api.py
 python scripts\test-cleanup-settings-e2e.py
 python scripts\verify-static.py
 python tools\ipc-poc\test_poc.py
+node scripts\test-settings-model-selection.cjs
+node scripts\test-settings-overhaul.cjs
+node scripts\test-settings-contracts.cjs
 scripts\test-ahk-full.cmd
 ```
 
@@ -293,3 +305,23 @@ Linux desktop regression: `python scripts/test-linux-language.py --switch-layout
 Model selection regressions: `python scripts/test-settings-selection-api.py` exercises the real Settings HTTP server's schema migration, nullable selections, authenticated read-only discovery, unavailable Wayland, Save, and draft-only reset/import. Build the debug Settings binary first with `cargo build --bin simple-stt-settings`. `node scripts/test-settings-model-selection.cjs` exercises the browser UI using Playwright; install Playwright or set `NODE_PATH` to the bundled Node packages. It tests searchable mouse/keyboard selection, deterministic matches, preserved None, unavailable files, saved removal guards, download events, Save/Reset/import, and narrow layouts.
 
 The Linux language regression also checks silent skipped starts, real shell toggle/stop state and clipboard preservation, and worker PID reuse when English and Arabic share a model. The Windows full smoke checks skipped starts and explicitly selects its installed fixture models; run `scripts\test-full.cmd` when validating on Windows. Windows cross-compilation verifies build compatibility but does not replace native keyboard, AHK, or Vulkan desktop tests; report those checks as unvalidated when no Windows host is available.
+
+
+Settings overhaul browser validation: `node scripts/test-settings-overhaul.cjs`
+covers every page, cross-page drafts, Save/Reset, shortcut capture, delivery
+cycles and app overrides, cleanup testing, credential/OAuth actions against
+local fixtures, metadata search, JSON editing/export, conflicts, offline editing,
+and Linux-specific controls. `node scripts/test-settings-contracts.cjs` checks
+TypeScript contracts against the real Rust API and loads the compiled UI under
+its CSP. These scripts require Node with TypeScript type stripping support
+(Node 24 is tested) and Playwright through `NODE_PATH` or an installation.
+
+For release-asset performance comparisons run `node scripts/benchmark-settings.cjs`
+with `SETTINGS_WEB_ROOT` pointing to baseline assets, then current assets. Use
+`SETTINGS_BENCHMARK_OUTPUT` to retain measurements and
+`SETTINGS_BENCHMARK_BASELINE` on the current pass to enforce startup/interaction
+and heap budgets. Linux Settings-server RSS comparison uses
+`python scripts/benchmark-settings-server.py --baseline PATH --current PATH`.
+These tests use isolated configurations and never modify the running app's
+settings. Browser heap measures only the tab's JavaScript; shared browser engine
+RAM is separate. Background shell/capture code is outside this UI overhaul.

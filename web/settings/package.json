@@ -1,0 +1,24 @@
+{
+  "name": "simple-stt-settings",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "build": "npm run check && vite build && node tools/manifest.mjs",
+    "verify": "node tools/manifest.mjs --verify",
+    "format": "prettier --plugin prettier-plugin-svelte --write src vite.config.ts svelte.config.js index.html tools"
+  },
+  "dependencies": {
+    "svelte": "5.57.1"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/node": "^26.6.4",
+    "prettier": "^3.9.9",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte-check": "4.7.6",
+    "typescript": "6.0.3",
+    "vite": "8.3.2"
+  }
+}

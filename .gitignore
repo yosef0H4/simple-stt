@@ -36,3 +36,7 @@ lcov.info
 .vscode/
 .idea/
 tmp/
+
+# Frontend development dependencies (compiled dist stays tracked)
+web/settings/node_modules/
+web/settings/.svelte-kit/

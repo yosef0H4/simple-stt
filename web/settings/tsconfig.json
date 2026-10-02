@@ -1,0 +1,1 @@
+{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"bundler","strict":true,"verbatimModuleSyntax":true,"isolatedModules":true,"resolveJsonModule":true,"allowJs":false,"skipLibCheck":true,"lib":["ES2022","DOM","DOM.Iterable"]},"include":["src/**/*.ts","src/**/*.svelte","vite.config.ts"]}

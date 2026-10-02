@@ -35,7 +35,7 @@ simple-stt-capture.exe
 
 simple-stt-settings.exe
     disposable authenticated loopback settings server
-    ├── serves bundled vanilla HTML/CSS/JavaScript to the default browser
+    ├── serves bundled Svelte/TypeScript HTML/CSS/JavaScript to the default browser
     ├── edits canonical nested config.json with explicit Save
     ├── streams capture/model events to the browser
     ├── starts model refresh, download, selection, and test workflows
@@ -58,7 +58,7 @@ simple-stt-infer.exe
 | --- | --- | --- |
 | Tray icon/menu | AHK shell | `A_TrayMenu`, menu object APIs, `TraySetIcon()`. |
 | Linux global shortcuts | `simple-stt-linux` | Automatic backend selection uses GlobalShortcuts on Wayland, native X11 passive grabs on X11, and documented compositor commands when no Wayland portal exists. KDE Plasma on Fedora Wayland is the only real-hardware-tested Linux environment; other desktops remain experimental. |
-| Settings UI | `simple-stt-settings` | Cross-platform browser UI; no webview, Node, or frontend framework. |
+| Settings UI | `simple-stt-settings` | Cross-platform browser UI; built from Svelte/TypeScript and embedded in the Rust binary. Node is a build-time dependency only. |
 | User hotkeys | AHK shell | Runtime `Hotkey()` bindings; CapsLock custom combination path. |
 | Final typing | AHK shell | Variable-paced per-character `SendText()`; target HWND checked before every character. |
 | Service PID supervision | AHK shell | PID from `Run()`; graceful request then `ProcessWaitClose()` and exact-PID `ProcessClose()` fallback. |

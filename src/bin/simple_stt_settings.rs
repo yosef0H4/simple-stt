@@ -20,10 +20,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
-const INDEX: &str = include_str!("../../web/settings/index.html");
-const TOKENS: &str = include_str!("../../web/settings/tokens.css");
-const CSS: &str = include_str!("../../web/settings/styles.css");
-const JS: &str = include_str!("../../web/settings/app.js");
+const INDEX: &str = include_str!("../../web/settings/dist/index.html");
+const CSS: &str = include_str!("../../web/settings/dist/styles.css");
+const JS: &str = include_str!("../../web/settings/dist/app.js");
 const MAX_BODY: usize = 2 * 1024 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
@@ -163,7 +162,6 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
     if request.method() == &Method::Get {
         match path {
             "/" | "/index.html" => return Ok(asset(INDEX, "text/html; charset=utf-8", state)),
-            "/tokens.css" => return Ok(asset(TOKENS, "text/css; charset=utf-8", state)),
             "/styles.css" => return Ok(asset(CSS, "text/css; charset=utf-8", state)),
             "/app.js" => return Ok(asset(JS, "text/javascript; charset=utf-8", state)),
             "/favicon.ico" => {
@@ -1035,14 +1033,10 @@ mod tests {
     }
     #[test]
     fn assets_are_bundled() {
-        assert!(INDEX.contains("Audio &amp; recognition"));
-        assert!(INDEX.contains("Model installer"));
-        assert!(TOKENS.contains("--color-accent"));
-        assert!(JS.contains("model_download_progress"));
-        assert!(JS.contains("modelAssignmentField"));
+        assert!(INDEX.contains("/app.js"));
+        assert!(INDEX.contains("/styles.css"));
         assert!(JS.contains("/api/keyboard-languages"));
-        assert!(INDEX.contains("AI cleanup"));
-        assert!(JS.contains("chatgpt_login_browser"));
-        assert!(JS.contains("cleanup.screenshot.excluded_apps"));
+        assert!(JS.contains("model_download_progress"));
+        assert!(CSS.contains("--accent"));
     }
 }

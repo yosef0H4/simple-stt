@@ -8,6 +8,10 @@ if ! command -v cargo >/dev/null 2>&1; then
   exit 127
 fi
 
+npm --prefix web/settings ci
+npm --prefix web/settings run build
+python scripts/verify-settings-frontend.py
+
 cargo fmt --all --check
 cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings

@@ -8,6 +8,20 @@ Set-Location $Root
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     throw "Cargo was not found. Install the stable Rust toolchain first."
 }
+if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+    throw "npm was not found. Install Node.js to build the Settings frontend."
+}
+Push-Location (Join-Path $Root 'web/settings')
+try {
+    npm ci
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "Settings frontend build failed with exit code $LASTEXITCODE" }
+} finally {
+    Pop-Location
+}
+python (Join-Path $Root 'scripts/verify-settings-frontend.py')
+if ($LASTEXITCODE -ne 0) { throw "Settings frontend verification failed" }
 $ResolvedTargetDir = if ($CargoTargetDir) {
     [System.IO.Path]::GetFullPath($CargoTargetDir)
 } elseif ($env:CARGO_TARGET_DIR) {

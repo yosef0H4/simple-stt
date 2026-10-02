@@ -5,11 +5,23 @@ This intentionally does not pretend to be a Rust compiler or an AutoHotkey runti
 It checks the architectural invariants that are easy to regress during source edits.
 """
 from pathlib import Path
+import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
 errors: list[str] = []
 checks: list[str] = []
+
+frontend_check = subprocess.run(
+    [sys.executable, str(Path(__file__).with_name("verify-settings-frontend.py"))],
+    cwd=Path(__file__).resolve().parents[1],
+    capture_output=True,
+    text=True,
+)
+if frontend_check.returncode:
+    print(frontend_check.stdout, end="")
+    print(frontend_check.stderr, end="")
+    errors.append("Settings frontend output is stale or exceeds its size budget")
 
 
 def text(path: str) -> str:
@@ -36,13 +48,31 @@ def forbid(path: str, *needles: str) -> str:
     return body
 
 
+frontend_paths = sorted(
+    path
+    for suffix in ("*.ts", "*.svelte", "*.css")
+    for path in (root / "web/settings/src").rglob(suffix)
+)
+frontend_source = "\n".join(path.read_text(encoding="utf-8") for path in frontend_paths)
+if not frontend_paths:
+    errors.append("web/settings/src must contain the active TypeScript/Svelte frontend")
+
+
+def frontend_need(*needles: str) -> None:
+    for needle in needles:
+        if needle not in frontend_source:
+            errors.append(f"frontend TypeScript/Svelte sources missing {needle!r}")
+
+
 required_files = [
     "ahk/simple-stt.ahk",
     "ahk/lib/Config.ahk", "ahk/lib/Hotkeys.ahk", "ahk/lib/IpcClient.ahk",
     "ahk/lib/Logging.ahk", "ahk/lib/ProcessSupervisor.ahk",
     "ahk/lib/TabProtocol.ahk", "ahk/lib/Tray.ahk", "ahk/lib/Typist.ahk", "ahk/lib/Utils.ahk",
     "src/bin/simple_stt_capture.rs", "src/bin/simple_stt_infer.rs", "src/bin/simple_stt_ctl.rs", "src/bin/simple_stt_settings.rs", "src/bin/simple_stt_mock_infer.rs",
-    "web/settings/index.html", "web/settings/styles.css", "web/settings/app.js",
+    "web/settings/index.html", "web/settings/package.json", "web/settings/package-lock.json",
+    "web/settings/vite.config.ts", "web/settings/tsconfig.json", "web/settings/svelte.config.js",
+    "web/settings/tools/manifest.mjs", "scripts/verify-settings-frontend.py",
     "src/capture/audio.rs", "src/capture/inference_supervisor.rs", "src/capture/ipc_server.rs", "src/capture/process.rs",
     "src/infer/parakeet_native.rs", "src/infer/protocol.rs", "src/common/shell_protocol.rs",
     "docs/ahk-v2-research.md", "docs/current-behavior-inventory.md", "docs/ipc-decision.md",
@@ -143,7 +173,7 @@ need("resources/simple-stt.iss", "https://huggingface.co/yosef0H4/lemura-arabic-
 forbid("resources/simple-stt.iss", 'Source: "arabic-model\\')
 need("resources/simple-stt.iss", "installarabic", "lemura-arabic-asr-lite-q8_0.gguf", "tdt_ctc-110m-q8_0.gguf")
 forbid("resources/simple-stt.iss", "parakeet-windows-cuda", "tdt_ctc-110m-f16.gguf")
-need("src/bin/simple_stt_settings.rs", "127.0.0.1", "X-Simple-STT-Token", "Content-Security-Policy", "settings-session.json", "text/event-stream", "ShellCommand::DownloadModel", "ShellCommand::RemoveModel", "ShellCommand::TestModel", "linux_shortcut_state", "sync_shortcuts", "capture_hotkey_with_ahk", "tokens.css")
+need("src/bin/simple_stt_settings.rs", "127.0.0.1", "X-Simple-STT-Token", "Content-Security-Policy", "settings-session.json", "text/event-stream", "ShellCommand::DownloadModel", "ShellCommand::RemoveModel", "ShellCommand::TestModel", "linux_shortcut_state", "sync_shortcuts", "capture_hotkey_with_ahk", "dist/index.html", "dist/styles.css", "dist/app.js")
 need("src/bin/simple_stt_settings.rs", "/api/cleanup-action", "save_api_key", "chatgpt_login_browser", "chatgpt_login_code", "clear_history")
 need("src/cleanup/mod.rs", "openai_compatible", "backend-api/codex/responses", "stream", "response.completed")
 need("src/cleanup/secrets.rs", "CredWriteW", "secret-tool", "SIMPLE_STT_AI_API_KEY")
@@ -152,14 +182,14 @@ need("src/capture/screen_context.rs", "Screenshot::request", "interactive(true)"
 forbid("src/config.rs", "pub api_key", "pub access_token", "pub refresh_token")
 need("src/bin/simple_stt_linux.rs", "impl ksni::Tray for LinuxTray", "audio-input-microphone", "Close Simple STT", "start_linux_tray")
 need("src/models.rs", "pub fn remove_model", "save another choice before removing it", "installed_non_selected_model_can_be_removed", "selected_model_is_not_removed")
-need("web/settings/app.js", "model_download_progress", "model_download_complete", "modelDownloads", "download-progress", "remove_model", "renderSettingsSearch", "fuzzyScore", "portalShortcutField", "sync_shortcuts", "refresh_models", "test_model", "modelAssignmentField", "/api/keyboard-languages", "/api/hotkey-capture")
 need("resources/simple-stt.iss", "Flags: external download ignoreversion", "Hash:", "RecommendedModelNeedsDownload", "GetSHA256OfFile")
 forbid("resources/simple-stt.iss", "Invoke-WebRequest", "exit 0\"\"\"; StatusMsg: \"Downloading recommended speech model")
-need("web/settings/tokens.css", "--color-accent", "--font-display", "--space-md", "prefers-color-scheme")
-need("web/settings/index.html", "Configure system shortcuts", "Save changes", "Audio &amp; recognition", "Model installer")
-need("web/settings/index.html", "AI cleanup")
-need("web/settings/app.js", "renderCleanup", "chatgpt_login_browser", "chatgpt_login_code", "Recent cleanup")
-forbid("web/settings/app.js", "Accepts images", "supports_vision")
+need("web/settings/index.html", "/src/main.ts")
+need("web/settings/src/app.css", "--accent")
+need("web/settings/tools/manifest.mjs", "manifest.json", "sources", "assets")
+frontend_need("/api/keyboard-languages", "/api/hotkey-capture", "model_download_progress", "model_download_complete", "chatgpt_login_browser", "chatgpt_login_code", "output.paced_typing_enabled", "output.typing_speed_wpm", "output.linux_delivery_cycle", "output.app_overrides", "ui.baseline", "changedPaths")
+if "supports_vision" in frontend_source or "Accepts images" in frontend_source:
+    errors.append("Settings frontend must not claim AI cleanup accepts images")
 forbid("src/config.rs", "supports_vision")
 need("src/logging.rs", "component={component} pid={}", "prefix_lines", "component_prefix_survives_split_writes_and_multiline_events")
 need("src/capture/inference_supervisor.rs", '.arg("--log-level")', '.arg("--inference-device")')
@@ -185,8 +215,6 @@ need("ahk/lib/TabProtocol.ahk", 'StrReplace(value . "", "\\", "\\\\")', 'case "\
 need("ahk/lib/Utils.ahk", 'DllCall("advapi32\\SystemFunction036"')
 need("ahk/hotkey-recorder.ahk", "#Requires AutoHotkey v2.0", "#SingleInstance Force", '#Include lib\\Utils.ahk', 'InputHook("L1")', 'Hotkey("*CapsLock", CaptureCapsDown, "On")', 'Hotkey("*CapsLock up", CaptureCapsUp, "On")', 'modifier = "CapsLock" && capsHeld', "HotkeySpec.Parse")
 typist = need("ahk/lib/Typist.ahk", "SendText(", "paced_typing_enabled", "TypingDelay", "TransitionFactor", "BoundaryFactor", "GetFinger", "ClipboardAll()", 'A_Clipboard := this.text', 'deliveryMode != "smart_paste"', 'SendEvent("{Shift down}{Insert}{Shift up}")', 'Send("^+v")', 'Send("^v")', "RestoreClipboardIfOwned", "GetClipboardSequenceNumber", "WinActive(\"A\") != this.targetWindow", "AnyPhysicalModifierDown")
-need("web/settings/app.js", "output.paced_typing_enabled", "output.typing_speed_wpm", "output.linux_delivery_cycle", "output.app_overrides", 'label: "Speed"', "min: 50", "max: 850", "range-value", '"installed downloaded local"', '"recommended"', 'more.textContent = "View more"', "visibleModelLimit += 8", 'class="group-reset"', 'Reset group', 'Refresh tools', 'Search tools and delivery methods', 'Smart Paste', 'Advanced paste shortcuts', 'Add current app', 'Add manually', 'Clipboard only', 'paste_shift_insert', 'delivery-picker-cycle', 'e.kind === "configuration_reloaded"', 'refreshState(true)', 'className = "shortcut-refresh"', 'reset to defaults. Save to apply it.')
-need("web/settings/app.js", "baselineConfig", "changedConfigPaths", 'new Set(["general.enabled", "output.delivery_mode", "cleanup.enabled"])', "return save(true)")
 need("src/capture/overlay_model.rs", "RecordingIndicators", 'ai_cleanup: bool', 'screen_context: bool', '1f916', '1f4f7')
 need("src/config.rs", "screen context requires AI cleanup", "normalized.cleanup.screenshot.enabled = false")
 need("scripts/test-full.cmd", "test-cleanup-settings-e2e.py")
