@@ -60,24 +60,6 @@
 body {
   margin: 0;
 }
-@media (max-width: 700px) {
-  .rail nav button {
-    position: relative;
-  }
-  .rail nav button:is(:hover, :focus-visible) span {
-    display: block;
-    position: absolute;
-    left: calc(100% + 8px);
-    top: 4px;
-    z-index: 50;
-    width: max-content;
-    padding: 6px 10px;
-    border-radius: 5px;
-    color: var(--paper);
-    background: var(--ink);
-    font-size: 12px;
-  }
-}
 button,
 input,
 select,
@@ -219,9 +201,13 @@ svg {
   background: var(--rail);
   border-right: 1px solid var(--line);
   padding: 25px 14px 16px;
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  width: 200px;
   height: 100vh;
+  height: 100dvh;
+  z-index: 40;
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -325,6 +311,7 @@ nav button.active {
   background: var(--success);
 }
 main {
+  grid-column: 2;
   padding: 39px 48px 105px;
   min-width: 0;
 }
@@ -439,30 +426,6 @@ h2 {
 .icon-button:hover:not(:disabled) {
   color: var(--accent);
 }
-.button-tip,
-.help > span {
-  display: none;
-  position: absolute;
-  z-index: 50;
-  background: var(--ink);
-  color: var(--paper);
-  border-radius: 5px;
-  padding: 7px 9px;
-  max-width: 270px;
-  width: max-content;
-  white-space: normal;
-  text-align: left;
-  line-height: 1.4;
-  font-size: 11px;
-  box-shadow: 0 4px 14px #0002;
-}
-.button-tip {
-  right: 0;
-  top: calc(100% + 5px);
-}
-.icon-button:is(:hover, :focus-visible) .button-tip {
-  display: block;
-}
 .help {
   position: relative;
   display: inline-flex;
@@ -475,13 +438,6 @@ h2 {
   padding: 0;
   color: var(--muted);
   background: transparent;
-}
-.help > span {
-  left: 0;
-  top: 27px;
-}
-.help:is(:hover, :focus-within) > span {
-  display: block;
 }
 .combo {
   width: 100%;
@@ -795,6 +751,7 @@ dialog::backdrop {
     grid-template-columns: 58px minmax(0, 1fr);
   }
   .rail {
+    width: 58px;
     padding: 22px 7px 12px;
     gap: 22px;
     align-items: center;
@@ -926,12 +883,6 @@ dialog::backdrop {
     flex-direction: column;
     align-items: flex-start;
     gap: 3px;
-  }
-  .button-tip {
-    max-width: 200px;
-  }
-  .help > span {
-    max-width: 230px;
   }
   .config-toolbar {
     gap: 0;

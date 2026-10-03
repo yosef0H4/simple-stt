@@ -10,9 +10,12 @@ class Typist {
         this.timer := ObjBindMethod(this, "Tick")
         this.clipboardBackup := ""
         this.pasteStage := 0
+        this.pasteProbe := ""
+        this.pasteExpected := ""
+        this.pasteVerified := false
     }
 
-    Begin(sessionId, targetWindow, text, pacedTypingEnabled, typingSpeedWpm, trailingSpace, deliveryMode := "type") {
+    Begin(sessionId, targetWindow, text, pacedTypingEnabled, typingSpeedWpm, trailingSpace, deliveryMode := "type", cleanClipboardOnPaste := true) {
         if deliveryMode != "type" && deliveryMode != "clipboard" && deliveryMode != "smart_paste" && deliveryMode != "paste_shift_insert" && deliveryMode != "paste_ctrl_v" && deliveryMode != "paste_ctrl_shift_v"
             deliveryMode := "type"
         item := Map(
@@ -21,7 +24,8 @@ class Typist {
             "text", trailingSpace && text != "" ? text . " " : text,
             "paced_typing_enabled", !!pacedTypingEnabled,
             "typing_speed_wpm", Min(850, Max(50, typingSpeedWpm + 0)),
-            "delivery_mode", deliveryMode
+            "delivery_mode", deliveryMode,
+            "clean_clipboard_on_paste", !!cleanClipboardOnPaste
         )
         if this.active {
             this.queue.Push(item)
@@ -39,12 +43,16 @@ class Typist {
         this.pacedTypingEnabled := item["paced_typing_enabled"]
         this.typingSpeedWpm := item["typing_speed_wpm"]
         this.deliveryMode := item["delivery_mode"]
+        this.cleanClipboardOnPaste := item["clean_clipboard_on_paste"]
         this.offset := 1
         this.burstFactor := 1.0
         this.burstRemaining := 0
         this.pasteStage := 0
         this.pasteClipboardSequence := 0
         this.clipboardBackup := ""
+        this.pasteProbe := ""
+        this.pasteExpected := ""
+        this.pasteVerified := false
         this.active := true
         this.logger.Write("info", "text-delivery begin mode=" . this.deliveryMode . " chars=" . this.textLength, this.sessionId)
         SetTimer(this.timer, -1)
@@ -162,49 +170,176 @@ class Typist {
     }
 
     TickPaste() {
+        if this.text == "" {
+            this.CompleteCurrent("skipped_empty")
+            return
+        }
+        operationSession := this.sessionId
         if this.pasteStage = 0 {
             try {
                 if this.deliveryMode = "clipboard" {
                     A_Clipboard := this.text
+                    clipboardSequence := DllCall("user32\GetClipboardSequenceNumber", "UInt")
                     if !ClipWait(1)
                         throw Error("clipboard text did not become available")
+                    if !this.active || this.sessionId != operationSession
+                        return
+                    if DllCall("user32\GetClipboardSequenceNumber", "UInt") != clipboardSequence || !(A_Clipboard == this.text)
+                        throw Error("clipboard changed before clipboard delivery completed")
                     this.CompleteCurrent()
                     return
                 }
                 this.clipboardBackup := ClipboardAll()
-                A_Clipboard := ""
-                A_Clipboard := this.text
+                if this.cleanClipboardOnPaste {
+                    clipboardSequence := this.PublishCleanClipboardText(this.text, operationSession)
+                    if !this.active || this.sessionId != operationSession
+                        return
+                    this.pasteClipboardSequence := clipboardSequence
+                } else {
+                    A_Clipboard := this.text
+                    this.pasteClipboardSequence := DllCall("user32\GetClipboardSequenceNumber", "UInt")
+                }
                 if !ClipWait(1)
                     throw Error("clipboard text did not become available")
-                this.pasteClipboardSequence := DllCall("user32\GetClipboardSequenceNumber", "UInt")
-                ; Give Windows a moment to publish the new clipboard payload before
-                ; the target application receives the paste shortcut.
-                Sleep(60)
+                if !this.active || this.sessionId != operationSession
+                    return
+                if WinActive("A") != this.targetWindow
+                    throw Error("foreground window changed before paste")
+                if DllCall("user32\GetClipboardSequenceNumber", "UInt") != this.pasteClipboardSequence || !(A_Clipboard == this.text)
+                    throw Error("clipboard changed before paste")
+                this.pasteProbe := this.CaptureEditPasteProbe(this.targetWindow, this.text)
+                this.pasteExpected := IsObject(this.pasteProbe) ? this.pasteProbe["expected"] : ""
+                if !this.active || this.sessionId != operationSession
+                    return
+                if WinActive("A") != this.targetWindow || DllCall("user32\GetClipboardSequenceNumber", "UInt") != this.pasteClipboardSequence || !(A_Clipboard == this.text)
+                    throw Error("paste target or clipboard changed before injection")
+                ; Mark before injecting: cancellation after this point must retain
+                ; the temporary clipboard unless a standard Edit proves insertion.
+                this.pasteStage := 1
                 if this.deliveryMode = "paste_shift_insert"
                     SendEvent("{Shift down}{Insert}{Shift up}")
                 else if this.deliveryMode = "paste_ctrl_shift_v"
                     Send("^+v")
                 else
                     Send("^v")
-                this.pasteStage := 1
-                ; Some target controls process WM_PASTE asynchronously after the
-                ; shortcut returns. Keep the temporary text on the clipboard long
-                ; enough for slower apps, then restore the user's full clipboard.
-                SetTimer(this.timer, -400)
+                this.pasteDeadline := A_TickCount + 3000
+                SetTimer(this.timer, -25)
                 return
             } catch Error as err {
-                this.RestoreClipboardIfOwned()
-                this.CancelCurrent("Paste failed: " . err.Message, true)
-                this.StartNext()
+                if this.active && this.sessionId = operationSession {
+                    this.RestoreClipboardIfOwned()
+                    this.CancelCurrent("Paste failed: " . err.Message, true)
+                    this.StartNext()
+                }
                 return
             }
         }
-        this.RestoreClipboardIfOwned()
-        this.CompleteCurrent()
+        if IsObject(this.pasteProbe) {
+            currentText := this.ReadEditText(this.pasteProbe["hwnd"])
+            if IsObject(currentText) && currentText["ok"] && currentText["text"] == this.pasteExpected {
+                this.pasteVerified := true
+                this.RestoreClipboardIfOwned()
+                this.CompleteCurrent("confirmed")
+                return
+            }
+            if A_TickCount < this.pasteDeadline {
+                SetTimer(this.timer, -25)
+                return
+            }
+        }
+        this.CompleteCurrent("submitted_unverified")
     }
 
-    CompleteCurrent() {
-        this.logger.Write("info", "text-delivery success mode=" . this.deliveryMode, this.sessionId)
+    ; Publishes Unicode text and Windows clipboard-history exclusion markers in
+    ; one clipboard transaction. SetClipboardData takes ownership of successful
+    ; movable HGLOBAL handles; failed handles remain ours to free.
+    PublishCleanClipboardText(text, operationSession) {
+        formats := Map()
+        formats[13] := this.AllocClipboardBlock(text . "`0", (StrLen(text) + 1) * 2)
+        formats[DllCall("user32\RegisterClipboardFormatW", "Str", "ExcludeClipboardContentFromMonitorProcessing", "UInt")] := this.AllocClipboardDword(0)
+        formats[DllCall("user32\RegisterClipboardFormatW", "Str", "CanIncludeInClipboardHistory", "UInt")] := this.AllocClipboardDword(0)
+        formats[DllCall("user32\RegisterClipboardFormatW", "Str", "CanUploadToCloudClipboard", "UInt")] := this.AllocClipboardDword(0)
+        for format, handle in formats {
+            if !format || !handle {
+                this.FreeClipboardBlocks(formats)
+                throw Error("unable to allocate clipboard text or history markers")
+            }
+        }
+        try {
+            Loop 10 {
+                if !this.active || this.sessionId != operationSession
+                    throw Error("paste cancelled before clipboard publication")
+                priorCritical := A_IsCritical
+                Critical("On")
+                opened := false
+                try {
+                    ; Recheck after entering Critical so an older operation
+                    ; cannot publish after a newer session supersedes it.
+                    if !this.active || this.sessionId != operationSession
+                        throw Error("paste cancelled before clipboard publication")
+                    if DllCall("user32\OpenClipboard", "Ptr", A_ScriptHwnd, "Int") {
+                        opened := true
+                        if !DllCall("user32\EmptyClipboard", "Int")
+                            throw Error("unable to empty clipboard")
+                        for format, handle in formats {
+                            if !DllCall("user32\SetClipboardData", "UInt", format, "Ptr", handle, "Ptr")
+                                throw Error("unable to publish clipboard format " . format)
+                            formats[format] := 0
+                        }
+                        DllCall("user32\CloseClipboard")
+                        opened := false
+                        return DllCall("user32\GetClipboardSequenceNumber", "UInt")
+                    }
+                } finally {
+                    if opened
+                        DllCall("user32\CloseClipboard")
+                    Critical(priorCritical)
+                }
+                Sleep(10)
+            }
+            throw Error("clipboard remained busy")
+        } finally {
+            this.FreeClipboardBlocks(formats)
+        }
+    }
+
+    AllocClipboardBlock(value, byteCount) {
+        handle := DllCall("kernel32\GlobalAlloc", "UInt", 0x42, "UPtr", byteCount, "Ptr") ; GMEM_MOVEABLE | GMEM_ZEROINIT
+        if !handle
+            return 0
+        pointer := DllCall("kernel32\GlobalLock", "Ptr", handle, "Ptr")
+        if !pointer {
+            DllCall("kernel32\GlobalFree", "Ptr", handle, "Ptr")
+            return 0
+        }
+        StrPut(value, pointer, byteCount // 2, "UTF-16")
+        DllCall("kernel32\GlobalUnlock", "Ptr", handle)
+        return handle
+    }
+
+    AllocClipboardDword(value) {
+        handle := DllCall("kernel32\GlobalAlloc", "UInt", 0x42, "UPtr", 4, "Ptr") ; GMEM_MOVEABLE | GMEM_ZEROINIT
+        if !handle
+            return 0
+        pointer := DllCall("kernel32\GlobalLock", "Ptr", handle, "Ptr")
+        if !pointer {
+            DllCall("kernel32\GlobalFree", "Ptr", handle, "Ptr")
+            return 0
+        }
+        NumPut("UInt", value, pointer)
+        DllCall("kernel32\GlobalUnlock", "Ptr", handle)
+        return handle
+    }
+
+    FreeClipboardBlocks(formats) {
+        for _, handle in formats {
+            if handle
+                DllCall("kernel32\GlobalFree", "Ptr", handle, "Ptr")
+        }
+    }
+
+    CompleteCurrent(outcome := "success") {
+        this.logger.Write("info", "text-delivery " . outcome . " mode=" . this.deliveryMode, this.sessionId)
         completedSession := this.sessionId
         this.active := false
         this.pasteStage := 0
@@ -216,8 +351,14 @@ class Typist {
     RestoreClipboardIfOwned() {
         if !IsObject(this.clipboardBackup)
             return
+        if this.pasteStage = 1 && !this.pasteVerified
+            return
+        if this.pasteStage = 1 && this.pasteVerified && !this.cleanClipboardOnPaste {
+            this.clipboardBackup := ""
+            return
+        }
         currentSequence := DllCall("user32\GetClipboardSequenceNumber", "UInt")
-        if this.pasteClipboardSequence = 0 || currentSequence = this.pasteClipboardSequence {
+        if this.pasteClipboardSequence != 0 && currentSequence = this.pasteClipboardSequence {
             try A_Clipboard := this.clipboardBackup
             catch Error as err
                 this.logger.Write("warning", "clipboard restore failed: " . err.Message, this.sessionId)
@@ -231,7 +372,15 @@ class Typist {
         if !this.active
             return
         SetTimer(this.timer, 0)
-        this.RestoreClipboardIfOwned()
+        if this.pasteStage = 0
+            this.RestoreClipboardIfOwned()
+        else if IsObject(this.pasteProbe) {
+            currentText := this.ReadEditText(this.pasteProbe["hwnd"])
+            if IsObject(currentText) && currentText["ok"] && currentText["text"] == this.pasteExpected {
+                this.pasteVerified := true
+                this.RestoreClipboardIfOwned()
+            }
+        }
         this.logger.Write("warning", reason, this.sessionId)
         cancelledSession := this.sessionId
         this.active := false
@@ -262,5 +411,53 @@ class Typist {
                 return true
         }
         return false
+    }
+
+    CaptureEditPasteProbe(hwnd, insertText) {
+        try focusedControl := ControlGetFocus("ahk_id " . hwnd)
+        catch
+            return ""
+        if focusedControl = ""
+            return ""
+        try focusedHwnd := ControlGetHwnd(focusedControl, "ahk_id " . hwnd)
+        catch
+            return ""
+        className := Buffer(512, 0)
+        if !DllCall("user32\GetClassNameW", "Ptr", focusedHwnd, "Ptr", className, "Int", 256, "Int") || StrGet(className, "UTF-16") != "Edit"
+            return ""
+        style := DllCall("user32\GetWindowLongPtrW", "Ptr", focusedHwnd, "Int", -16, "Ptr")
+        if style & 0x20 ; ES_PASSWORD
+            return ""
+        current := this.ReadEditText(focusedHwnd)
+        if !IsObject(current) || !current["ok"]
+            return ""
+        startPos := Buffer(4, 0), endPos := Buffer(4, 0), result := Buffer(A_PtrSize, 0)
+        if !this.SendMessageBounded(focusedHwnd, 0x00B0, startPos.Ptr, endPos.Ptr, result.Ptr) ; EM_GETSEL
+            return ""
+        start := NumGet(startPos, 0, "UInt"), finish := NumGet(endPos, 0, "UInt")
+        normalized := StrReplace(insertText, "`r`n", "`n")
+        normalized := StrReplace(normalized, "`n", "`r`n")
+        expected := SubStr(current["text"], 1, start) . normalized . SubStr(current["text"], finish + 1)
+        ; An unchanged value is not evidence that the target consumed a paste.
+        if expected == current["text"]
+            return ""
+        return Map("hwnd", focusedHwnd, "expected", expected)
+    }
+
+    ReadEditText(hwnd) {
+        lengthResult := Buffer(A_PtrSize, 0)
+        if !this.SendMessageBounded(hwnd, 0x000E, 0, 0, lengthResult.Ptr) ; WM_GETTEXTLENGTH
+            return Map("ok", false, "text", "")
+        length := NumGet(lengthResult, 0, "Ptr")
+        if length > 65535
+            return Map("ok", false, "text", "")
+        textBuffer := Buffer((length + 1) * 2, 0), copied := Buffer(A_PtrSize, 0)
+        if !this.SendMessageBounded(hwnd, 0x000D, length + 1, textBuffer.Ptr, copied.Ptr) ; WM_GETTEXT
+            return Map("ok", false, "text", "")
+        return Map("ok", true, "text", StrGet(textBuffer, NumGet(copied, 0, "Ptr"), "UTF-16"))
+    }
+
+    SendMessageBounded(hwnd, message, wParam, lParam, resultPtr) {
+        return !!DllCall("user32\SendMessageTimeoutW", "Ptr", hwnd, "UInt", message, "UPtr", wParam, "Ptr", lParam, "UInt", 0x2, "UInt", 1000, "Ptr", resultPtr, "Ptr")
     }
 }

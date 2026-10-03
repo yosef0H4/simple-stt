@@ -34,9 +34,5 @@
   disabled={disabled || busy}
   aria-busy={busy}
   data-model-test={modelTest ? "true" : undefined}
-  onclick={click}
-  ><Icon name={busy ? "refresh" : icon} /><span
-    class="button-tip"
-    role="tooltip">{title}</span
-  ></button
+  onclick={click}><Icon name={busy ? "refresh" : icon} /></button
 >

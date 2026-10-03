@@ -19,6 +19,7 @@ export interface Config {
     toggle_delivery_hotkey: string;
     cancel_hotkey: string;
     toggle_cleanup_hotkey: string;
+    retry_delivery_hotkey: string;
     linux_hotkey_backend: "auto" | "portal" | "x11" | "desktop";
     capslock_behavior: "preserve_tap" | "always_off";
     start_at_login: boolean;
@@ -43,6 +44,7 @@ export interface Config {
     app_overrides: { app_id: string; mode: DeliveryMode }[];
     paced_typing_enabled: boolean;
     typing_speed_wpm: number;
+    preserve_clipboard: boolean;
     trailing_space: boolean;
     remove_punctuation: boolean;
     lowercase: boolean;
@@ -191,6 +193,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "toggle_delivery_hotkey",
       "cancel_hotkey",
       "toggle_cleanup_hotkey",
+      "retry_delivery_hotkey",
       "linux_hotkey_backend",
       "capslock_behavior",
       "start_at_login",
@@ -215,6 +218,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "app_overrides",
       "paced_typing_enabled",
       "typing_speed_wpm",
+      "preserve_clipboard",
       "trailing_space",
       "remove_punctuation",
       "lowercase",
@@ -251,6 +255,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "general.enabled",
       "general.start_at_login",
       "output.paced_typing_enabled",
+      "output.preserve_clipboard",
       "output.trailing_space",
       "output.remove_punctuation",
       "output.lowercase",
@@ -274,6 +279,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "general.toggle_delivery_hotkey",
       "general.cancel_hotkey",
       "general.toggle_cleanup_hotkey",
+      "general.retry_delivery_hotkey",
       "audio.preferred_device_id",
       "speech.runtime_dir",
       "speech.model_dir",

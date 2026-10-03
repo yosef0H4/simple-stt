@@ -12,7 +12,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "linux")]
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -45,6 +44,12 @@ enum LinuxCommand {
         timeout: f64,
         #[arg(long)]
         shift_insert: bool,
+    },
+    RetryDelivery,
+    #[command(hide = true)]
+    ClipboardOwner {
+        #[arg(long)]
+        primary: bool,
     },
     Cancel,
     UnloadModel,
@@ -130,6 +135,8 @@ fn main() -> Result<()> {
             timeout,
             shift_insert,
         } => stop(timeout, shift_insert),
+        LinuxCommand::RetryDelivery => retry_delivery(),
+        LinuxCommand::ClipboardOwner { primary } => private_clipboard_owner(primary),
         LinuxCommand::Cancel => cancel(),
         LinuxCommand::UnloadModel => unload_model(),
         LinuxCommand::Shutdown => shutdown(),
@@ -353,7 +360,7 @@ fn cleanup_runtime_markers() {
     if let Ok(previous) = read_session() {
         let _ = write_session(&SessionState {
             recording: false,
-            session_id: previous.session_id,
+            session_id: next_session_id(previous.session_id),
             updated_at: now_secs(),
         });
     }
@@ -616,7 +623,8 @@ fn finish_stop_recording(
         if !delivery_session_is_current(&read_session()?, pending.session_id) {
             bail!("dictation was superseded before delivery");
         }
-        let action = deliver_text(&text, shift_insert)?;
+        remember_delivery(pending.session_id, &text)?;
+        let action = deliver_text(&text, shift_insert, pending.session_id)?;
         Ok((action, text.chars().count()))
     })();
     let completion = signal_delivery_complete(pending.session_id);
@@ -639,23 +647,107 @@ fn signal_delivery_complete(session_id: u64) -> Result<()> {
     Ok(())
 }
 
+fn memory_delivery_command(
+    command: simple_stt::common::shell_protocol::ShellCommand,
+) -> Result<simple_stt::common::shell_protocol::ShellResponse> {
+    use simple_stt::common::shell_protocol::{
+        ClientMessage, ServerMessage, SHELL_PROTOCOL_VERSION,
+    };
+    use std::io::{BufRead, BufReader};
+    let service = simple_stt::capture::state::ServiceState::load(&state_file())?;
+    let mut stream = std::net::TcpStream::connect(&service.address)?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let mut read = || -> Result<ServerMessage> {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        Ok(serde_json::from_str(&line)?)
+    };
+    serde_json::to_writer(
+        &mut stream,
+        &ClientMessage::Hello {
+            protocol: SHELL_PROTOCOL_VERSION,
+            token: token()?,
+        },
+    )?;
+    stream.write_all(b"\n")?;
+    anyhow::ensure!(
+        matches!(
+            read()?,
+            ServerMessage::HelloAck {
+                protocol: SHELL_PROTOCOL_VERSION,
+                ..
+            }
+        ),
+        "retry cache handshake failed"
+    );
+    serde_json::to_writer(
+        &mut stream,
+        &ClientMessage::Command {
+            request_id: 1,
+            command,
+        },
+    )?;
+    stream.write_all(b"\n")?;
+    let ServerMessage::Response {
+        response,
+        request_id: 1,
+    } = read()?
+    else {
+        bail!("retry cache response failed")
+    };
+    anyhow::ensure!(response.ok, "{}", response.message);
+    Ok(response)
+}
+
+fn remember_delivery(session_id: u64, text: &str) -> Result<()> {
+    if !text.is_empty() && text.len() <= 1024 * 1024 {
+        memory_delivery_command(
+            simple_stt::common::shell_protocol::ShellCommand::RememberDelivery {
+                session_id,
+                text: text.to_owned(),
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn retry_delivery() -> Result<()> {
+    let action = DICTATION_ACTION_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !AppConfig::load()?.general.enabled {
+        return Ok(());
+    }
+    let response =
+        memory_delivery_command(simple_stt::common::shell_protocol::ShellCommand::LastDelivery)?;
+    let Some(text) = response.values.get("text").filter(|text| !text.is_empty()) else {
+        return Ok(());
+    };
+    invalidate_delivery_session()?;
+    let cancelled = run_ctl(["cancel"], Duration::from_secs(5), true)?;
+    anyhow::ensure!(cancelled.ok, "{}", cancelled.message);
+    let session_id = read_session()?.session_id;
+    drop(action);
+    // The cached text is already transformed. Never add another trailing space.
+    let outcome = deliver_text(text, false, session_id)?;
+    println!("[{APP}] retry: {outcome}");
+    Ok(())
+}
+
 fn cancel() -> Result<()> {
     let _action = DICTATION_ACTION_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     ensure_service()?;
+    invalidate_delivery_session()?;
     let _ = run_ctl(["cancel"], Duration::from_secs(5), false)?;
     let _ = run_ctl(
         ["notice", "--level", "warning", "--text", "🎙 Cancelled"],
         Duration::from_secs(3),
         false,
     );
-    let state = read_session()?;
-    write_session(&SessionState {
-        recording: false,
-        session_id: state.session_id,
-        updated_at: now_secs(),
-    })?;
     println!("[{APP}] cancelled");
     Ok(())
 }
@@ -667,14 +759,18 @@ fn unload_model() -> Result<()> {
     Ok(())
 }
 
-fn shutdown() -> Result<()> {
-    let result = run_ctl(["shutdown"], Duration::from_secs(5), false)?;
+fn invalidate_delivery_session() -> Result<()> {
     let state = read_session()?;
     write_session(&SessionState {
         recording: false,
-        session_id: state.session_id,
+        session_id: next_session_id(state.session_id),
         updated_at: now_secs(),
-    })?;
+    })
+}
+
+fn shutdown() -> Result<()> {
+    invalidate_delivery_session()?;
+    let result = run_ctl(["shutdown"], Duration::from_secs(5), false)?;
     if result.ok {
         println!("[{APP}] shutdown requested");
         Ok(())
@@ -700,6 +796,7 @@ fn print_shortcut_commands() -> Result<()> {
     let exe = find_exe("simple-stt-linux").unwrap_or_else(|_| std::env::current_exe().unwrap());
     println!("Toggle dictation: {} toggle", exe.display());
     println!("Cancel dictation: {} cancel", exe.display());
+    println!("Retry last dictation: {} retry-delivery", exe.display());
     println!("Switch delivery:  {} cycle-delivery", exe.display());
     println!("Toggle AI cleanup: {} toggle-cleanup", exe.display());
     println!("Unload model:     {} unload-model", exe.display());
@@ -820,6 +917,7 @@ async fn portal_shortcuts_loop() -> Result<()> {
         NewShortcut::new("cancel", "Cancel dictation"),
         NewShortcut::new("delivery", "Toggle text delivery mode"),
         NewShortcut::new("cleanup", "Toggle AI transcript cleanup"),
+        NewShortcut::new("retry", "Retry last dictation"),
     ];
     let request = portal
         .bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default())
@@ -944,6 +1042,7 @@ fn x11_shortcuts_loop() -> Result<()> {
         ("cancel", config.general.cancel_hotkey.as_str()),
         ("delivery", config.general.toggle_delivery_hotkey.as_str()),
         ("cleanup", config.general.toggle_cleanup_hotkey.as_str()),
+        ("retry", config.general.retry_delivery_hotkey.as_str()),
     ]
     .into_iter()
     .filter(|(_, chord)| !hotkey_is_none(chord))
@@ -1181,6 +1280,7 @@ fn handle_portal_activation(id: &str) -> Result<()> {
         "cancel" => cancel(),
         "delivery" => toggle_linux_delivery_mode(),
         "cleanup" => toggle_linux_cleanup(),
+        "retry" => retry_delivery(),
         _ => Ok(()),
     }
 }
@@ -1468,7 +1568,10 @@ fn transform_text(text: &str) -> Result<String> {
     Ok(text)
 }
 
-fn deliver_text(text: &str, force_shift_insert: bool) -> Result<&'static str> {
+fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result<&'static str> {
+    if text.is_empty() {
+        return Ok("empty transcript skipped");
+    }
     let config = AppConfig::load()?;
     let identity = focused_app_identity();
     let mode = effective_delivery_mode(
@@ -1476,11 +1579,17 @@ fn deliver_text(text: &str, force_shift_insert: bool) -> Result<&'static str> {
         identity.as_deref(),
         &config.output.app_overrides,
     );
+    let is_current = || read_session().is_ok_and(|s| delivery_session_is_current(&s, session_id));
+    // The shell also has one-shot CLI processes: a process-local mutex cannot
+    // prevent two dictations from publishing competing clipboard selections.
+    let _clipboard_lock = if mode != TextDeliveryMode::Type {
+        Some(acquire_clipboard_lock(&is_current)?)
+    } else {
+        None
+    };
     if mode == TextDeliveryMode::Clipboard {
-        if write_clipboard(text, false)? {
-            return Ok("copied");
-        }
-        bail!("No clipboard tool found. Install wl-clipboard on Wayland or xclip/xsel on X11.");
+        publish_clipboard(text, false, &is_current)?.detach();
+        return Ok("copied");
     }
     if mode == TextDeliveryMode::Type {
         if type_text(
@@ -1493,11 +1602,16 @@ fn deliver_text(text: &str, force_shift_insert: bool) -> Result<&'static str> {
         )? {
             return Ok("typed");
         }
-        if !write_clipboard(text, false)? {
-            bail!("No compatible typing or clipboard tool found");
-        }
+        let _clipboard_lock = acquire_clipboard_lock(&is_current)?;
+        publish_clipboard(text, false, &is_current)?.detach();
         eprintln!("[{APP}] typing failed; transcript is in the clipboard");
         return Ok("copied");
+    }
+    if config.output.preserve_clipboard
+        && is_current()
+        && insert_text_without_clipboard(text, &is_current)?
+    {
+        return Ok("inserted directly (clipboard untouched)");
     }
     paste_text(
         text,
@@ -1505,7 +1619,156 @@ fn deliver_text(text: &str, force_shift_insert: bool) -> Result<&'static str> {
         config.output.linux_automation_backend,
         mode,
         identity.as_deref(),
+        &is_current,
+        config.output.preserve_clipboard,
     )
+}
+
+fn insert_text_without_clipboard(text: &str, is_current: &impl Fn() -> bool) -> Result<bool> {
+    use std::io::Read;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    if !is_current() {
+        bail!("dictation superseded before direct insertion");
+    }
+    let Ok(helper) = find_native_paste_helper() else {
+        return Ok(false);
+    };
+    let mut child = ProcessCommand::new(helper)
+        .arg("--insert-text")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .context("opening direct insertion input")?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .context("opening insertion acknowledgement")?;
+    let bytes = text.as_bytes().to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&bytes));
+    let attempted = Arc::new(AtomicBool::new(false));
+    let signal = Arc::clone(&attempted);
+    let reader = std::thread::spawn(move || {
+        let mut marker = [0_u8; 8];
+        if stdout.read_exact(&mut marker).is_ok() && &marker == b"attempt\n" {
+            signal.store(true, Ordering::SeqCst);
+        }
+    });
+    let start = Instant::now();
+    let mut timed_out = false;
+    let result = loop {
+        if !is_current() {
+            let _ = child.kill();
+            let _ = child.wait();
+            break Err(anyhow::anyhow!(
+                "dictation superseded during direct insertion"
+            ));
+        }
+        let limit = if attempted.load(Ordering::SeqCst) {
+            Duration::from_secs(3)
+        } else {
+            Duration::from_millis(750)
+        };
+        if start.elapsed() >= limit {
+            let _ = child.kill();
+            let _ = child.wait();
+            timed_out = true;
+            break Ok(false);
+        }
+        if let Some(status) = child.try_wait()? {
+            break match status.code() {
+                Some(0) => Ok(true),
+                Some(1) => Ok(false),
+                _ => Err(anyhow::anyhow!(
+                    "direct insertion could not be confirmed; use Retry last dictation if needed"
+                )),
+            };
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let _ = writer.join();
+    let _ = reader.join();
+    // Inspect the drained signal AFTER killing/joining, so a slow parent reader
+    // cannot mistake an already attempted insertion for an eligible fallback.
+    if timed_out && attempted.load(Ordering::SeqCst) {
+        bail!("direct insertion timed out after submission; use Retry last dictation if needed");
+    }
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn private_clipboard_owner(primary: bool) -> Result<()> {
+    simple_stt::common::private_clipboard::serve_x11(primary)
+}
+#[cfg(not(target_os = "linux"))]
+fn private_clipboard_owner(_primary: bool) -> Result<()> {
+    bail!("X11 clipboard owner is Linux-only")
+}
+
+fn acquire_clipboard_lock(is_current: &impl Fn() -> bool) -> Result<fs::File> {
+    let path = AppConfig::state_dir().join("clipboard-delivery.lock");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if !is_current() {
+            bail!("dictation superseded before clipboard delivery");
+        }
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(error) => bail!("clipboard delivery is busy: {error}"),
+        }
+    }
+}
+
+fn clipboard_tools() -> Result<simple_stt::common::clipboard::ClipboardTools> {
+    use simple_stt::common::clipboard::{ClipboardKind, ClipboardTools};
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        if let (Some(publisher), Some(reader)) =
+            (which_like("wl-copy", ""), which_like("wl-paste", ""))
+        {
+            return Ok(ClipboardTools {
+                kind: ClipboardKind::Wayland,
+                publisher,
+                reader,
+            });
+        }
+        bail!("Install wl-clipboard to publish and verify the Wayland clipboard");
+    }
+    for (name, kind) in [
+        ("xclip", ClipboardKind::Xclip),
+        ("xsel", ClipboardKind::Xsel),
+    ] {
+        if let Some(path) = which_like(name, "") {
+            return Ok(ClipboardTools {
+                kind,
+                publisher: path.clone(),
+                reader: path,
+            });
+        }
+    }
+    bail!("Install xclip or xsel to publish and verify the X11 clipboard")
+}
+
+fn publish_clipboard(
+    text: &str,
+    primary: bool,
+    is_current: &impl Fn() -> bool,
+) -> Result<simple_stt::common::clipboard::PublishedClipboard> {
+    clipboard_tools()?.publish(text, primary, is_current, Duration::from_secs(3))
 }
 
 fn paste_text(
@@ -1514,103 +1777,56 @@ fn paste_text(
     backend: LinuxAutomationBackend,
     mode: TextDeliveryMode,
     identity: Option<&str>,
+    is_current: &impl Fn() -> bool,
+    preserve_clipboard: bool,
 ) -> Result<&'static str> {
-    let old_clip = read_clipboard(false);
-    let old_primary = read_clipboard(true);
-    if !write_clipboard(text, false)? {
-        bail!("No clipboard tool found. Install wl-clipboard on Wayland or xclip/xsel on X11.");
-    }
-    let _ = write_clipboard(text, true)?;
-    std::thread::sleep(Duration::from_millis(80));
     let key = paste_key_for_mode(mode, force_shift_insert, identity);
-    let sent = send_paste_key(key, backend)?;
-    if !sent {
-        eprintln!(
-            "[{APP}] automatic paste failed; transcript is left in clipboard for manual paste"
-        );
+    let publish = |primary| {
+        if preserve_clipboard {
+            clipboard_tools()?.publish_private(
+                text,
+                primary,
+                is_current,
+                Duration::from_secs(3),
+                &std::env::current_exe()?,
+            )
+        } else {
+            publish_clipboard(text, primary, is_current)
+        }
+    };
+    let clipboard = publish(false)?;
+    let primary = if key == PasteKey::ShiftInsert {
+        match publish(true) {
+            Ok(primary) => Some(primary),
+            Err(error) => {
+                clipboard.detach();
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
+    if !is_current()
+        || !clipboard.verify()?
+        || primary
+            .as_ref()
+            .is_some_and(|p| !p.verify().unwrap_or(false))
+        || !is_current()
+    {
+        bail!("clipboard changed or dictation superseded; paste was not sent");
+    }
+    // Key injection has no editor-insertion acknowledgement. Never restore an
+    // older payload after a timer: the target may not have read this one yet.
+    let sent = send_paste_key(key, backend);
+    clipboard.detach();
+    if let Some(primary) = primary {
+        primary.detach();
+    }
+    if !sent? {
+        eprintln!("[{APP}] paste shortcut failed; transcript is available for manual paste");
         return Ok("copied");
     }
-    let delay_ms = 250;
-    std::thread::sleep(Duration::from_millis(delay_ms));
-    if let Some(old_clip) = old_clip.as_deref() {
-        let _ = write_clipboard(old_clip, false)?;
-    }
-    if let Some(old_primary) = old_primary.as_deref() {
-        let _ = write_clipboard(old_primary, true)?;
-    }
-    Ok("pasted")
-}
-
-fn read_clipboard(primary: bool) -> Option<String> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() && command_exists("wl-paste") {
-        let mut cmd = ProcessCommand::new("wl-paste");
-        cmd.arg("--no-newline");
-        if primary {
-            cmd.arg("--primary");
-        }
-        return command_output(&mut cmd);
-    }
-    if command_exists("xclip") {
-        let sel = if primary { "primary" } else { "clipboard" };
-        return command_output(
-            ProcessCommand::new("xclip")
-                .arg("-selection")
-                .arg(sel)
-                .arg("-o"),
-        );
-    }
-    if command_exists("xsel") {
-        let flag = if primary { "--primary" } else { "--clipboard" };
-        return command_output(ProcessCommand::new("xsel").arg(flag).arg("--output"));
-    }
-    None
-}
-
-fn write_clipboard(text: &str, primary: bool) -> Result<bool> {
-    if std::env::var_os("WAYLAND_DISPLAY").is_some() && command_exists("wl-copy") {
-        let mut cmd = ProcessCommand::new("wl-copy");
-        if primary {
-            cmd.arg("--primary");
-        }
-        cmd.arg("--").arg(text);
-        if cmd
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .is_ok()
-        {
-            return Ok(true);
-        }
-    }
-    if command_exists("xclip") {
-        let sel = if primary { "primary" } else { "clipboard" };
-        return start_clipboard_owner(
-            ProcessCommand::new("xclip").arg("-selection").arg(sel),
-            text,
-        );
-    }
-    if command_exists("xsel") {
-        let flag = if primary { "--primary" } else { "--clipboard" };
-        return start_clipboard_owner(ProcessCommand::new("xsel").arg(flag).arg("--input"), text);
-    }
-    Ok(false)
-}
-
-fn start_clipboard_owner(cmd: &mut ProcessCommand, text: &str) -> Result<bool> {
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("starting clipboard owner command")?;
-    if let Some(stdin) = child.stdin.as_mut() {
-        use std::io::Write;
-        stdin
-            .write_all(text.as_bytes())
-            .context("writing clipboard content")?;
-    }
-    Ok(true)
+    Ok("paste submitted (transcript retained in clipboard)")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1663,12 +1879,11 @@ fn focused_app_identity() -> Option<String> {
     find_native_paste_helper()
         .ok()
         .and_then(|helper| {
-            ProcessCommand::new(helper)
-                .arg("--active-app")
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output()
-                .ok()
+            simple_stt::common::clipboard::output_bounded(
+                ProcessCommand::new(helper).arg("--active-app"),
+                Duration::from_secs(3),
+            )
+            .ok()
         })
         .filter(|output| output.status.success())
         .and_then(|output| String::from_utf8(output.stdout).ok())
@@ -1723,7 +1938,7 @@ fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool
             PasteKey::CtrlShiftV => vec!["key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"],
             PasteKey::CtrlV => vec!["key", "29:1", "47:1", "47:0", "29:0"],
         };
-        if run_quiet(ProcessCommand::new("ydotool").args(args)) {
+        if run_paste_helper(ProcessCommand::new("ydotool").args(args)) {
             return Ok(true);
         }
     }
@@ -1738,7 +1953,7 @@ fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool
             ],
             PasteKey::CtrlV => vec!["-M", "ctrl", "-k", "v", "-m", "ctrl"],
         };
-        if run_quiet(ProcessCommand::new("wtype").args(args)) {
+        if run_paste_helper(ProcessCommand::new("wtype").args(args)) {
             return Ok(true);
         }
     }
@@ -1751,11 +1966,16 @@ fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool
             PasteKey::CtrlShiftV => "ctrl+shift+v",
             PasteKey::CtrlV => "ctrl+v",
         };
-        if run_quiet(ProcessCommand::new("xdotool").args(["key", "--clearmodifiers", key])) {
+        if run_paste_helper(ProcessCommand::new("xdotool").args(["key", "--clearmodifiers", key])) {
             return Ok(true);
         }
     }
     Ok(false)
+}
+
+fn run_paste_helper(command: &mut ProcessCommand) -> bool {
+    simple_stt::common::clipboard::output_bounded(command, Duration::from_secs(3))
+        .is_ok_and(|output| output.status.success())
 }
 
 fn run_native_paste(helper: &Path, key: PasteKey) -> bool {
@@ -1784,7 +2004,9 @@ fn run_native_paste(helper: &Path, key: PasteKey) -> bool {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    let Ok(output) = command.output() else {
+    let Ok(output) =
+        simple_stt::common::clipboard::output_bounded(&mut command, Duration::from_secs(12))
+    else {
         return false;
     };
     if !output.status.success() {
@@ -2152,6 +2374,7 @@ fn command_exists(name: &str) -> bool {
     which_like(name, "").is_some()
 }
 
+#[cfg(target_os = "linux")]
 fn command_output(cmd: &mut ProcessCommand) -> Option<String> {
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -2240,6 +2463,87 @@ fn hotkey_backend_state_file() -> PathBuf {
 mod tests {
     use super::*;
 
+    /// Run only on a disposable X server via scripts/test-linux-paste.py.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11_delayed_paste_end_to_end() {
+        if std::env::var_os("SIMPLE_STT_PASTE_X11_E2E").is_none() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("target.py");
+        fs::write(
+            &script,
+            r#"import tkinter as tk,sys,pathlib
+root=tk.Tk();root.title('Simple STT isolated paste target')
+edit=tk.Text(root);edit.pack()
+def paste(event):
+    def consume():
+        edit.insert('insert',root.clipboard_get())
+        pathlib.Path(sys.argv[3]).write_text(edit.get('1.0','end-1c'))
+    root.after(int(sys.argv[1]),consume)
+    return 'break'
+edit.bind('<Control-v>',paste)
+def ready():
+    edit.focus_force()
+    pathlib.Path(sys.argv[2]).write_text('ready')
+root.after(150,ready);root.mainloop()
+"#,
+        )
+        .unwrap();
+        for delay in [0, 800, 2500] {
+            let ready = dir.path().join(format!("ready-{delay}"));
+            let result = dir.path().join(format!("result-{delay}"));
+            let mut target = ProcessCommand::new("python3")
+                .arg(&script)
+                .arg(delay.to_string())
+                .arg(&ready)
+                .arg(&result)
+                .spawn()
+                .unwrap();
+            let ready_deadline = Instant::now() + Duration::from_secs(5);
+            while !ready.exists() && Instant::now() < ready_deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(ready.exists(), "test editor did not become ready");
+            let text = "hello world مرحبا 🙂";
+            let outcome = paste_text(
+                text,
+                false,
+                LinuxAutomationBackend::Xdotool,
+                TextDeliveryMode::PasteCtrlV,
+                Some("test-editor"),
+                &|| true,
+                false,
+            );
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !result.exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let _ = target.kill();
+            let _ = target.wait();
+            assert_eq!(
+                outcome.unwrap(),
+                "paste submitted (transcript retained in clipboard)"
+            );
+            assert_eq!(
+                fs::read_to_string(result).unwrap(),
+                text,
+                "delayed target must receive exactly one transcript"
+            );
+            let clipboard = simple_stt::common::clipboard::output_bounded(
+                ProcessCommand::new("xclip").args(["-selection", "clipboard", "-out"]),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+            assert_eq!(
+                clipboard.stdout,
+                text.as_bytes(),
+                "transcript must remain available after delayed consumption"
+            );
+        }
+    }
+
     #[test]
     fn ctl_protocol_unescapes_fields() {
         let parsed = parse_ctl(
@@ -2314,6 +2618,12 @@ mod tests {
         };
         assert!(delivery_session_is_current(&completed, 42));
         assert!(!delivery_session_is_current(&completed, 41));
+        let cancelled = SessionState {
+            recording: false,
+            session_id: next_session_id(completed.session_id),
+            ..completed
+        };
+        assert!(!delivery_session_is_current(&cancelled, 42));
         assert!(!delivery_session_is_current(
             &SessionState {
                 recording: true,
@@ -2322,6 +2632,14 @@ mod tests {
             },
             42
         ));
+    }
+
+    #[test]
+    fn empty_transcript_does_not_publish_clipboard() {
+        assert_eq!(
+            deliver_text("", false, 0).unwrap(),
+            "empty transcript skipped"
+        );
     }
 
     #[test]

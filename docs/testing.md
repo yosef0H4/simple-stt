@@ -11,6 +11,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --all-targets
 cargo build --bin simple-stt-settings
+python scripts/test-settings-single-instance.py
 python scripts/test-settings-selection-api.py
 python scripts/test-cleanup-settings-e2e.py
 python scripts/verify-static.py
@@ -189,6 +190,15 @@ state-file reconnect after simulated service restart
 
 ## Browser Settings coverage
 
+`python scripts/test-settings-single-instance.py` launches the real Settings
+binary concurrently and checks one shared server, authenticated Close from a
+reopened session, immediate reopen during shutdown, crash/stale-session recovery,
+and independent installation isolation. On Linux it also suspends the server to
+verify a slow/unresponsive instance never starts a duplicate. The OS lock remains
+held throughout the server lifetime; its persistent lock file is intentionally
+not deleted. Closing a browser tab alone does not close the server: use the
+Settings Close action to shut it down for all tabs.
+
 Browser automation covers all six pages, including AI Cleanup, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, provider model search/manual IDs, credential-state controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
 
 Provider tests use deterministic loopback fixtures and must never use a developer's saved API key. A real provider test is manual, requires a freshly issued credential supplied through the OS vault or `SIMPLE_STT_AI_API_KEY`, and must verify that a failed or timed-out request delivers the original transcript. Screenshot testing must also verify the visible capture notice, denylist behavior, active-window targeting, and that no image or history survives capture-process exit. Wayland's compositor-owned picker remains a manual desktop check.
@@ -202,6 +212,16 @@ python scripts\benchmark-cleanup-live.py
 The benchmark uses the real debug Settings process and scores several unrelated ASR-error patterns plus a preservation control. It prints provider output for review and is intentionally excluded from deterministic validation because model output and external service availability can vary.
 
 ## Linux X11 shortcut E2E
+
+Clipboard delivery regression: `python scripts/test-linux-paste.py` creates a
+disposable Xvfb server and controlled Tk editor, runs the production Linux paste
+path with immediate, 800 ms and 2500 ms clipboard reads, and checks exactly one
+Unicode insertion and retained clipboard content. It requires Xvfb, xclip,
+xdotool and Python Tkinter, and never uses the live desktop clipboard. The Rust
+clipboard tests also cover delayed publication, failure, cancellation, timeout,
+stalled readers and user-copy changes. Windows full smoke covers delayed reads,
+full-format restoration after verified insertion, new user copies and unknown
+targets retaining the transcript; these checks require native Windows.
 
 The native X11 shortcut listener has an opt-in end-to-end test. It needs `Xvfb`, `xdpyinfo`, and `xdotool`:
 
@@ -274,6 +294,16 @@ The typing and paste checks intentionally use only `hello world` in controlled t
 
 ## Manual release checklist
 
+`python scripts/test-recording-worker-reuse.py` uses the real capture service and
+microphone with an isolated copy of the test-only worker (never delivered through
+the desktop shell). Build `simple-stt-capture` and `simple_stt_mock_infer` in debug
+first. It checks interruption of a blocked transcription, replacement warm-up
+during the new recording, repeated ready-worker reuse without model notices,
+and rapid model switches with no obsolete transcript. The Rust lifecycle tests
+also verify readiness resets after idle exit and warm-up stays skipped after a
+successful real request. The KDE routing test checks real English/Arabic models
+and shared-model reuse through `model_reused` events.
+
 Automation does not replace a final desktop pass. Before publishing a release, manually verify:
 
 ```text
@@ -325,3 +355,9 @@ and heap budgets. Linux Settings-server RSS comparison uses
 These tests use isolated configurations and never modify the running app's
 settings. Browser heap measures only the tab's JavaScript; shared browser engine
 RAM is separate. Background shell/capture code is outside this UI overhaul.
+
+### Retry and clean clipboard delivery
+
+Run `python scripts/test-linux-paste.py` after building `simple-stt-linux` and running `python scripts/build-linux-fast-paste.py`. The wrapper invokes `test-linux-clean-clipboard.py` under an isolated X server and accessibility bus, never the user's desktop; the helper must not be run standalone. In addition to delayed paste consumption, these check real Unicode direct insertion while preserving a custom binary clipboard format; large X11 INCR transfers and history-exclusion hints; yielding to user copies; and the real retry CLI against an authenticated capture fixture. Retry must use exact cached final text in the current editor, never retransform it, never start recording/inference, never persist the cache, and leave ongoing work alone when no cache exists. Option-off must leave an ordinary copy with no exclusion hint.
+
+Rust tests exercise bounded cache replacement, stale/cancelled/empty writes, and schema-9 defaults/explicit option-off. Settings browser regressions exercise shortcut capture and Save/reload of the clean option. Windows full smoke checks delayed Edit consumption, full-format restoration, single-character Unicode publication, marker DWORD values and option-off retention. Native Windows AHK checks require Windows; cross-builds do not replace them.

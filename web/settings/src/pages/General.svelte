@@ -45,7 +45,7 @@
           {path}
           {label}
         />{/each}
-    {:else if backend === "portal"}{#each ["record", "cancel", "delivery", "cleanup"] as id, i}<div
+    {:else if backend === "portal"}{#each ["record", "cancel", "delivery", "cleanup", "retry"] as id, i}<div
           class="field"
           data-setting-path={`linux.shortcut.${id}`}
         >
@@ -53,7 +53,7 @@
             >{ui.state.shortcut_state?.[id] || "Not assigned"}</output
           >
         </div>{/each}
-    {:else}{#each ["toggle", "cancel", "cycle-delivery", "toggle-cleanup"] as command, i}<div
+    {:else}{#each ["toggle", "cancel", "cycle-delivery", "toggle-cleanup", "retry-delivery"] as command, i}<div
           class="field"
         >
           <span>{hotkeys[i][1]}</span><code>simple-stt-linux {command}</code>

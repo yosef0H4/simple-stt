@@ -164,7 +164,9 @@ def main():
                 for session, index in enumerate([english, arabic, english], 201):
                     assert "true" in layout_call("setLayout", index)
                     command(state, token, "start_recording", session_id=session, target_window=None)
-                    wait_event("model_ready")
+                    # English is already ready from the preceding recording.
+                    # All three language choices now use that same model.
+                    wait_event("model_reused")
                     pid = command(state, token, "ping")["values"]["worker_pid"]
                     if reused_pid is not None:
                         assert pid == reused_pid, (pid, reused_pid)

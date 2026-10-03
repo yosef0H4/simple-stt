@@ -165,8 +165,12 @@ choice. Selecting a row switches temporarily; its separate Cycle checkbox
 controls whether the portal shortcut includes it. This allows cycling across
 tools as well as paste, typing, terminal paste, and clipboard-only delivery.
 
-The Linux shell copies the transcript to the normal clipboard and primary
-selection, sends a paste keystroke, and then restores the old text clipboard.
+The Linux shell verifies the transcript on the normal clipboard before sending
+one paste keystroke. Shift+Insert also verifies the primary selection. It retains
+the transcript rather than restoring old clipboard text after a timer, so a slow
+target cannot paste the previous contents. Completion means the shortcut was
+submitted; generic editors do not acknowledge insertion. Clipboard delivery is
+serialized and checks cancellation before injection.
 
 ## System tray
 

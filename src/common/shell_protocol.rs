@@ -48,6 +48,11 @@ pub enum ShellCommand {
     DeliveryComplete {
         session_id: u64,
     },
+    RememberDelivery {
+        session_id: u64,
+        text: String,
+    },
+    LastDelivery,
     Cancel,
     PollEvents {
         after_seq: u64,

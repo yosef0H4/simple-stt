@@ -47,6 +47,11 @@ enum CommandKind {
         #[arg(long)]
         session_id: u64,
     },
+    RememberDelivery {
+        #[arg(long)]
+        session_id: u64,
+    },
+    LastDelivery,
     Cancel,
     PollEvents {
         #[arg(long, default_value_t = 0)]
@@ -161,6 +166,22 @@ fn run(args: Args) -> Result<ShellResponse> {
         CommandKind::PollEvents { after_seq, wait_ms } => {
             poll_events_wait(&mut stream, &mut reader, after_seq, wait_ms)
         }
+        CommandKind::RememberDelivery { session_id } => {
+            use std::io::Read;
+            let mut text = String::new();
+            std::io::stdin()
+                .take(1024 * 1024 + 1)
+                .read_to_string(&mut text)?;
+            anyhow::ensure!(
+                text.len() <= 1024 * 1024,
+                "dictation exceeds retry cache limit"
+            );
+            request_once(
+                &mut stream,
+                &mut reader,
+                ShellCommand::RememberDelivery { session_id, text },
+            )
+        }
         command => request_once(&mut stream, &mut reader, translate(command)),
     }
 }
@@ -218,6 +239,8 @@ fn translate(command: CommandKind) -> ShellCommand {
         CommandKind::DeliveryComplete { session_id } => {
             ShellCommand::DeliveryComplete { session_id }
         }
+        CommandKind::LastDelivery => ShellCommand::LastDelivery,
+        CommandKind::RememberDelivery { .. } => unreachable!("stdin command handled separately"),
         CommandKind::Cancel => ShellCommand::Cancel,
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
         CommandKind::ReloadConfig => ShellCommand::ReloadConfig,
@@ -248,6 +271,14 @@ fn translate(command: CommandKind) -> ShellCommand {
 fn config_show() -> Result<ShellResponse> {
     let config = AppConfig::load()?;
     let mut response = ShellResponse::ok("config");
+    response.values.insert(
+        "retry_delivery_hotkey".into(),
+        config.general.retry_delivery_hotkey.clone(),
+    );
+    response.values.insert(
+        "preserve_clipboard".into(),
+        config.output.preserve_clipboard.to_string(),
+    );
     response
         .values
         .insert("schema_version".into(), config.schema_version.to_string());
@@ -529,6 +560,7 @@ fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
     let target = match key {
         "hotkey_enabled" => &mut config.general.enabled,
         "paced_typing_enabled" => &mut config.output.paced_typing_enabled,
+        "preserve_clipboard" => &mut config.output.preserve_clipboard,
         "trailing_space" => &mut config.output.trailing_space,
         "remove_punctuation" => &mut config.output.remove_punctuation,
         "lowercase_output" => &mut config.output.lowercase,
@@ -566,6 +598,7 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
         return true;
     }
     let target = match key {
+        "retry_delivery_hotkey" => &mut config.general.retry_delivery_hotkey,
         "record_hotkey" => &mut config.general.record_hotkey,
         "toggle_delivery_hotkey" => &mut config.general.toggle_delivery_hotkey,
         "cancel_hotkey" => &mut config.general.cancel_hotkey,

@@ -69,7 +69,18 @@ need("src/capture/overlay_windows.rs", 'render_overlay_text', 'crate::capture::o
 need("resources/linux-fast-paste.c", 'adapted from OpenWhispr', 'PASTE_MODE_SHIFT_INSERT', '--detect-terminal', '--active-app', 'active_app_atspi', 'RemoteDesktop')
 need("src/bin/simple_stt_linux.rs", 'native-paste-restore-token', '--restore-token', 'run_native_paste')
 need("scripts/build-linux-fast-paste.py", 'libx11/libxtst development packages missing', 'HAVE_GIO', 'HAVE_UINPUT')
+need("src/common/clipboard.rs", "output_bounded", "--foreground", "text/plain;charset=utf-8", "owner.verify()", "dictation superseded", "MAX_READ")
+need("src/bin/simple_stt_linux.rs", "acquire_clipboard_lock", "file.try_lock()", "invalidate_delivery_session", "clipboard.verify()", "transcript retained in clipboard")
+if "fn read_clipboard(" in linux_shell or "from_millis(80)" in linux_shell or 'Ok("pasted")' in linux_shell:
+    errors.append("Linux paste must verify publication and must not restore previous text on a timer")
+need("scripts/test-linux-paste.py", "-displayfd", "SIMPLE_STT_PASTE_X11_E2E", 'env.pop("WAYLAND_DISPLAY"', "x11_delayed_paste_end_to_end")
 need("docs/linux-wayland.md", 'Shared shortcut fields remain in JSON', 'Same Parakeet backend model', 'simple-stt-linux configure-shortcuts')
+
+need("src/common/clipboard.rs", 'publish_private', '--sensitive')
+need("src/common/private_clipboard.rs", 'x-kde-passwordManagerHint', 'INCR', 'MAX_PAYLOAD')
+need("src/bin/simple_stt_linux.rs", 'RetryDelivery', 'NewShortcut::new("retry"', 'insert_text_without_clipboard', 'memory_delivery_command')
+need("resources/linux-fast-paste.c", '--insert-text', 'ATSPI_ROLE_PASSWORD_TEXT', 'g_dbus_connection_call_sync', 'attempt\\n')
+need("scripts/test-linux-clean-clipboard.py", 'test_retry', 'application/x-simple-stt-test', 'UTF8_STRING', 'empty retry cancelled work')
 
 if errors:
     for error in errors:

@@ -129,6 +129,7 @@
     "output.enabled_delivery_modes",
     "output.linux_automation_backend",
     "output.linux_delivery_cycle",
+    "output.preserve_clipboard",
   ]}
 >
   {#snippet actions()}{#if linux}<IconButton
@@ -147,6 +148,7 @@
     }))}
     onselect={select}
   />
+  <Field spec={fields.preserveClipboard} />
   <details class="delivery-picker-advanced">
     <summary>Cycle between</summary>
     <div

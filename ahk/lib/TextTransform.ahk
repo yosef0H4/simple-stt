@@ -5,3 +5,7 @@ SimpleSttTransformTranscript(text, removePunctuation := false, lowercaseOutput :
         text := StrLower(text)
     return text
 }
+
+SimpleSttFinalDeliveryPayload(text, trailingSpace) {
+    return text != "" && trailingSpace ? text . " " : text
+}

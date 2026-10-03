@@ -107,6 +107,12 @@ export const fields: Record<string, FieldSpec> = {
     label: "Remove punctuation",
     type: "checkbox",
   },
+  preserveClipboard: {
+    path: "output.preserve_clipboard",
+    label: "Keep clipboard clean",
+    type: "checkbox",
+    help: "Insert without the clipboard where supported; otherwise exclude dictation from supported clipboard histories. Restore previous contents only after confirmed insertion; otherwise keep the text available safely. Some clipboard managers ignore exclusion hints. Clipboard-only mode always copies normally.",
+  },
   lowercase: { path: "output.lowercase", label: "Lowercase", type: "checkbox" },
   cleanup: {
     path: "cleanup.enabled",
@@ -222,6 +228,7 @@ export const hotkeys = [
   ["general.cancel_hotkey", "Cancel"],
   ["general.toggle_delivery_hotkey", "Switch delivery"],
   ["general.toggle_cleanup_hotkey", "Toggle AI cleanup"],
+  ["general.retry_delivery_hotkey", "Retry last dictation"],
 ] as const;
 const pageFor = (path: string): Page =>
   path.startsWith("diagnostics.") ||

@@ -1,5 +1,5 @@
 use simple_stt::capture::inference_supervisor::{
-    nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
+    nonzero_pid, shutdown_shared, shutdown_shared_if_current, WorkerConfig, WorkerSupervisor,
 };
 use simple_stt::config::{InferenceDevice, LogLevel};
 use std::path::PathBuf;
@@ -64,6 +64,112 @@ fn warm_up_loads_and_primes_worker_before_first_transcript() {
         "mock مرحبا 世界 🙂"
     );
     assert_eq!(worker.worker_pid(), Some(warm_pid));
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
+fn repeated_recordings_skip_priming_and_progress_until_worker_replacement() {
+    let config = worker_config(
+        "normal.gguf",
+        Duration::from_millis(20),
+        Duration::from_millis(300),
+    );
+    let mut worker = WorkerSupervisor::new(config.clone());
+    let mut loading = 0;
+    let mut loaded = 0;
+    assert!(worker
+        .warm_up_with_progress(|| loading += 1, || loaded += 1)
+        .unwrap());
+    let pid = worker.worker_pid();
+    worker.transcribe_pcm(1, &[1, 2, 3]).unwrap();
+    for _ in 0..3 {
+        assert!(!worker
+            .warm_up_with_progress(|| loading += 1, || loaded += 1)
+            .unwrap());
+        assert_eq!(worker.worker_pid(), pid);
+    }
+    assert_eq!((loading, loaded), (1, 1));
+    // Regional/language changes with the same model keep its readiness too.
+    let mut next = config;
+    next.speech_language = "ar".into();
+    worker.replace_config(next).unwrap();
+    assert!(!worker
+        .warm_up_with_progress(|| loading += 1, || loaded += 1)
+        .unwrap());
+    assert_eq!(worker.worker_pid(), pid);
+    thread::sleep(Duration::from_millis(40));
+    assert!(worker.shutdown_if_idle(false).unwrap());
+    assert!(worker
+        .warm_up_with_progress(|| loading += 1, || loaded += 1)
+        .unwrap());
+    assert_ne!(worker.worker_pid(), pid);
+    assert_eq!((loading, loaded), (2, 2));
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
+fn successful_transcription_already_primes_the_worker() {
+    let mut worker = WorkerSupervisor::new(worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    ));
+    worker.transcribe_pcm(1, &[1, 2, 3]).unwrap();
+    let pid = worker.worker_pid();
+    assert!(!worker
+        .warm_up_with_progress(
+            || panic!("unexpected loading"),
+            || panic!("unexpected loaded")
+        )
+        .unwrap());
+    worker
+        .transcribe_wav(2, &PathBuf::from("fixture.wav"))
+        .unwrap();
+    assert!(!worker
+        .warm_up_with_progress(
+            || panic!("unexpected loading"),
+            || panic!("unexpected loaded")
+        )
+        .unwrap());
+    assert_eq!(worker.worker_pid(), pid);
+    worker.shutdown_now().unwrap();
+}
+
+#[test]
+fn obsolete_queued_shutdown_preserves_the_current_ready_worker() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let shared = Arc::new(Mutex::new(WorkerSupervisor::new(worker_config(
+        "normal.gguf",
+        Duration::from_secs(10),
+        Duration::from_millis(300),
+    ))));
+    let mut held = shared.lock().unwrap();
+    held.warm_up(|| {}).unwrap();
+    let pid = held.worker_pid();
+    let tracker = held.pid_tracker();
+    let current = Arc::new(AtomicBool::new(true));
+    let still_current = Arc::clone(&current);
+    let pending_worker = Arc::clone(&shared);
+    let pending = thread::spawn(move || {
+        shutdown_shared_if_current(
+            pending_worker,
+            tracker,
+            Duration::from_millis(300),
+            move || still_current.load(Ordering::SeqCst),
+        )
+    });
+    thread::sleep(Duration::from_millis(30));
+    current.store(false, Ordering::SeqCst);
+    drop(held);
+    pending.join().unwrap().unwrap();
+    let mut worker = shared.lock().unwrap();
+    assert_eq!(worker.worker_pid(), pid);
+    assert!(!worker
+        .warm_up_with_progress(
+            || panic!("unexpected loading"),
+            || panic!("unexpected loaded")
+        )
+        .unwrap());
     worker.shutdown_now().unwrap();
 }
 

@@ -21,6 +21,9 @@ const f = require("./settings-fixture.cjs");
   };
   const save = async () => {
     await page.locator("#savebar button[type=submit]").click();
+    // A success notice from the preceding save can still be visible. Wait for
+    // this draft to become clean before navigating or reloading the page.
+    await page.locator("#savebar").waitFor({ state: "detached" });
     await page.getByText("Saved and applied.", { exact: true }).waitFor();
   };
   const draft = async () => {
@@ -68,11 +71,8 @@ const f = require("./settings-fixture.cjs");
   assert.equal(f.getConfig().output.lowercase, true);
   await go("audio");
   await page.locator('[data-setting-path="audio.gain"] .help button').focus();
-  assert(
-    await page
-      .locator('[data-setting-path="audio.gain"] .help [role=tooltip]')
-      .isVisible(),
-  );
+  assert(await page.locator('[data-setting-path="audio.gain"] .help button').getAttribute("title"));
+  assert.equal(await page.locator('[role="tooltip"]').count(), 0);
   await go("general");
   await page
     .getByRole("button", { name: "Record Record shortcut", exact: true })
@@ -82,7 +82,21 @@ const f = require("./settings-fixture.cjs");
       document.getElementById("general.record_hotkey").value === "Ctrl+Alt+R",
   );
   await save();
+  f.options.hotkey = "Ctrl+Alt+P";
+  await page.getByRole("button", { name: "Record Retry last dictation shortcut", exact: true }).click();
+  await page.waitForFunction(() => document.getElementById("general.retry_delivery_hotkey").value === "Ctrl+Alt+P");
+  await save();
+  assert.equal(f.getConfig().general.retry_delivery_hotkey, "Ctrl+Alt+P");
   await go("output");
+  const clean = page.locator('[data-setting-path="output.preserve_clipboard"] input');
+  assert(await clean.isChecked());
+  await clean.uncheck();
+  assert.equal(f.getConfig().output.preserve_clipboard, true, "clipboard option is draft-only");
+  await save();
+  assert.equal(f.getConfig().output.preserve_clipboard, false);
+  await page.reload();
+  await go("output");
+  assert(!(await page.locator('[data-setting-path="output.preserve_clipboard"] input').isChecked()));
   const delivery = page.getByRole("combobox", {
     name: "Current Windows delivery method",
   });
@@ -359,6 +373,17 @@ const f = require("./settings-fixture.cjs");
         "config",
       ]) {
         await go(name);
+        const railBounds = await page.locator(".rail").boundingBox();
+        assert.equal(railBounds.y, 0, `${name} sidebar starts at viewport top`);
+        assert.equal(railBounds.height, 900, `${name} sidebar fills viewport`);
+        await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+        assert.equal((await page.locator(".rail").boundingBox()).y, 0,
+          `${name} sidebar stays anchored while scrolling`);
+        const closeButton = page.getByRole("button", { name: "Close Settings", exact: true });
+        assert.equal(await closeButton.getAttribute("title"), "Close Settings");
+        assert.equal(await page.locator('[role="tooltip"]').count(), 0);
+        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.mouse.move(width - 1, 0);
         assert.equal(
           await page.evaluate(
             () => document.documentElement.scrollWidth > innerWidth,
@@ -412,8 +437,8 @@ const f = require("./settings-fixture.cjs");
   await page.setViewportSize({ width: 360, height: 900 });
   await page.locator('nav button[data-page="output"]').focus();
   assert(
-    await page.locator('nav button[data-page="output"] span').isVisible(),
-    "icon navigation focus tooltip",
+    (await page.locator('nav button[data-page="output"]').getAttribute("title")) === "Output",
+    "icon navigation native tooltip",
   );
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.evaluate(() => (document.body.style.zoom = "2"));

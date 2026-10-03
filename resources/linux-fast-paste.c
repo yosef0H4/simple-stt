@@ -89,7 +89,11 @@ static void portal_emit_key(PortalData *app, gint32 keycode, guint32 pressed,
         PORTAL_IFACE, "NotifyKeyboardKeycode",
         g_variant_new("(o@a{sv}iu)", app->session_handle, opts, keycode, pressed),
         NULL, G_DBUS_CALL_FLAGS_NONE, -1, NULL, &err);
-    if (err) { fprintf(stderr, "%s: %s\n", label, err->message); g_clear_error(&err); }
+    if (err) {
+        fprintf(stderr, "%s: %s\n", label, err->message);
+        portal_exit_code = 1;
+        g_clear_error(&err);
+    }
 }
 
 static void portal_send_paste(PortalData *app)
@@ -376,6 +380,104 @@ static int check_parent_terminal(Display *dpy, Window win) {
 }
 
 #ifdef HAVE_ATSPI
+/* Direct insertion leaves every clipboard format and history untouched. Only
+ * an active, focused, editable text control with no selection is eligible.
+ * Return 1 only before attempting an insertion; 2 means uncertain consumption
+ * and MUST NOT cause an automatic paste fallback (which could duplicate text). */
+static AtspiAccessible *focused_editable(AtspiAccessible *node, int depth, int *budget) {
+    if (!node || depth > 24 || --*budget < 0) return NULL;
+    AtspiStateSet *states = atspi_accessible_get_state_set(node);
+    gboolean focused = states && atspi_state_set_contains(states, ATSPI_STATE_FOCUSED);
+    gboolean editable = states && atspi_state_set_contains(states, ATSPI_STATE_EDITABLE);
+    if (states) g_object_unref(states);
+    if (focused && editable && atspi_accessible_get_role(node, NULL) != ATSPI_ROLE_PASSWORD_TEXT)
+        return g_object_ref(node);
+    int count = atspi_accessible_get_child_count(node, NULL);
+    for (int i = 0; i < count && *budget > 0; ++i) {
+        AtspiAccessible *child = atspi_accessible_get_child_at_index(node, i, NULL);
+        AtspiAccessible *found = focused_editable(child, depth + 1, budget);
+        if (child) g_object_unref(child);
+        if (found) return found;
+    }
+    return NULL;
+}
+
+static int insert_text_direct(void) {
+    GString *input = g_string_new(NULL);
+    char buffer[4096]; size_t count;
+    while ((count = fread(buffer, 1, sizeof buffer, stdin)) > 0) {
+        if (input->len + count > 1024 * 1024) { g_string_free(input, TRUE); return 1; }
+        g_string_append_len(input, buffer, count);
+    }
+    if (ferror(stdin) || !input->len || !g_utf8_validate(input->str, input->len, NULL)) {
+        g_string_free(input, TRUE); return 1;
+    }
+#ifdef HAVE_GIO
+    /* libatspi can abort when desktop accessibility activation is broken.
+     * Probe first, and fall back before touching the target or clipboard. */
+    GError *bus_error = NULL;
+    GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &bus_error);
+    GVariant *address = bus ? g_dbus_connection_call_sync(bus, "org.a11y.Bus", "/org/a11y/bus",
+        "org.a11y.Bus", "GetAddress", NULL, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE,
+        250, NULL, &bus_error) : NULL;
+    if (address) g_variant_unref(address);
+    if (bus) g_object_unref(bus);
+    if (bus_error) { g_error_free(bus_error); g_string_free(input, TRUE); return 1; }
+#endif
+    atspi_init(); atspi_set_timeout(300, 1000);
+    AtspiAccessible *desktop = atspi_get_desktop(0), *target = NULL;
+    int budget = 512;
+    int apps = desktop ? atspi_accessible_get_child_count(desktop, NULL) : 0;
+    for (int i = 0; i < apps && !target; ++i) {
+        AtspiAccessible *app = atspi_accessible_get_child_at_index(desktop, i, NULL);
+        int windows = app ? atspi_accessible_get_child_count(app, NULL) : 0;
+        for (int j = 0; j < windows && !target; ++j) {
+            AtspiAccessible *win = atspi_accessible_get_child_at_index(app, j, NULL);
+            AtspiStateSet *states = win ? atspi_accessible_get_state_set(win) : NULL;
+            gboolean active = states && atspi_state_set_contains(states, ATSPI_STATE_ACTIVE);
+            if (states) g_object_unref(states);
+            if (active) target = focused_editable(win, 0, &budget);
+            if (win) g_object_unref(win);
+        }
+        if (app) g_object_unref(app);
+    }
+    int result = 1;
+    AtspiText *text = target ? atspi_accessible_get_text_iface(target) : NULL;
+    AtspiEditableText *edit = target ? atspi_accessible_get_editable_text_iface(target) : NULL;
+    char *before = NULL, *expected = NULL;
+    if (text && edit && atspi_text_get_n_selections(text, NULL) == 0) {
+        int length = atspi_text_get_character_count(text, NULL);
+        int caret = atspi_text_get_caret_offset(text, NULL);
+        before = length <= 65535 ? atspi_text_get_text(text, 0, -1, NULL) : NULL;
+        AtspiStateSet *states = atspi_accessible_get_state_set(target);
+        gboolean focused = states && atspi_state_set_contains(states, ATSPI_STATE_FOCUSED);
+        if (states) g_object_unref(states);
+        if (focused && before && g_utf8_validate(before, -1, NULL) && caret >= 0 && caret <= length
+            && g_utf8_strlen(before, -1) == length) {
+            const char *split = g_utf8_offset_to_pointer(before, caret);
+            char *prefix = g_strndup(before, split - before);
+            expected = g_strconcat(prefix, input->str, split, NULL); g_free(prefix);
+            result = 2; /* An attempted RPC might have succeeded even on an error. */
+            fputs("attempt\n", stdout); fflush(stdout);
+            GError *error = NULL;
+            gboolean inserted = atspi_editable_text_insert_text(edit, caret, input->str,
+                input->len, &error);
+            if (error) g_error_free(error);
+            if (inserted) {
+                char *after = atspi_text_get_text(text, 0, -1, NULL);
+                if (after && strcmp(after, expected) == 0) result = 0;
+                g_free(after);
+            }
+        }
+    }
+    g_free(before); g_free(expected); g_string_free(input, TRUE);
+    if (edit) g_object_unref(edit);
+    if (text) g_object_unref(text);
+    if (target) g_object_unref(target);
+    if (desktop) g_object_unref(desktop);
+    return result;
+}
+
 static char *active_app_atspi(void) {
     atspi_init();
     AtspiAccessible *desktop = atspi_get_desktop(0);
@@ -642,11 +744,14 @@ int main(int argc, char *argv[]) {
     int media_play_pause = 0;
     int detect_terminal = 0;
     int print_active_app = 0;
+    int insert_text = 0;
     const char *restore_token = NULL;
     Window target_window = None;
 
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--terminal") == 0) {
+        if (strcmp(argv[i], "--insert-text") == 0) {
+            insert_text = 1;
+        } else if (strcmp(argv[i], "--terminal") == 0) {
             force_terminal = 1;
         } else if (strcmp(argv[i], "--shift-insert") == 0) {
             force_shift_insert = 1;
@@ -665,6 +770,14 @@ int main(int argc, char *argv[]) {
         } else if (strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
             target_window = (Window)strtoul(argv[++i], NULL, 0);
         }
+    }
+
+    if (insert_text) {
+#ifdef HAVE_ATSPI
+        return insert_text_direct();
+#else
+        return 1;
+#endif
     }
 
     if (media_play_pause) {

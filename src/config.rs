@@ -272,6 +272,7 @@ pub struct GeneralConfig {
     pub toggle_delivery_hotkey: String,
     pub cancel_hotkey: String,
     pub toggle_cleanup_hotkey: String,
+    pub retry_delivery_hotkey: String,
     pub linux_hotkey_backend: LinuxHotkeyBackend,
     pub capslock_behavior: CapsLockBehavior,
     pub start_at_login: bool,
@@ -328,6 +329,7 @@ pub struct OutputConfig {
     pub app_overrides: Vec<AppDeliveryOverride>,
     pub paced_typing_enabled: bool,
     pub typing_speed_wpm: u64,
+    pub preserve_clipboard: bool,
     pub trailing_space: bool,
     pub remove_punctuation: bool,
     pub lowercase: bool,
@@ -409,6 +411,12 @@ impl Default for AppConfig {
                 }
                 .to_owned(),
                 toggle_cleanup_hotkey: "None".to_owned(),
+                retry_delivery_hotkey: if cfg!(target_os = "linux") {
+                    "Meta+Ctrl+V"
+                } else {
+                    "CapsLock+V"
+                }
+                .to_owned(),
                 linux_hotkey_backend: LinuxHotkeyBackend::Auto,
                 capslock_behavior: CapsLockBehavior::PreserveTap,
                 start_at_login: false,
@@ -445,6 +453,7 @@ impl Default for AppConfig {
                 app_overrides: Vec::new(),
                 paced_typing_enabled: true,
                 typing_speed_wpm: 450,
+                preserve_clipboard: true,
                 trailing_space: true,
                 remove_punctuation: false,
                 lowercase: false,
@@ -549,6 +558,10 @@ impl AppConfig {
             "unsupported config schema_version {}; expected {}",
             self.schema_version,
             CONFIG_SCHEMA_VERSION
+        );
+        anyhow::ensure!(
+            !self.general.retry_delivery_hotkey.trim().is_empty(),
+            "retry_delivery_hotkey must not be empty"
         );
         anyhow::ensure!(
             !self.general.record_hotkey.trim().is_empty(),
@@ -824,6 +837,9 @@ impl AppConfig {
             } else {
                 english
             };
+        }
+        if normalized.general.retry_delivery_hotkey.trim().is_empty() {
+            normalized.general.retry_delivery_hotkey = defaults.general.retry_delivery_hotkey;
         }
         if normalized.general.record_hotkey.trim().is_empty() {
             normalized.general.record_hotkey = defaults.general.record_hotkey;
@@ -1224,6 +1240,20 @@ fn instance_local_data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clipboard_and_retry_defaults_upgrade_schema9_without_overwriting_existing_choices() {
+        let old = serde_json::json!({"schema_version":9,"output":{"delivery_mode":"paste_ctrl_v"}});
+        let upgraded = AppConfig::normalize_json(&old);
+        assert!(upgraded.output.preserve_clipboard);
+        assert_eq!(upgraded.output.delivery_mode, TextDeliveryMode::PasteCtrlV);
+        assert!(!upgraded.general.retry_delivery_hotkey.is_empty());
+        let off = AppConfig::normalize_json(
+            &serde_json::json!({"output":{"preserve_clipboard":false},"general":{"retry_delivery_hotkey":"None"}}),
+        );
+        assert!(!off.output.preserve_clipboard);
+        assert_eq!(off.general.retry_delivery_hotkey, "None");
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

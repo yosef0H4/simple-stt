@@ -8,6 +8,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --all-targets
 cargo build --bin simple-stt-settings
+python scripts/test-settings-single-instance.py
 python scripts/test-settings-selection-api.py
 python scripts/test-cleanup-settings-e2e.py
 python scripts/verify-static.py

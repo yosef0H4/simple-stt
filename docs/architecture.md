@@ -35,6 +35,8 @@ simple-stt-capture.exe
 
 simple-stt-settings.exe
     disposable authenticated loopback settings server
+    ├── one OS-locked server per installation; reopening reuses its URL
+    ├── Close shuts down the shared server for every tab; crashes release the lock
     ├── serves bundled Svelte/TypeScript HTML/CSS/JavaScript to the default browser
     ├── edits canonical nested config.json with explicit Save
     ├── streams capture/model events to the browser
@@ -76,6 +78,15 @@ simple-stt-infer.exe
 
 ## Dictation sequence
 
+A worker is loaded and primed once. Later recording starts using the same model
+and device refresh its idle lifetime without sending another warm-up inference
+or showing loading/ready notices. Successful transcription/model testing also
+establishes readiness. Unload, timeout, crash, or a model/device change resets
+readiness. A new start interrupts pending inference and prepares the replacement
+while recording continues; shutdown coordinators for obsolete starts cannot
+unload a newer start's worker. Cancelled generations are checked again after taking the worker
+mutex, so queued obsolete requests cannot start inference later.
+
 ```text
 AHK hotkey down
   capture foreground HWND
@@ -85,7 +96,7 @@ AHK hotkey down
 capture service
   resolve fixed speech language or the foreground window's keyboard layout
   freeze that language for this recording
-  recycle a worker loaded for the other language and prewarm the selected model
+  reuse a ready worker for the same model/device, or load and prime a replacement
   enter Recording overlay state
   append future 16 kHz PCM frames to active session buffer
 
@@ -119,6 +130,8 @@ AHK poll timer
 ```
 
 A new dictation supersedes all older work. Capture invalidates older inference and cleanup generations, terminates an obsolete inference worker when necessary, and discards stale results. The Windows shell cancels active or queued typing/paste work; the Linux shell checks the persisted session generation before delivery. This prevents delayed transcripts from arriving in a later context.
+
+Clipboard publication is verified before paste injection. Linux serializes clipboard delivery across shell processes and advances its generation on cancellation; publisher and readback subprocesses have bounded lifetimes. Paste is submitted once, and the transcript stays available on the clipboard because generic key injection cannot acknowledge editor insertion. Shift+Insert also publishes the primary selection. Windows retains its full-format `ClipboardAll()` backup and sequence-number guard, but restores only after a focused standard Edit control verifies the expected insertion. Unsupported controls or a verification timeout retain the transcript, with a submitted/unverified log outcome. Cancellation after injection follows the same rule. Neither shell restores a previous clipboard on a fixed timer or retries an uncertain paste.
 
 Model installation is separate from dictation selection. Schema 9 stores a nullable single-model choice and nullable assignments keyed by keyboard language. Windows enumerates loaded keyboard layouts with locale ISO codes and reads the foreground thread's active layout at recording start. Linux discovers KDE Plasma layouts on Wayland, or XKB configured layouts and effective groups on X11, using installed rules XML including variant overrides. Regional variants share an assignment. Other Wayland desktops use one model; XWayland is never used to guess native Wayland input. None, an unassigned language, or a missing file skips before recording, overlay, screenshots, and worker prewarm. Recording freezes the actual model and device; workers are reused when only the language changes. Only the inference worker loads models. The runtime uses Vulkan automatically with CPU fallback, a physical Vulkan GPU for explicit GPU (preferring discrete over integrated, rejecting software devices), and CPU for explicit CPU. Explicit GPU mode errors when no physical GPU is available.
 
@@ -174,3 +187,13 @@ The AHK shell does not trust helper PID disappearance alone. `simple-stt-ctl` pu
 ## Structured log prefix
 
 Every Rust log writer prefixes each emitted line with `component=<capture|infer> pid=<pid>`. Tracing supplies timestamps and per-event fields such as `session_id`; the AHK shell log uses the same component/PID/session convention. Transcript contents remain disabled unless `log_transcripts` is explicitly enabled; otherwise only character counts are recorded. Release builds force minimal logging, and each component log is truncated after seven days or 2 MiB so application logs remain bounded without accumulating rotated files.
+
+## Retry and clipboard history
+
+The shell remembers one final, transformed dictation (including trailing space) in memory before attempting delivery. Windows keeps it in the AHK shell; Linux sends it through authenticated IPC to a bounded 1 MiB capture-service cache. `RememberDelivery` accepts only a pending delivery session, and an older completion cannot replace newer cached text. Empty dictations and config reloads retain the previous cache. Closing/restarting the owning process clears it; no retry-cache file is written.
+
+`Retry last dictation` targets the currently focused app and uses current delivery settings, without recording, inference, cleanup, or applying text transforms again. Empty cache is a no-op. Retry cancels obsolete recording/transcription/delivery work before insertion. Windows defaults to CapsLock+V; X11 defaults to Meta+Ctrl+V. Wayland portal users assign the new Retry shortcut through their desktop shortcut dialog; compositor bindings can run `simple-stt-linux retry-delivery`.
+
+`output.preserve_clipboard` defaults to true and appears as **Keep clipboard clean**. Supported Linux accessible text controls receive direct AT-SPI insertion without clipboard changes; password fields and selected ranges use the paste fallback. The helper distinguishes unavailable controls from attempted but unconfirmed insertion so uncertain insertion never triggers an automatic duplicate paste. The fallback publishes the KDE `x-kde-passwordManagerHint=secret` marker together with text (wl-copy --sensitive on Wayland, an in-memory multi-target X11 owner with INCR support on X11). Windows atomically publishes Unicode text and the registered history/cloud exclusion formats before closing the clipboard. Cooperating history managers exclude these temporary copies; third-party managers can ignore the hints. Clipboard-only delivery always makes an ordinary copy.
+
+On Windows, previous full-format contents are restored only when insertion is confirmed and clipboard ownership has not changed. Unconfirmed pastes retain the marked transcript rather than restore an old payload prematurely. Linux fallback also retains the marked transcript because generic paste-key injection has no target acknowledgement. Turning the option off leaves a normal transcript copy, without history hints or restoration. Direct insertion and clipboard publication use bounded, cancellable helper work; no timer is used as proof of consumption.

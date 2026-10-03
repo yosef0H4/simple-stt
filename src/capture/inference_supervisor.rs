@@ -85,6 +85,7 @@ struct WorkerHandle {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    ready: bool,
 }
 
 impl WorkerSupervisor {
@@ -123,9 +124,23 @@ impl WorkerSupervisor {
         self.config = next;
         Ok(())
     }
-    pub fn warm_up(&mut self, mut on_model_loaded: impl FnMut()) -> Result<()> {
+    pub fn warm_up(&mut self, on_model_loaded: impl FnMut()) -> Result<()> {
+        self.warm_up_with_progress(|| {}, on_model_loaded)
+            .map(|_| ())
+    }
+    /// Returns true only when this call loaded/primed the worker. Readiness is
+    /// scoped to the child, so replacement, idle exit, and crashes reset it.
+    pub fn warm_up_with_progress(
+        &mut self,
+        mut on_loading: impl FnMut(),
+        mut on_model_loaded: impl FnMut(),
+    ) -> Result<bool> {
         self.ensure_worker()?;
         let worker = self.worker.as_mut().unwrap();
+        if worker.ready {
+            return Ok(false);
+        }
+        on_loading();
         write_frame(&mut worker.stdin, &Frame::empty(MessageType::WarmUp))
             .context("requesting inference-worker warm-up")?;
         match read_frame(&mut worker.stdout).context("reading model-loaded warm-up progress")? {
@@ -136,7 +151,11 @@ impl WorkerSupervisor {
         match read_frame(&mut worker.stdout)
             .context("reading inference-worker warm-up completion")?
         {
-            frame if frame.kind == MessageType::WarmUpAck => Ok(()),
+            frame if frame.kind == MessageType::WarmUpAck => {
+                worker.ready = true;
+                self.policy.last_used = Some(Instant::now());
+                Ok(true)
+            }
             frame if frame.kind == MessageType::Error => anyhow::bail!(frame.body_as_text()?),
             frame => anyhow::bail!("unexpected warm-up completion response: {:?}", frame.kind),
         }
@@ -161,7 +180,12 @@ impl WorkerSupervisor {
         };
         self.policy.last_used = Some(Instant::now());
         match frame.kind {
-            MessageType::Transcript => frame.body_as_text(),
+            MessageType::Transcript => {
+                let text = frame.body_as_text()?;
+                // Successful real inference has already primed the engine.
+                self.worker.as_mut().unwrap().ready = true;
+                Ok(text)
+            }
             MessageType::Error => anyhow::bail!(frame.body_as_text()?),
             other => anyhow::bail!("unexpected inference response: {other:?}"),
         }
@@ -190,7 +214,11 @@ impl WorkerSupervisor {
         };
         self.policy.last_used = Some(Instant::now());
         match frame.kind {
-            MessageType::Transcript => frame.body_as_text(),
+            MessageType::Transcript => {
+                let text = frame.body_as_text()?;
+                self.worker.as_mut().unwrap().ready = true;
+                Ok(text)
+            }
             MessageType::Error => anyhow::bail!(frame.body_as_text()?),
             other => anyhow::bail!("unexpected WAV-test response: {other:?}"),
         }
@@ -329,6 +357,7 @@ impl WorkerSupervisor {
             child,
             stdin,
             stdout,
+            ready: false,
         };
         let handshake = (|| -> Result<()> {
             write_frame(&mut worker.stdin, &Frame::empty(MessageType::Hello))?;
@@ -383,12 +412,30 @@ pub fn shutdown_shared(
     tracker: Arc<AtomicU32>,
     grace: Duration,
 ) -> Result<()> {
+    shutdown_shared_if_current(worker, tracker, grace, || true)
+}
+
+/// An obsolete cancellation must not unload a newer recording's worker.
+pub fn shutdown_shared_if_current(
+    worker: Arc<Mutex<WorkerSupervisor>>,
+    tracker: Arc<AtomicU32>,
+    grace: Duration,
+    is_current: impl Fn() -> bool + Send + Sync + 'static,
+) -> Result<()> {
+    let is_current = Arc::new(is_current);
+    let shutdown_is_current = Arc::clone(&is_current);
     let (done_tx, done_rx) = bounded::<Result<(), String>>(1);
     thread::spawn(move || {
         let result = worker
             .lock()
             .map_err(|_| "inference-worker mutex poisoned".to_owned())
-            .and_then(|mut worker| worker.shutdown_now().map_err(|error| error.to_string()));
+            .and_then(|mut worker| {
+                if shutdown_is_current() {
+                    worker.shutdown_now().map_err(|error| error.to_string())
+                } else {
+                    Ok(())
+                }
+            });
         let _ = done_tx.send(result);
     });
     match done_rx.recv_timeout(grace + SHARED_SHUTDOWN_OVERHEAD) {
@@ -398,16 +445,24 @@ pub fn shutdown_shared(
             anyhow::bail!("inference-worker shutdown coordinator disconnected")
         }
         Err(RecvTimeoutError::Timeout) => {
-            let Some(pid) = nonzero_pid(&tracker) else {
+            if !is_current() {
                 return Ok(());
+            }
+            let Some(pid) = nonzero_pid(&tracker) else {
+                anyhow::bail!("worker shutdown is blocked without a tracked child PID");
             };
             tracing::warn!(
                 pid,
                 "inference-worker supervisor was blocked; force-terminating exact child PID"
             );
             force_terminate_pid(pid, SHARED_SHUTDOWN_RECOVERY)?;
-            let _ = done_rx.recv_timeout(SHARED_SHUTDOWN_RECOVERY);
-            Ok(())
+            match done_rx.recv_timeout(SHARED_SHUTDOWN_RECOVERY) {
+                Ok(Ok(())) => Ok(()),
+                Ok(Err(error)) => anyhow::bail!(error),
+                Err(error) => {
+                    anyhow::bail!("worker shutdown did not finish after termination: {error}")
+                }
+            }
         }
     }
 }

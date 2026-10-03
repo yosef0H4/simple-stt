@@ -40,6 +40,8 @@ class SimpleSttShell {
         this.cancelHotkey := HotkeyManager(ObjBindMethod(this, "CancelAll"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.cleanupToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleCleanupHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.retryDeliveryHotkey := HotkeyManager(ObjBindMethod(this, "RetryLastDelivery"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.lastDeliveryText := ""
         this.tray := TrayController(this)
         this.modeTooltipTimer := ObjBindMethod(this, "HideModeTooltip")
         this.ApplyHotkeyConfig()
@@ -55,6 +57,7 @@ class SimpleSttShell {
             this.cancelHotkey.Configure(this.config.Get("cancel_hotkey", "CapsLock+A"), true, capsMode)
             this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+D"), true, capsMode)
             this.cleanupToggleHotkey.Configure(this.config.Get("toggle_cleanup_hotkey", "None"), true, capsMode)
+            this.retryDeliveryHotkey.Configure(this.config.Get("retry_delivery_hotkey", "CapsLock+V"), true, capsMode)
         } catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
             MsgBox(err.Message, "SimpleStt hotkey error", "Iconx")
@@ -173,9 +176,12 @@ class SimpleSttShell {
                 target := this.sessions[session]
                 this.sessions.Delete(session)
                 text := this.TransformTranscript(event["text"])
+                text := SimpleSttFinalDeliveryPayload(text, this.config.Bool("trailing_space", true))
+                if text != "" && StrPut(text, "UTF-8") - 1 <= 1048576
+                    this.lastDeliveryText := text
                 this.logger.Write("info", "transcript received chars=" . StrLen(text), session)
                 mode := this.DeliveryModeForWindow(target)
-                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), this.config.Bool("trailing_space", true), mode)
+                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
             case "notice":
                 this.Notice(event["text"], event["level"])
                 if session && this.sessions.Has(session) && SimpleSttNoticeEndsSession(event)
@@ -236,6 +242,28 @@ class SimpleSttShell {
     }
 
     NoopHotkeyUp() {
+    }
+
+    RetryLastDelivery() {
+        if this.lastDeliveryText = "" {
+            this.logger.Write("info", "retry-last-delivery pressed with empty transcript cache")
+            return
+        }
+        if !this.config.Bool("hotkey_enabled", true) {
+            this.logger.Write("info", "retry-last-delivery ignored while app hotkeys are disabled")
+            return
+        }
+        this.CancelAll()
+        target := WinActive("A")
+        if !target {
+            this.Notice("Retry cancelled: no active target window", "warning")
+            return
+        }
+        this.sessionId += 1
+        retrySession := this.sessionId
+        mode := this.DeliveryModeForWindow(target)
+        this.logger.Write("info", "retrying last transformed transcript chars=" . StrLen(this.lastDeliveryText), retrySession)
+        this.typist.Begin(retrySession, target, this.lastDeliveryText, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
     }
 
     CancelAll(*) {
@@ -435,6 +463,8 @@ class SimpleSttShell {
         this.hotkeys.DisableBindings()
         this.cancelHotkey.DisableBindings()
         this.deliveryToggleHotkey.DisableBindings()
+        this.retryDeliveryHotkey.DisableBindings()
+        this.lastDeliveryText := ""
         SetTimer(this.modeTooltipTimer, 0)
         ToolTip()
         this.ipc.Stop()

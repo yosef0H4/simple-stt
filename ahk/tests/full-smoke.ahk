@@ -5,6 +5,7 @@
 #Include ..\lib\TabProtocol.ahk
 #Include ..\lib\Logging.ahk
 #Include ..\lib\Config.ahk
+#Include ..\lib\TextTransform.ahk
 #Include ..\lib\Typist.ahk
 
 global SmokeCtl := ""
@@ -15,6 +16,7 @@ global SmokeToken := ""
 global SmokePid := 0
 global SmokeLatestSeq := 0
 global SmokeTypingGui := ""
+global DelayedClipboardMarkers := ""
 
 Info(message) {
     SimpleSttConsoleLine("INFO: " . message)
@@ -232,6 +234,99 @@ PastePlain(*) {
     Send("^v")
 }
 
+DelayedEditPasteProc(hwnd, message, wParam, lParam, subclassId, refData) {
+    global DelayedPasteHwnd, DelayedPasteText, DelayedPasteReadAtTimer, DelayedClipboardMarkers
+    if message = 0x0302 { ; WM_PASTE
+        DelayedPasteHwnd := hwnd
+        if !DelayedPasteReadAtTimer
+            DelayedPasteText := A_Clipboard
+        DelayedClipboardMarkers := ReadClipboardHistoryMarkers()
+        SetTimer(InsertDelayedPaste, -650)
+        return 0
+    }
+    return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", message, "UPtr", wParam, "Ptr", lParam, "Ptr")
+}
+
+InsertDelayedPaste() {
+    global DelayedPasteHwnd, DelayedPasteText, DelayedPasteReadAtTimer
+    if !DelayedPasteHwnd
+        return
+    if DelayedPasteReadAtTimer
+        DelayedPasteText := A_Clipboard
+    textPointer := StrPtr(DelayedPasteText)
+    DllCall("user32\SendMessageW", "Ptr", DelayedPasteHwnd, "UInt", 0x00C2, "UPtr", 1, "Ptr", textPointer, "Ptr") ; EM_REPLACESEL
+    DelayedPasteHwnd := 0
+}
+
+ReadClipboardHistoryMarkers() {
+    names := ["ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard"]
+    values := Array()
+    if !DllCall("user32\OpenClipboard", "Ptr", A_ScriptHwnd, "Int")
+        return "busy"
+    try {
+        for name in names {
+            format := DllCall("user32\RegisterClipboardFormatW", "Str", name, "UInt")
+            handle := DllCall("user32\GetClipboardData", "UInt", format, "Ptr")
+            if !handle {
+                values.Push("missing")
+                continue
+            }
+            pointer := DllCall("kernel32\GlobalLock", "Ptr", handle, "Ptr")
+            values.Push(pointer ? NumGet(pointer, 0, "UInt") : "unreadable")
+            if pointer
+                DllCall("kernel32\GlobalUnlock", "Ptr", handle)
+        }
+    } finally DllCall("user32\CloseClipboard")
+    return values
+}
+
+DelayedPasteSmoke(logger, concurrentCopy, cleanClipboard := true, payload := "hello world  ") {
+    global SmokeTypingGui, DelayedPasteCallback, DelayedPasteHwnd, DelayedPasteText, DelayedPasteReadAtTimer, DelayedClipboardMarkers
+    format := SetClipboardMarker()
+    window := Gui("+AlwaysOnTop", "SimpleStt Delayed Paste Smoke")
+    edit := window.AddEdit("w360 h80")
+    window.Show("w390 h120")
+    SmokeTypingGui := window
+    WinWaitActive("ahk_id " . window.Hwnd, , 3)
+    Assert(WinActive("A") = window.Hwnd, "delayed paste window did not become active")
+    edit.Focus()
+    Sleep(100)
+    DelayedPasteReadAtTimer := !concurrentCopy
+    DelayedPasteHwnd := 0
+    DelayedPasteText := ""
+    DelayedClipboardMarkers := ""
+    DelayedPasteCallback := CallbackCreate(DelayedEditPasteProc, "Fast", 6)
+    Assert(DllCall("comctl32\SetWindowSubclass", "Ptr", edit.Hwnd, "Ptr", DelayedPasteCallback, "UPtr", 1, "Ptr", 0, "Int"), "failed to enable delayed paste test")
+    typistInstance := Typist(logger, NoopNotice)
+    startedAt := A_TickCount
+    typistInstance.Begin(concurrentCopy ? 9106 : (cleanClipboard ? 9105 : 9107), window.Hwnd, payload, false, 100, false, "paste_ctrl_v", cleanClipboard)
+    Sleep(150)
+    if concurrentCopy
+        A_Clipboard := "copied during paste"
+    deadline := A_TickCount + 5000
+    while typistInstance.active && A_TickCount < deadline
+        Sleep(25)
+    Assert(!typistInstance.active, "delayed paste smoke timed out")
+    Assert(edit.Value = payload, "delayed paste smoke mismatch: " . edit.Value)
+    Assert(A_TickCount - startedAt >= 600, "delayed paste completed before the edit processed WM_PASTE")
+    if concurrentCopy
+        Assert(A_Clipboard = "copied during paste", "paste cleanup overwrote a newer clipboard copy")
+    else if cleanClipboard {
+        Assert(IsObject(DelayedClipboardMarkers) && DelayedClipboardMarkers.Length = 3, "clean clipboard paste omitted history marker formats")
+        for marker in DelayedClipboardMarkers
+            Assert(marker = 0, "clean clipboard history marker was not DWORD zero")
+        Assert(DllCall("user32\IsClipboardFormatAvailable", "UInt", format, "Int"), "verified delayed paste did not restore the non-text clipboard format")
+    } else {
+        Assert(IsObject(DelayedClipboardMarkers) && DelayedClipboardMarkers.Length = 3 && DelayedClipboardMarkers[1] = "missing" && DelayedClipboardMarkers[2] = "missing" && DelayedClipboardMarkers[3] = "missing", "clipboard option off still published history markers")
+        Assert(A_Clipboard = payload, "clipboard option off did not retain the transcript")
+    }
+    DllCall("comctl32\RemoveWindowSubclass", "Ptr", edit.Hwnd, "Ptr", DelayedPasteCallback, "UPtr", 1)
+    CallbackFree(DelayedPasteCallback)
+    DelayedPasteCallback := 0
+    window.Destroy()
+    SmokeTypingGui := ""
+}
+
 PasteSmoke() {
     global SmokeTypingGui
     logger := ShellLog(A_Temp . "\\simple-stt-full-smoke-paste.log")
@@ -247,6 +342,7 @@ PasteSmoke() {
         edit.Focus()
         Sleep(100)
         typistInstance := Typist(logger, NoopNotice)
+        startedAt := A_TickCount
         typistInstance.Begin(item[2], window.Hwnd, "hello world", false, 100, false, item[1])
         deadline := A_TickCount + 5000
         while typistInstance.active && A_TickCount < deadline
@@ -257,7 +353,33 @@ PasteSmoke() {
         window.Destroy()
         SmokeTypingGui := ""
     }
+    DelayedPasteSmoke(logger, false)
+    DelayedPasteSmoke(logger, false, false)
+    DelayedPasteSmoke(logger, false, true, "界")
+    DelayedPasteSmoke(logger, true)
+    window := Gui("+AlwaysOnTop", "SimpleStt Unknown Paste Target")
+    button := window.AddButton("w180 h40", "No Edit Control")
+    window.Show("w220 h80")
+    SmokeTypingGui := window
+    WinWaitActive("ahk_id " . window.Hwnd, , 3)
+    button.Focus()
+    A_Clipboard := "prior clipboard"
+    typistInstance := Typist(logger, NoopNotice)
+    typistInstance.Begin(9104, window.Hwnd, "retain transcript", false, 100, false, "paste_ctrl_v")
+    deadline := A_TickCount + 5000
+    while typistInstance.active && A_TickCount < deadline
+        Sleep(25)
+    Assert(!typistInstance.active, "unknown-control paste did not complete its delivery lifecycle")
+    Assert(A_Clipboard = "retain transcript", "unknown-control paste did not retain the transcript clipboard")
+    window.Destroy()
+    SmokeTypingGui := ""
     Hotkey("^+v", PastePlain, "Off")
+}
+
+DeliveryCachePayloadSmoke() {
+    Assert(SimpleSttFinalDeliveryPayload("你好🙂", true) = "你好🙂 ", "delivery cache payload did not retain one configured trailing space")
+    Assert(SimpleSttFinalDeliveryPayload("你好🙂 ", false) = "你好🙂 ", "retry payload gained or lost trailing whitespace")
+    Assert(SimpleSttFinalDeliveryPayload("", true) = "", "empty transcript produced a retry payload")
 }
 
 Cleanup(*) {
@@ -340,6 +462,7 @@ try {
 
     Info("typing hello world once")
     TypingSmoke()
+    DeliveryCachePayloadSmoke()
     Info("pasting hello world once and restoring clipboard")
     PasteSmoke()
     StopCapture()
@@ -351,4 +474,3 @@ try {
     SimpleSttConsoleError("STACK: " . err.Stack)
     ExitApp(1)
 }
-

@@ -85,6 +85,32 @@ struct SettingsSession {
     token: String,
 }
 
+// Keep this file in place: unlinking a locked file would let another launcher
+// lock a different inode. The OS releases the lock on normal exit or a crash.
+struct SettingsInstance {
+    _lock: fs::File,
+    session: Option<SettingsSession>,
+}
+
+impl Drop for SettingsInstance {
+    fn drop(&mut self) {
+        if let Some(owned) = &self.session {
+            if let Ok(bytes) = fs::read(settings_session_path()) {
+                if let Ok(current) = serde_json::from_slice::<SettingsSession>(&bytes) {
+                    if current.pid == owned.pid && current.token == owned.token {
+                        let _ = fs::remove_file(settings_session_path());
+                    }
+                }
+            }
+        }
+    }
+}
+
+enum SettingsLaunch {
+    Start(SettingsInstance),
+    Reuse(String),
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("simple-stt-settings: {error:#}");
@@ -94,13 +120,16 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::parse();
-    if let Some(url) = reusable_session_url() {
-        if !args.no_browser {
-            open_url(&url)?;
+    let mut instance = match settings_launch()? {
+        SettingsLaunch::Start(instance) => instance,
+        SettingsLaunch::Reuse(url) => {
+            if !args.no_browser {
+                open_url(&url)?;
+            }
+            println!("{url}");
+            return Ok(());
         }
-        println!("{url}");
-        return Ok(());
-    }
+    };
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
     let address = listener.local_addr()?;
     let server = Server::from_listener(listener, None)
@@ -120,11 +149,13 @@ fn run() -> Result<()> {
         cleanup_auth_status: Arc::new(Mutex::new(json!({"state":"idle"}))),
     });
     let url = format!("{origin}/#token={web_token}");
-    write_session(&SettingsSession {
+    let session = SettingsSession {
         pid: std::process::id(),
         origin: origin.clone(),
         token: web_token.clone(),
-    })?;
+    };
+    write_session(&session)?;
+    instance.session = Some(session);
     println!("{url}");
     if !args.no_browser {
         open_url(&url)?;
@@ -139,7 +170,6 @@ fn run() -> Result<()> {
             std::thread::spawn(move || respond(request, &state));
         }
     }
-    let _ = fs::remove_file(settings_session_path());
     Ok(())
 }
 
@@ -186,7 +216,7 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
         )),
         (&Method::Get, "/api/health") => Ok(json_response(
             StatusCode(200),
-            &json!({"ok":true,"pid":std::process::id()}),
+            &json!({"ok": !state.closing.load(Ordering::Relaxed), "pid":std::process::id()}),
             state,
         )),
         (&Method::Get, "/api/defaults") => Ok(json_response(
@@ -909,18 +939,73 @@ fn write_session(session: &SettingsSession) -> Result<()> {
     Ok(())
 }
 
+fn settings_launch() -> Result<SettingsLaunch> {
+    let directory = AppConfig::state_dir();
+    fs::create_dir_all(&directory)?;
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(directory.join("settings-instance.lock"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => {
+                // Also reuse a server from an older build without a lock.
+                if let Some(url) = reusable_session_url() {
+                    return Ok(SettingsLaunch::Reuse(url));
+                }
+                return Ok(SettingsLaunch::Start(SettingsInstance {
+                    _lock: lock,
+                    session: None,
+                }));
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                if let Some(url) = reusable_session_url() {
+                    return Ok(SettingsLaunch::Reuse(url));
+                }
+                anyhow::ensure!(
+                    Instant::now() < deadline,
+                    "Settings is already running but is not responding; no second server was started"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
 fn reusable_session_url() -> Option<String> {
     let session: SettingsSession =
         serde_json::from_slice(&fs::read(settings_session_path()).ok()?).ok()?;
+    let origin = reqwest::Url::parse(&session.origin).ok()?;
+    if origin.scheme() != "http"
+        || origin.host_str() != Some("127.0.0.1")
+        || origin.port().is_none()
+        || origin.path() != "/"
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+    {
+        return None;
+    }
     let response = reqwest::blocking::Client::builder()
         .timeout(Duration::from_millis(800))
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?
         .get(format!("{}/api/health", session.origin))
         .header("X-Simple-STT-Token", &session.token)
         .send()
         .ok()?;
-    if response.status().is_success() {
+    if !response.status().is_success() {
+        return None;
+    }
+    let health: Value = response.json().ok()?;
+    if health["ok"] == true && health["pid"].as_u64() == Some(u64::from(session.pid)) {
         Some(format!("{}/#token={}", session.origin, session.token))
     } else {
         None

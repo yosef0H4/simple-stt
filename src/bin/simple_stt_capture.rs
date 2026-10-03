@@ -3,7 +3,7 @@ use clap::Parser;
 use crossbeam_channel::{bounded, select, tick, unbounded, Sender};
 use simple_stt::capture::audio::{self, AudioEvent};
 use simple_stt::capture::inference_supervisor::{
-    nonzero_pid, shutdown_shared, WorkerConfig, WorkerSupervisor,
+    nonzero_pid, shutdown_shared, shutdown_shared_if_current, WorkerConfig, WorkerSupervisor,
 };
 use simple_stt::capture::ipc_server::{self, ControlRequest};
 use simple_stt::capture::overlay::{OverlayHandle, OverlayPrimary};
@@ -109,6 +109,10 @@ enum BackgroundResult {
     WorkerConfigReplaced {
         result: Result<(), String>,
     },
+    ModelLoading {
+        generation: u64,
+        session_id: u64,
+    },
     ModelLoaded {
         generation: u64,
         session_id: Option<u64>,
@@ -116,7 +120,7 @@ enum BackgroundResult {
     ModelWarmed {
         generation: u64,
         session_id: Option<u64>,
-        result: Result<(), String>,
+        result: Result<bool, String>,
     },
     ModelTested {
         generation: u64,
@@ -131,6 +135,27 @@ enum BackgroundResult {
         filename: String,
         result: Result<PathBuf, String>,
     },
+}
+
+#[derive(Default)]
+struct LastDeliveryCache(Option<(u64, String)>);
+impl LastDeliveryCache {
+    fn remember(&mut self, session_id: u64, text: String, pending: bool) -> bool {
+        if !pending || text.is_empty() || text.len() > 1024 * 1024 {
+            return false;
+        }
+        if self
+            .0
+            .as_ref()
+            .is_none_or(|(previous, _)| session_id >= *previous)
+        {
+            self.0 = Some((session_id, text));
+        }
+        true
+    }
+    fn text(&self) -> Option<&str> {
+        self.0.as_ref().map(|(_, text)| text.as_str())
+    }
 }
 
 struct ControlContext<'a> {
@@ -152,6 +177,7 @@ struct ControlContext<'a> {
     cleaning: &'a mut HashSet<u64>,
     delivering: &'a mut HashSet<u64>,
     cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
+    last_delivery: &'a mut LastDeliveryCache,
     shutting_down: &'a mut bool,
 }
 
@@ -257,6 +283,7 @@ fn main() -> Result<()> {
     let mut cleaning = HashSet::<u64>::new();
     let mut delivering = HashSet::<u64>::new();
     let mut cleanup_history = VecDeque::<CleanupHistoryEntry>::new();
+    let mut last_delivery = LastDeliveryCache::default();
     let mut shutting_down = false;
     let idle_check_running = Arc::new(AtomicBool::new(false));
     let mut preferred_detected_notice_sent = false;
@@ -323,6 +350,7 @@ fn main() -> Result<()> {
                     cleaning: &mut cleaning,
                     delivering: &mut delivering,
                     cleanup_history: &mut cleanup_history,
+                    last_delivery: &mut last_delivery,
                     shutting_down: &mut shutting_down,
                 });
                 let _ = request.reply.send(response);
@@ -553,6 +581,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         cleaning,
         delivering,
         cleanup_history,
+        last_delivery,
         shutting_down,
     } = context;
     match command {
@@ -570,6 +599,9 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             session_id,
             target_window,
         } => {
+            // Every start supersedes prior work, including a queued cancellation.
+            let generation = cancel_generation.fetch_add(1, Ordering::SeqCst) + 1;
+            let mut obsolete_shutdown = None;
             let mut superseded = transcribing.iter().copied().collect::<HashSet<_>>();
             superseded.extend(warming.iter().copied());
             superseded.extend(cleaning.iter().copied());
@@ -579,7 +611,6 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             let cancel_worker = !transcribing.is_empty() || !warming.is_empty();
             if !superseded.is_empty() {
-                let generation = cancel_generation.fetch_add(1, Ordering::SeqCst) + 1;
                 recording_active.store(false, Ordering::Relaxed);
                 transcribing.clear();
                 warming.clear();
@@ -601,11 +632,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     let worker = Arc::clone(worker);
                     let tracker = Arc::clone(worker_pid);
                     let grace = Duration::from_millis(config.speech.worker_shutdown_grace_ms);
-                    std::thread::spawn(move || {
-                        if let Err(error) = shutdown_shared(worker, tracker, grace) {
-                            tracing::warn!(%error, "failed to stop superseded inference worker");
-                        }
-                    });
+                    let cancelled = Arc::clone(cancel_generation);
+                    obsolete_shutdown = Some(std::thread::spawn(move || {
+                        shutdown_shared_if_current(worker, tracker, grace, move || {
+                            cancelled.load(Ordering::SeqCst) == generation
+                        })
+                    }));
                 }
             }
             let resolved = match resolve_recording_model(
@@ -711,18 +743,27 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 .values
                 .insert("language".into(), language.as_str().into());
             events.push(event);
-            if !cancel_worker {
+            {
                 warming.insert(session_id);
-                overlay.notify_info("🎙 Loading speech model…", None);
-                let mut loading = ServiceEvent::simple("model_loading");
-                loading.session_id = Some(session_id);
-                events.push(loading);
                 let worker = Arc::clone(worker);
-                let generation = cancel_generation.load(Ordering::SeqCst);
                 let cancel_generation = Arc::clone(cancel_generation);
                 let tx = background_tx.clone();
                 let next_worker: Result<WorkerConfig> = Ok(frozen_worker);
                 std::thread::spawn(move || {
+                    if let Some(shutdown) = obsolete_shutdown {
+                        let result = shutdown
+                            .join()
+                            .map_err(|_| "worker shutdown thread panicked".to_owned())
+                            .and_then(|result| result.map_err(|error| error.to_string()));
+                        if let Err(error) = result {
+                            let _ = tx.send(BackgroundResult::ModelWarmed {
+                                generation,
+                                session_id: Some(session_id),
+                                result: Err(error),
+                            });
+                            return;
+                        }
+                    }
                     if cancel_generation.load(Ordering::SeqCst) != generation {
                         return;
                     }
@@ -731,16 +772,27 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                         .lock()
                         .map_err(|_| "inference-worker mutex poisoned".to_owned())
                         .and_then(|mut worker| {
+                            if cancel_generation.load(Ordering::SeqCst) != generation {
+                                return Ok(false);
+                            }
                             worker
                                 .replace_config(next_worker.map_err(|error| error.to_string())?)
                                 .map_err(|error| error.to_string())?;
                             worker
-                                .warm_up(|| {
-                                    let _ = progress_tx.send(BackgroundResult::ModelLoaded {
-                                        generation,
-                                        session_id: Some(session_id),
-                                    });
-                                })
+                                .warm_up_with_progress(
+                                    || {
+                                        let _ = progress_tx.send(BackgroundResult::ModelLoading {
+                                            generation,
+                                            session_id,
+                                        });
+                                    },
+                                    || {
+                                        let _ = progress_tx.send(BackgroundResult::ModelLoaded {
+                                            generation,
+                                            session_id: Some(session_id),
+                                        });
+                                    },
+                                )
                                 .map_err(|error| error.to_string())
                         });
                     let _ = tx.send(BackgroundResult::ModelWarmed {
@@ -815,6 +867,9 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     .map_err(|error| error.to_string())
                     .and_then(|next| {
                         let mut worker = worker.lock().unwrap();
+                        if cancel_generation.load(Ordering::SeqCst) != generation {
+                            return Err("transcription superseded before inference".to_owned());
+                        }
                         worker
                             .replace_config(next)
                             .and_then(|_| worker.transcribe_pcm(session_id, &samples))
@@ -833,6 +888,19 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 });
             });
             ShellResponse::ok("transcription queued")
+        }
+        ShellCommand::RememberDelivery { session_id, text } => {
+            if !last_delivery.remember(session_id, text, delivering.contains(&session_id)) {
+                return ShellResponse::error("no current bounded dictation to remember");
+            }
+            ShellResponse::ok("dictation remembered in memory")
+        }
+        ShellCommand::LastDelivery => {
+            let mut response = ShellResponse::ok("last dictation");
+            if let Some(text) = last_delivery.text() {
+                response.values.insert("text".into(), text.to_owned());
+            }
+            response
         }
         ShellCommand::DeliveryComplete { session_id } => {
             let removed = delivering.remove(&session_id);
@@ -1294,6 +1362,18 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 ));
             }
         },
+        BackgroundResult::ModelLoading {
+            generation,
+            session_id,
+        } => {
+            if context.cancel_generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            context.overlay.notify_info("🎙 Loading speech model…", None);
+            let mut loading = ServiceEvent::simple("model_loading");
+            loading.session_id = Some(session_id);
+            context.events.push(loading);
+        }
         BackgroundResult::ModelLoaded {
             generation,
             session_id,
@@ -1309,8 +1389,9 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             context
                 .overlay
                 .notify_info("🎙 Speech model loaded - warming up...", None);
-            context.events.push(ServiceEvent::simple("model_loaded"));
-            let _ = session_id;
+            let mut loaded = ServiceEvent::simple("model_loaded");
+            loaded.session_id = session_id;
+            context.events.push(loaded);
         }
         BackgroundResult::ModelWarmed {
             generation,
@@ -1328,12 +1409,20 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 return;
             }
             match result {
-                Ok(()) => {
+                Ok(true) => {
                     tracing::info!("speech model warmed while recording");
                     context
                         .overlay
                         .notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
-                    context.events.push(ServiceEvent::simple("model_ready"));
+                    let mut ready = ServiceEvent::simple("model_ready");
+                    ready.session_id = session_id;
+                    context.events.push(ready);
+                }
+                Ok(false) => {
+                    tracing::debug!("reusing ready speech model; no warm-up needed");
+                    let mut reused = ServiceEvent::simple("model_reused");
+                    reused.session_id = session_id;
+                    context.events.push(reused);
                 }
                 Err(error) => {
                     tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
@@ -1587,6 +1676,26 @@ fn sibling_executable(stem: &str) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retry_cache_preserves_final_unicode_payload_and_rejects_obsolete_empty_or_large_writes() {
+        let mut cache = LastDeliveryCache::default();
+        assert_eq!(cache.text(), None);
+        let final_text = "مرحبا world 🙂 ";
+        assert!(cache.remember(42, final_text.into(), true));
+        assert!(!cache.remember(43, "cancelled".into(), false));
+        assert!(!cache.remember(43, String::new(), true));
+        assert!(!cache.remember(43, "x".repeat(1024 * 1024 + 1), true));
+        assert!(cache.remember(41, "older".into(), true));
+        assert_eq!(cache.text(), Some(final_text));
+        assert!(cache.remember(44, "new target text".into(), true));
+        assert_eq!(cache.text(), Some("new target text"));
+        assert_eq!(
+            LastDeliveryCache::default().text(),
+            None,
+            "new service has no persisted transcript"
+        );
+    }
 
     #[test]
     fn inactive_selections_skip_before_keyboard_or_worker_setup() {
