@@ -83,6 +83,20 @@ const f = require("./settings-fixture.cjs");
   );
   await save();
   await go("output");
+  const delivery = page.getByRole("combobox", {
+    name: "Current Windows delivery method",
+  });
+  await delivery.fill("Ctrl+Shift+V");
+  await delivery.press("ArrowDown");
+  await delivery.press("Enter");
+  await save();
+  assert.equal(f.getConfig().output.delivery_mode, "paste_ctrl_shift_v");
+  await delivery.fill("arbitrary-method");
+  await delivery.press("Escape");
+  assert.equal((await draft()).output.delivery_mode, "paste_ctrl_shift_v");
+  await delivery.fill("Smart Paste");
+  await page.getByRole("option", { name: "Smart Paste", exact: true }).click();
+  await save();
   await page
     .locator('[data-setting-path="output.paced_typing_enabled"] input')
     .uncheck();
@@ -305,7 +319,13 @@ const f = require("./settings-fixture.cjs");
   await go("output");
   await page
     .getByRole("combobox", { name: "Current Linux delivery method" })
-    .selectOption("native|smart_paste");
+    .fill("native");
+  await page
+    .getByRole("option", {
+      name: "Smart Paste · Native fast paste",
+      exact: true,
+    })
+    .click();
   await page.getByText("Cycle between", { exact: true }).click();
   await page
     .getByRole("checkbox", {

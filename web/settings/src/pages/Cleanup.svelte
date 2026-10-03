@@ -70,11 +70,15 @@
   }
 </script>
 
-<Group title="AI cleanup" paths={["cleanup.enabled", "cleanup.provider"]}
+<Group
+  title="AI cleanup"
+  icon="cleanup"
+  paths={["cleanup.enabled", "cleanup.provider"]}
   ><Field spec={fields.cleanup} /><Field spec={fields.provider} /></Group
 >
 <Group
   title="Connection"
+  icon="connect"
   paths={["cleanup.openai_compatible", "cleanup.chatgpt"]}
 >
   {#if !chatgpt}<Field spec={fields.url} />
@@ -155,6 +159,7 @@
 </Group>
 <Group
   title="Text cleanup"
+  icon="text"
   paths={[
     "cleanup.prompt",
     "cleanup.timeout_ms",
@@ -191,7 +196,7 @@
     />{#if result}<output>{result}</output>{/if}
   </div>
 </Group>
-<Group title="Screen context" paths={["cleanup.screenshot"]}>
+<Group title="Screen context" icon="screen" paths={["cleanup.screenshot"]}>
   {#each ["screenshot", "scope", "imageSize", "quality"] as key}<Field
       spec={{ ...fields[key], disabled: !ui.config?.cleanup.enabled }}
     />{/each}
@@ -212,7 +217,7 @@
         )}></textarea>
   </div>
 </Group>
-<Group title="Recent cleanup">
+<Group title="Recent cleanup" icon="history">
   {#snippet actions()}<IconButton
       icon="trash"
       label="Clear cleanup history"

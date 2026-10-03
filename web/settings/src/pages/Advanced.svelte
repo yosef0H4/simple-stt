@@ -8,6 +8,7 @@
 
 <Group
   title="Runtime"
+  icon="advanced"
   paths={[
     "speech.runtime_dir",
     "speech.model_dir",
@@ -32,6 +33,7 @@
 </Group>
 <Group
   title="Diagnostics"
+  icon="diagnostics"
   paths={[
     "diagnostics.log_level",
     "diagnostics.diagnostic_overlay",

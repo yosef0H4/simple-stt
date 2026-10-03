@@ -11,6 +11,7 @@
   import type { Backend, DeliveryMode } from "../lib/types";
   import Group from "../components/Group.svelte";
   import Field from "../components/Field.svelte";
+  import Combo from "../components/Combo.svelte";
   import IconButton from "../components/IconButton.svelte";
   let query = $state("");
   const tools = $derived(ui.state?.linux_automation || {});
@@ -122,6 +123,7 @@
 
 <Group
   title="Delivery"
+  icon="output"
   paths={[
     "output.delivery_mode",
     "output.enabled_delivery_modes",
@@ -134,19 +136,17 @@
         label="Refresh tools"
         onclick={() => refreshState()}
       />{/if}{/snippet}
-  <div class="field" data-setting-path="output.delivery_mode">
-    <label for="current-delivery">Use now</label><select
-      id="current-delivery"
-      aria-label={`Current ${linux ? "Linux" : "Windows"} delivery method`}
-      value={`${linux ? ui.config?.output.linux_automation_backend : "auto"}|${ui.config?.output.delivery_mode}`}
-      onchange={(e) => select(e.currentTarget.value)}
-      >{#each choices as c}<option value={c.key}
-          >{c.label}{linux ? ` · ${c.tool}` : ""}{c.installed
-            ? ""
-            : " · Not installed"}</option
-        >{/each}</select
-    >
-  </div>
+  <Combo
+    label="Use now"
+    path="output.delivery_mode"
+    ariaLabel={`Current ${linux ? "Linux" : "Windows"} delivery method`}
+    value={`${linux ? ui.config?.output.linux_automation_backend : "auto"}|${ui.config?.output.delivery_mode}`}
+    items={choices.map((c) => ({
+      value: c.key,
+      label: `${c.label}${linux ? ` · ${c.tool}` : ""}${c.installed ? "" : " · Not installed"}`,
+    }))}
+    onselect={select}
+  />
   <details class="delivery-picker-advanced">
     <summary>Cycle between</summary>
     <div
@@ -187,6 +187,7 @@
 </Group>
 <Group
   title="Typing"
+  icon="keyboard"
   paths={["output.paced_typing_enabled", "output.typing_speed_wpm"]}
   ><Field spec={fields.paced} /><Field
     spec={{
@@ -195,7 +196,7 @@
     }}
   /></Group
 >
-<Group title="App overrides" paths={["output.app_overrides"]}>
+<Group title="App overrides" icon="apps" paths={["output.app_overrides"]}>
   {#snippet actions()}<IconButton
       icon="plus"
       label="Add manually"
@@ -247,6 +248,7 @@
 </Group>
 <Group
   title="Text"
+  icon="text"
   paths={[
     "output.trailing_space",
     "output.remove_punctuation",

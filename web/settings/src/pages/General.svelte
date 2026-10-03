@@ -21,6 +21,7 @@
 
 <Group
   title="Shortcuts"
+  icon="keyboard"
   paths={[
     "general.enabled",
     "general.recording_mode",
@@ -86,6 +87,7 @@
 </Group>
 <Group
   title="System"
+  icon="system"
   paths={[
     "general.capslock_behavior",
     "general.start_at_login",

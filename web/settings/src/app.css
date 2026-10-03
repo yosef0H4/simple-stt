@@ -368,6 +368,15 @@ h2 {
   align-items: center;
   gap: 4px;
 }
+.group-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.group-head h2 svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
 .field {
   display: grid;
   grid-template-columns: minmax(130px, 0.8fr) minmax(0, 1.2fr);

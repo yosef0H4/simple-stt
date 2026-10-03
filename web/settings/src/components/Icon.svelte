@@ -29,6 +29,14 @@
     upload: "M12 17V3m-5 5 5-5 5 5M5 21h14",
     keyboard:
       "M3 5h18v14H3V5Zm3 4h1m3 0h1m3 0h1m3 0h1M6 13h1m3 0h1m3 0h4M7 16h10",
+    system: "M12 3v9M8 5a8 8 0 1 0 8 0",
+    recognition:
+      "M5 5h14v14H5V5Zm4 4h6v6H9V9ZM9 2v3m6-3v3M9 19v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3",
+    apps: "M3 3h8v8H3V3Zm10 0h8v8h-8V3ZM3 13h8v8H3v-8Zm10 0h8v8h-8v-8Z",
+    text: "M4 5h16M12 5v14m-4 0h8",
+    screen: "M3 4h18v14H3V4Zm5 18h8m-4-4v4M7 8h10m-10 4h6",
+    history: "M3 11a9 9 0 1 1 2 7M3 4v7h7M12 7v5l3 2",
+    diagnostics: "M3 4h18v16H3V4Zm3 4 3 3-3 3m6 1h6",
   };
 </script>
 

@@ -33,7 +33,11 @@
   ]);
 </script>
 
-<Group title="Microphone" paths={["audio.preferred_device_id", "audio.gain"]}>
+<Group
+  title="Microphone"
+  icon="audio"
+  paths={["audio.preferred_device_id", "audio.gain"]}
+>
   <Combo
     label="Microphone"
     path="audio.preferred_device_id"
@@ -45,6 +49,7 @@
 </Group>
 <Group
   title="Recognition"
+  icon="recognition"
   paths={[
     "speech.inference_device",
     "speech.selection_mode",

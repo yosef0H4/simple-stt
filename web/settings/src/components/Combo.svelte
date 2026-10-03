@@ -5,6 +5,7 @@
   import Help from "./Help.svelte";
   let {
     label,
+    ariaLabel,
     path,
     value,
     items,
@@ -15,6 +16,7 @@
     extra,
   }: {
     label: string;
+    ariaLabel?: string;
     path: string;
     value: string;
     items: ComboItem[];
@@ -118,11 +120,12 @@
           class="combo-input"
           type="text"
           role="combobox"
-          aria-label={label === "Model"
-            ? "Speech model"
-            : label.endsWith("model")
-              ? label
-              : `${label} model`}
+          aria-label={ariaLabel ||
+            (label === "Model"
+              ? "Speech model"
+              : label.endsWith("model")
+                ? label
+                : `${label} model`)}
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={`list-${path}`}
