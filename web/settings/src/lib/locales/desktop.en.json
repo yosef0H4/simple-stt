@@ -109,5 +109,12 @@
   "api.requestOpened": "Request opened",
   "error.missingBinary": "Missing {binary}. Build or package the Rust binaries beside the shell.",
   "backend.auto": "Automatic",
-  "backend.native": "Native paste"
+  "backend.native": "Native paste",
+  "notice.retryRelease": "Release keys to retry",
+  "notice.retrying": "Retrying…",
+  "notice.retryEmpty": "No dictation to retry",
+  "notice.retryDisabled": "App is paused",
+  "notice.retryFailed": "Retry failed. Try again.",
+  "notice.retryCopied": "Copied. Paste manually.",
+  "notice.retrySent": "Retry sent"
 }

@@ -17,8 +17,8 @@
     "src/lib/i18n.ts": "4b379ce6125cd8643cc6a6dac245f07b8bfd142c8b2490de15225b1fd9de23e6",
     "src/lib/locales/aliases.ts": "da253a3a2df3d2a1f6cb2082f6477083e9439de88a7a93fd63ba297a52ef8283",
     "src/lib/locales/ar.json": "517e5a0d57f54a0cdb6cc4c7432dd8a752e694faa3c88f5f08d70da5e82b1655",
-    "src/lib/locales/desktop.ar.json": "cdddcb4db56177a55b0121b54d67d7817448c79e577df8871cf7ab7b28c838d3",
-    "src/lib/locales/desktop.en.json": "92afc89378cef25e50f97e7635ad5ce00b897a9014d383cef20ba5724d157835",
+    "src/lib/locales/desktop.ar.json": "6b36e571b01522c4d61b775c2cf32370782028f139dc60dd71f52fddef3ea8b6",
+    "src/lib/locales/desktop.en.json": "f4455eb5eda6e66ded99f8238b610d42646564e7b8153dc3326913081be47613",
     "src/lib/locales/en.json": "741846381cb00ab6f2bc4fac8ea5939ec0fc07e19553a066eae69f866da3e340",
     "src/lib/models.ts": "958a13e065d8d665d4f143f16b2f5ef7caa96193657b7020f33941f60b8ab063",
     "src/lib/settings.ts": "2ab3f8a9e5a9f6e481946c027b966147f6a2246ef6c4cea4d272eabc7271a458",
@@ -46,7 +46,7 @@
   },
   "assets": {
     "index.html": "c1cb80d915ac14dbe87ebe81fa0c70bbd3ce5f8925297be26005c14f8c46f50a",
-    "app.js": "a10744c7f0ad4bc854a3eed9e07c5d6350801306e5946480eb4f10780cecc9cb",
+    "app.js": "02758dc2786d6063dab2ef89b908fe5c220c6b5ce1443839b1c7d0abefe8891f",
     "styles.css": "6506e4047efc3b23f8d2d269e9cb8a748e8af0b574469dafcf20d4d8e5739fa8",
     "arabic.woff2": "7b79019a185367820b223310289b92cb5baa1b6d23deeb81e6bcc2784ede569a"
   }

@@ -115,7 +115,7 @@ def test_retry(folder, output, initial):
     runtime.mkdir()
     data = folder / "data"
     config = folder / "config.json"
-    config.write_text(json.dumps({"schema_version": 9, "output": {
+    config.write_text(json.dumps({"schema_version": 9, "general": {"ui_language": "en"}, "output": {
         "delivery_mode": "paste_ctrl_v", "linux_automation_backend": "xdotool",
         "preserve_clipboard": False, "lowercase": True, "remove_punctuation": True, "trailing_space": True}}))
     hashed = 0xcbf29ce484222325
@@ -127,9 +127,10 @@ def test_retry(folder, output, initial):
     session_file = state_root / "linux-recording-session.json"
     original_session = {"recording": True, "session_id": 42, "updated_at": 1}
     session_file.write_text(json.dumps(original_session))
-    commands, errors = [], []
+    commands, errors, notices = [], [], []
     payload = "Retry EXACT! مرحبا 🙂 "
     cached = [payload]
+    cache_failure = [False]
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0)); listener.listen(); listener.settimeout(.1)
     done = threading.Event()
@@ -146,8 +147,10 @@ def test_retry(folder, output, initial):
                     stream.write(json.dumps({"type": "hello_ack", "protocol": 3, "service_pid": os.getpid()}).encode() + b"\n"); stream.flush()
                     while line := stream.readline():
                         request = json.loads(line); name = request["command"]["name"]; commands.append(name)
-                        assert name in ["last_delivery", "cancel"], f"retry launched work: {name}"
+                        assert name in ["last_delivery", "cancel", "show_notice"], f"retry launched work: {name}"
+                        if name == "show_notice": notices.append(request["command"]["text"])
                         response = {"ok": True, "message": "fixture", "events": [], "values": {}}
+                        if name == "last_delivery" and cache_failure[0]: response["ok"] = False
                         if name == "last_delivery" and cached[0] is not None: response["values"]["text"] = cached[0]
                         stream.write(json.dumps({"type": "response", "request_id": request["request_id"], "response": response}).encode() + b"\n"); stream.flush()
             except Exception as error: errors.append(error)
@@ -155,22 +158,43 @@ def test_retry(folder, output, initial):
     env = dict(os.environ, SIMPLE_STT_CONFIG=str(config), SIMPLE_STT_RUNTIME_ROOT=str(runtime), XDG_DATA_HOME=str(data))
     binary = ROOT / "target/debug/simple-stt-linux"
     try:
-        result = subprocess.run([str(binary), "retry-delivery"], env=env, capture_output=True, timeout=15)
-        assert result.returncode == 0, result.stderr
+        # Hold the trigger modifiers on this private X server. Retry must wait
+        # instead of injecting Meta+Ctrl+V into the editor or clearing keys.
+        subprocess.run(["xdotool", "keydown", "Super_L", "Control_L"], check=True)
+        retry = subprocess.Popen([str(binary), "retry-delivery"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            wait_for(lambda: "Retrying…" in notices, "retry progress notice missing")
+            time.sleep(.25)
+            assert retry.poll() is None, "retry did not wait for held modifiers"
+            assert output.read_text() == initial, "retry inserted before modifiers were released"
+            subprocess.run(["xdotool", "keyup", "Super_L", "Control_L"], check=True)
+            _, stderr = retry.communicate(timeout=15)
+            assert retry.returncode == 0, stderr
+        finally:
+            subprocess.run(["xdotool", "keyup", "Super_L", "Control_L"], check=True)
+            if retry.poll() is None: retry.kill(); retry.communicate()
         wait_for(lambda: output.read_text() == initial + payload, "retry did not use exact cached text/current target")
         assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], timeout=3) == payload.encode(), "option-off did not leave an ordinary copy"
         offered = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "TARGETS"], timeout=3)
         assert b"x-kde-passwordManagerHint" not in offered, "option-off retained history exclusion"
-        assert commands == ["last_delivery", "cancel"], commands
-        cached[0] = None; commands.clear(); session_file.write_text(json.dumps(original_session))
+        assert [command for command in commands if command != "show_notice"] == ["last_delivery", "cancel"], commands
+        assert notices == ["Retrying…", "Retry sent"], notices
+        cached[0] = None; commands.clear(); notices.clear(); session_file.write_text(json.dumps(original_session))
         result = subprocess.run([str(binary), "retry-delivery"], env=env, capture_output=True, timeout=15)
         assert result.returncode == 0
-        assert commands == ["last_delivery"] and json.loads(session_file.read_text()) == original_session, "empty retry cancelled work"
+        assert commands == ["last_delivery", "show_notice"] and json.loads(session_file.read_text()) == original_session, "empty retry cancelled work"
+        assert notices == ["No dictation to retry"], notices
         assert output.read_text() == initial + payload, "empty retry inserted something"
+        commands.clear(); notices.clear(); cache_failure[0] = True
+        result = subprocess.run([str(binary), "retry-delivery"], env=env, capture_output=True, timeout=15)
+        assert result.returncode != 0, "cache failure was silently accepted"
+        assert commands == ["last_delivery", "show_notice"], commands
+        assert notices == ["Retry failed. Try again."], notices
+        assert output.read_text() == initial + payload and json.loads(session_file.read_text()) == original_session
         for path in state_root.rglob("*"):
             if path.is_file(): assert payload.encode() not in path.read_bytes(), "retry text was persisted to disk"
         assert not errors, errors
-        print("PASS real retry uses cached final text/current target, cancels obsolete work, skips empty cache and never records or persists text")
+        print("PASS retry waits for modifiers, reports progress/result/empty cache, uses exact cached text and never records or persists it")
     finally:
         done.set(); thread.join(timeout=3); listener.close()
 

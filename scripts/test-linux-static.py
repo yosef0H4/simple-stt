@@ -73,7 +73,8 @@ need("src/common/clipboard.rs", "output_bounded", "--foreground", "text/plain;ch
 need("src/bin/simple_stt_linux.rs", "acquire_clipboard_lock", "file.try_lock()", "invalidate_delivery_session", "clipboard.verify()", "transcript retained in clipboard")
 if "fn read_clipboard(" in linux_shell or "from_millis(80)" in linux_shell or 'Ok("pasted")' in linux_shell:
     errors.append("Linux paste must verify publication and must not restore previous text on a timer")
-need("scripts/test-linux-paste.py", "-displayfd", "SIMPLE_STT_PASTE_X11_E2E", 'env.pop("WAYLAND_DISPLAY"', "x11_delayed_paste_end_to_end")
+need("scripts/test-linux-paste.py", "-displayfd", "SIMPLE_STT_PASTE_X11_E2E", '"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "AT_SPI_BUS_ADDRESS"', 'XDG_RUNTIME_DIR=str(runtime)', 'DBUS_SESSION_BUS_ADDRESS=', "x11_delayed_paste_end_to_end")
+need("src/bin/simple_stt_linux.rs", "RetryShortcutGate", "wait_retry_modifiers", "notice.retryRelease", "notice.retryEmpty", "notice.retryFailed", "DETECTABLE_AUTO_REPEAT")
 need("docs/linux-wayland.md", 'Shared shortcut fields remain in JSON', 'Same Parakeet backend model', 'simple-stt-linux configure-shortcuts')
 
 need("src/common/clipboard.rs", 'publish_private', '--sensitive')

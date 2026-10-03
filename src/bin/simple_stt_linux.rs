@@ -764,17 +764,46 @@ fn remember_delivery(session_id: u64, text: &str) -> Result<()> {
 }
 
 fn retry_delivery() -> Result<()> {
+    let result = retry_delivery_inner();
+    if result.is_err() {
+        retry_notice("notice.retryFailed", true);
+    }
+    result
+}
+
+fn retry_notice(id: &str, warning: bool) {
+    use simple_stt::common::shell_protocol::{NoticeLevel, ShellCommand};
+    #[cfg(target_os = "linux")]
+    let text = simple_stt::localization::translate(saved_ui_locale(), id, &[]);
+    #[cfg(not(target_os = "linux"))]
+    let text = tr(id);
+    let _ = memory_delivery_command(ShellCommand::ShowNotice {
+        level: if warning {
+            NoticeLevel::Warning
+        } else {
+            NoticeLevel::Info
+        },
+        text,
+    });
+}
+
+fn retry_delivery_inner() -> Result<()> {
     let action = DICTATION_ACTION_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     if !AppConfig::load()?.general.enabled {
+        retry_notice("notice.retryDisabled", true);
         return Ok(());
     }
     let response =
         memory_delivery_command(simple_stt::common::shell_protocol::ShellCommand::LastDelivery)?;
     let Some(text) = response.values.get("text").filter(|text| !text.is_empty()) else {
+        retry_notice("notice.retryEmpty", true);
         return Ok(());
     };
+    retry_notice("notice.retrying", false);
+    #[cfg(target_os = "linux")]
+    wait_retry_modifiers()?;
     invalidate_delivery_session()?;
     let cancelled = run_ctl(["cancel"], Duration::from_secs(5), true)?;
     anyhow::ensure!(cancelled.ok, "{}", cancelled.message);
@@ -782,8 +811,43 @@ fn retry_delivery() -> Result<()> {
     drop(action);
     // The cached text is already transformed. Never add another trailing space.
     let outcome = deliver_text(text, false, session_id)?;
+    retry_notice(retry_outcome_notice(outcome), outcome == "copied");
     println!("[{APP}] retry: {outcome}");
     Ok(())
+}
+
+fn retry_outcome_notice(outcome: &str) -> &'static str {
+    match outcome {
+        "copied" => "notice.retryCopied",
+        "cancelled" => "notice.cancelled",
+        _ => "notice.retrySent",
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_retry_modifiers() -> Result<()> {
+    // Wayland exposes shortcut deactivation, not the global physical key state.
+    // Allow its release events to settle before sending another chord.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        std::thread::sleep(Duration::from_millis(150));
+        return Ok(());
+    }
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::{ConnectionExt, KeyButMask};
+    let (connection, screen) = x11rb::connect(None)?;
+    let root = connection.setup().roots[screen].root;
+    let modifiers = KeyButMask::SHIFT | KeyButMask::CONTROL | KeyButMask::MOD1 | KeyButMask::MOD4;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if connection.query_pointer(root)?.reply()?.mask & modifiers == KeyButMask::default() {
+            return Ok(());
+        }
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "release the shortcut modifiers before retrying"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 fn cancel() -> Result<()> {
@@ -1043,7 +1107,16 @@ async fn portal_shortcuts_loop() -> Result<()> {
                 dispatch_shortcut_deactivation(id);
             }
             PortalEvent::Changed(shortcuts) => write_shortcut_state(shortcuts)?,
-            PortalEvent::Closed => bail!("GlobalShortcuts portal session closed"),
+            PortalEvent::Closed => {
+                // Dropping the sender abandons a held retry when its portal
+                // session disappears; it must not paste after reconnecting.
+                retry_shortcut_gate()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .pending
+                    .take();
+                bail!("GlobalShortcuts portal session closed");
+            }
             PortalEvent::Tick => {
                 if shortcut_request_file().exists() {
                     let _ = fs::remove_file(shortcut_request_file());
@@ -1084,6 +1157,32 @@ struct X11Shortcut {
 }
 
 #[cfg(target_os = "linux")]
+fn enable_x11_detectable_autorepeat(connection: &impl x11rb::connection::Connection) -> Result<()> {
+    // Do not interpret the synthetic release/press pairs of X11 autorepeat as
+    // real releases. They would otherwise deliver a held retry repeatedly.
+    {
+        use x11rb::protocol::xkb::{ConnectionExt, PerClientFlag, ID};
+        connection.xkb_use_extension(1, 0)?.reply()?;
+        let flag = PerClientFlag::DETECTABLE_AUTO_REPEAT;
+        let reply = connection
+            .xkb_per_client_flags(
+                ID::USE_CORE_KBD.into(),
+                flag,
+                flag,
+                0_u32.into(),
+                0_u32.into(),
+                0_u32.into(),
+            )?
+            .reply()?;
+        anyhow::ensure!(
+            reply.value & flag == flag,
+            "X11 detectable autorepeat is unavailable"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 fn x11_shortcuts_loop() -> Result<()> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::{ConnectionExt, EventMask, GrabMode, ModMask};
@@ -1092,6 +1191,7 @@ fn x11_shortcuts_loop() -> Result<()> {
     let (connection, screen_index) =
         x11rb::connect(None).context("connecting to the X11 server")?;
     let root = connection.setup().roots[screen_index].root;
+    enable_x11_detectable_autorepeat(&connection)?;
     let config = AppConfig::load()?;
     let shortcuts = [
         ("record", config.general.record_hotkey.as_str()),
@@ -1151,6 +1251,7 @@ fn x11_shortcuts_loop() -> Result<()> {
         None,
     )?;
 
+    let mut pressed = BTreeMap::new();
     loop {
         match connection.wait_for_event()? {
             Event::KeyPress(event) => {
@@ -1158,17 +1259,18 @@ fn x11_shortcuts_loop() -> Result<()> {
                     item.keycode == event.detail
                         && modifiers_match(item.modifiers, event.state.into())
                 }) {
-                    if portal_activation_allowed(shortcut.id) {
+                    if !pressed.contains_key(&event.detail)
+                        && portal_activation_allowed(shortcut.id)
+                    {
+                        pressed.insert(event.detail, shortcut.id);
                         dispatch_shortcut_activation(shortcut.id.to_owned());
                     }
                 }
             }
             Event::KeyRelease(event) => {
-                if let Some(shortcut) = shortcuts.iter().find(|item| {
-                    item.keycode == event.detail
-                        && modifiers_match(item.modifiers, event.state.into())
-                }) {
-                    dispatch_shortcut_deactivation(shortcut.id.to_owned());
+                // The user may release a modifier before the trigger key.
+                if let Some(id) = pressed.remove(&event.detail) {
+                    dispatch_shortcut_deactivation(id.to_owned());
                 }
             }
             _ => {}
@@ -1304,6 +1406,24 @@ fn portal_activation_allowed(id: &str) -> bool {
 
 #[cfg(target_os = "linux")]
 fn dispatch_shortcut_activation(id: String) {
+    if id == "retry" {
+        let Some(released) = retry_shortcut_gate()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .arm()
+        else {
+            return;
+        };
+        std::thread::spawn(move || {
+            retry_notice("notice.retryRelease", false);
+            if released.recv().is_ok() {
+                if let Err(error) = retry_delivery() {
+                    eprintln!("[{APP}] retry shortcut failed: {error:#}");
+                }
+            }
+        });
+        return;
+    }
     std::thread::spawn(move || {
         if let Err(error) = handle_portal_activation(&id) {
             eprintln!("[{APP}] shortcut {id} failed: {error:#}");
@@ -1313,6 +1433,13 @@ fn dispatch_shortcut_activation(id: String) {
 
 #[cfg(target_os = "linux")]
 fn dispatch_shortcut_deactivation(id: String) {
+    if id == "retry" {
+        retry_shortcut_gate()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .release();
+        return;
+    }
     std::thread::spawn(move || {
         if let Err(error) = handle_portal_deactivation(&id) {
             eprintln!("[{APP}] shortcut release {id} failed: {error:#}");
@@ -1336,9 +1463,40 @@ fn handle_portal_activation(id: &str) -> Result<()> {
         "cancel" => cancel(),
         "delivery" => toggle_linux_delivery_mode(),
         "cleanup" => toggle_linux_cleanup(),
-        "retry" => retry_delivery(),
         _ => Ok(()),
     }
+}
+
+// Arm synchronously before spawning work so a quick release cannot race the
+// activation thread. Repeated Activated events do not queue more deliveries.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct RetryShortcutGate {
+    pending: Option<std::sync::mpsc::Sender<()>>,
+}
+
+#[cfg(target_os = "linux")]
+impl RetryShortcutGate {
+    fn arm(&mut self) -> Option<std::sync::mpsc::Receiver<()>> {
+        if self.pending.is_some() {
+            return None;
+        }
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.pending = Some(sender);
+        Some(receiver)
+    }
+
+    fn release(&mut self) {
+        if let Some(sender) = self.pending.take() {
+            let _ = sender.send(());
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn retry_shortcut_gate() -> &'static Mutex<RetryShortcutGate> {
+    static GATE: std::sync::OnceLock<Mutex<RetryShortcutGate>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(RetryShortcutGate::default()))
 }
 
 #[cfg(target_os = "linux")]
@@ -2664,6 +2822,32 @@ root.after(150,ready);root.mainloop()
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn retry_shortcut_waits_for_release_and_ignores_held_repeats() {
+        use std::sync::mpsc::TryRecvError;
+        let mut gate = RetryShortcutGate::default();
+        gate.release(); // An unmatched release cannot retry.
+        let released = gate.arm().expect("first press arms retry");
+        assert_eq!(released.try_recv(), Err(TryRecvError::Empty));
+        assert!(gate.arm().is_none());
+        gate.release(); // Even a release before the worker starts is retained.
+        gate.release();
+        assert_eq!(released.try_recv(), Ok(()));
+        assert_eq!(released.try_recv(), Err(TryRecvError::Disconnected));
+        assert!(gate.arm().is_some(), "next deliberate press is accepted");
+    }
+
+    #[test]
+    fn retry_feedback_does_not_claim_clipboard_fallback_was_pasted() {
+        assert_eq!(retry_outcome_notice("copied"), "notice.retryCopied");
+        assert_eq!(retry_outcome_notice("typed"), "notice.retrySent");
+        assert_eq!(
+            retry_outcome_notice("paste submitted (transcript retained in clipboard)"),
+            "notice.retrySent"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn tray_labels_follow_resolved_locale() {
         use ksni::Tray;
         let english = LinuxTray { locale: Locale::En };
@@ -2810,6 +2994,7 @@ root.after(150,ready);root.mainloop()
         use x11rb::protocol::Event;
 
         let (connection, screen_index) = x11rb::connect(None).expect("connect to test X server");
+        enable_x11_detectable_autorepeat(&connection).expect("enable detectable autorepeat");
         let root = connection.setup().roots[screen_index].root;
         let shortcut = parse_x11_shortcut(&connection, "record", "Meta+Z").unwrap();
         connection

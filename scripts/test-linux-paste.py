@@ -33,11 +33,20 @@ def main():
                 else:
                     raise RuntimeError("Isolated X server did not become ready")
                 env = os.environ.copy()
-                env.pop("WAYLAND_DISPLAY", None)
-                env.update(DISPLAY=f":{number}", XDG_SESSION_TYPE="x11", SIMPLE_STT_PASTE_X11_E2E="1")
+                for key in ("WAYLAND_DISPLAY", "WAYLAND_SOCKET", "AT_SPI_BUS_ADDRESS"):
+                    env.pop(key, None)
+                runtime = Path(folder) / "desktop-runtime"
+                runtime.mkdir(mode=0o700)
+                env.update(DISPLAY=f":{number}", XDG_SESSION_TYPE="x11", SIMPLE_STT_PASTE_X11_E2E="1",
+                           XDG_RUNTIME_DIR=str(runtime), GDK_BACKEND="x11", QT_QPA_PLATFORM="xcb",
+                           DBUS_SESSION_BUS_ADDRESS=f"unix:path={runtime}/no-session-bus")
                 subprocess.run(
                     ["cargo", "test", "--bin", "simple-stt-linux", "x11_delayed_paste_end_to_end", "--", "--nocapture"],
                     cwd=ROOT, env=env, check=True, timeout=120,
+                )
+                subprocess.run(
+                    ["cargo", "test", "--bin", "simple-stt-linux", "x11_global_shortcut_end_to_end", "--", "--nocapture"],
+                    cwd=ROOT, env=dict(env, SIMPLE_STT_X11_E2E="1"), check=True, timeout=30,
                 )
                 subprocess.run(
                     ["dbus-run-session", "--", "/usr/bin/python3", "scripts/test-linux-clean-clipboard.py"],

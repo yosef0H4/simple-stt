@@ -109,5 +109,12 @@
   "api.requestOpened": "فُتح الطلب",
   "error.missingBinary": "الملف {binary} مفقود. أعد تثبيت التطبيق أو بناء ملفاته.",
   "backend.auto": "تلقائي",
-  "backend.native": "لصق مباشر"
+  "backend.native": "لصق مباشر",
+  "notice.retryRelease": "أفلت المفاتيح للإعادة",
+  "notice.retrying": "جارٍ الإعادة…",
+  "notice.retryEmpty": "لا يوجد نص لإعادته",
+  "notice.retryDisabled": "التطبيق متوقف مؤقتًا",
+  "notice.retryFailed": "تعذّرت الإعادة. حاول مجددًا.",
+  "notice.retryCopied": "نُسخ النص. الصقه يدويًا.",
+  "notice.retrySent": "أُرسل النص مجددًا"
 }
