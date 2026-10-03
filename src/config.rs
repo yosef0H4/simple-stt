@@ -190,6 +190,24 @@ impl UiTheme {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
+pub enum UiLanguage {
+    #[default]
+    Auto,
+    En,
+    Ar,
+}
+impl UiLanguage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::En => "en",
+            Self::Ar => "ar",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum RecordingMode {
     #[default]
     Hold,
@@ -277,6 +295,7 @@ pub struct GeneralConfig {
     pub capslock_behavior: CapsLockBehavior,
     pub start_at_login: bool,
     pub ui_theme: UiTheme,
+    pub ui_language: UiLanguage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -421,6 +440,7 @@ impl Default for AppConfig {
                 capslock_behavior: CapsLockBehavior::PreserveTap,
                 start_at_login: false,
                 ui_theme: UiTheme::Auto,
+                ui_language: UiLanguage::Auto,
             },
             audio: AudioConfig {
                 preferred_device_id: String::new(),

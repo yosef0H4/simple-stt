@@ -72,6 +72,46 @@ fn verify_frontend(root: &Path) -> Result<(), String> {
         }
     }
 
+    let shared = manifest["shared_sources"]
+        .as_object()
+        .ok_or("frontend manifest needs shared_sources")?;
+    let expected = BTreeSet::from([
+        "assets/fonts/NotoSansArabic-Regular.ttf",
+        "assets/fonts/NotoSansArabic-Regular.woff2",
+        "assets/fonts/LICENSE-NotoSansArabic.txt",
+    ]);
+    if shared.keys().map(String::as_str).collect::<BTreeSet<_>>() != expected {
+        return Err("font source manifest differs from expected inputs".into());
+    }
+    for (relative, expected) in shared {
+        let path = checked_path(root, relative)?;
+        println!("cargo:rerun-if-changed={}", path.display());
+        if expected.as_str() != Some(&sha256(&path)?) {
+            return Err(format!(
+                "shared frontend source {relative} is stale; run npm run build"
+            ));
+        }
+    }
+    let mut digest = Sha256::new();
+    for name in ["desktop.en.json", "desktop.ar.json"] {
+        let path = frontend.join("src/lib/locales").join(name);
+        let bytes = fs::read(&path).map_err(|e| e.to_string())?;
+        let catalog: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        if !catalog.is_object() {
+            return Err("desktop catalogs must be objects".into());
+        }
+        digest.update(bytes);
+    }
+    let generated = root.join("ahk/lib/Locale.ahk");
+    println!("cargo:rerun-if-changed={}", generated.display());
+    let expected = format!("; catalog-sha256: {:x}", digest.finalize());
+    if !fs::read_to_string(generated)
+        .map_err(|e| e.to_string())?
+        .contains(&expected)
+    {
+        return Err("AHK translations are stale; run node web/settings/tools/locales.mjs".into());
+    }
+
     let sources = manifest["sources"]
         .as_object()
         .expect("validated sources object");
@@ -138,14 +178,14 @@ fn verify_frontend(root: &Path) -> Result<(), String> {
     let assets = manifest["assets"]
         .as_object()
         .expect("validated assets object");
-    for name in ["index.html", "app.js", "styles.css"] {
+    for name in ["index.html", "app.js", "styles.css", "arabic.woff2"] {
         if !assets.contains_key(name) {
             return Err(format!("frontend manifest omits required asset `{name}`"));
         }
     }
-    if assets.len() != 3 {
+    if assets.len() != 4 {
         return Err(
-            "frontend manifest assets must contain exactly index.html, app.js, and styles.css"
+            "frontend manifest assets must contain exactly index.html, app.js, styles.css, and arabic.woff2"
                 .into(),
         );
     }

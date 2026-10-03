@@ -1,29 +1,33 @@
 use crate::capture::overlay::overlay_model::{
-    empty_visualizer_levels, render_overlay_text, set_visualizer_level, NoticeLevel,
+    empty_visualizer_levels, render_overlay_text_with_locale, set_visualizer_level, NoticeLevel,
     OverlayPrimary, RecordingIndicators, VisualizerLevels,
 };
+use crate::localization::Locale;
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use std::mem::zeroed;
 use std::ptr::null_mut;
 use std::sync::{
     atomic::{AtomicU32, Ordering},
-    Arc,
+    Arc, Once,
 };
 use std::thread;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    AddFontMemResourceEx, CreateFontIndirectW, DeleteObject, GetMonitorInfoW, GetObjectW,
+    GetStockObject, MonitorFromPoint, DEFAULT_GUI_FONT, HFONT, LOGFONTW, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
 };
 use windows_sys::Win32::UI::Controls::{
-    InitCommonControls, TOOLTIPS_CLASSW, TTF_ABSOLUTE, TTF_TRACK, TTM_ADDTOOLW, TTM_ADJUSTRECT,
-    TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP,
-    TTS_NOPREFIX, TTTOOLINFOW,
+    InitCommonControls, TOOLTIPS_CLASSW, TTF_ABSOLUTE, TTF_RTLREADING, TTF_TRACK, TTM_ADDTOOLW,
+    TTM_ADJUSTRECT, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW,
+    TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DestroyWindow, DispatchMessageW, GetCursorPos, GetWindowRect, IsWindow,
-    PeekMessageW, SendMessageW, TranslateMessage, MSG, PM_REMOVE, WS_EX_TOPMOST, WS_POPUP,
+    PeekMessageW, SendMessageW, TranslateMessage, MSG, PM_REMOVE, WM_GETFONT, WM_SETFONT,
+    WS_EX_TOPMOST, WS_POPUP,
 };
 
 const CURSOR_OFFSET: i32 = 16;
@@ -39,6 +43,7 @@ pub struct OverlayHandle {
 
 #[derive(Debug, Clone)]
 enum OverlayCommand {
+    SetLocale(Locale),
     StartRecording(isize, RecordingIndicators),
     SetPrimary(OverlayPrimary),
     Notify {
@@ -73,6 +78,10 @@ impl OverlayHandle {
     /// Backwards-compatible alias used by the screenshot and latency helpers.
     pub fn show(&self, target_window: isize) {
         self.start_recording(target_window, RecordingIndicators::default());
+    }
+
+    pub fn set_locale(&self, locale: Locale) {
+        let _ = self.tx.send(OverlayCommand::SetLocale(locale));
     }
 
     pub fn set_primary(&self, primary: OverlayPrimary) {
@@ -189,9 +198,11 @@ impl Notice {
 
 struct TooltipState {
     hwnd: HWND,
+    arabic_font: HFONT,
     owner_hwnd: HWND,
     tool: TTTOOLINFOW,
     primary: OverlayPrimary,
+    locale: Locale,
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
@@ -208,9 +219,11 @@ impl TooltipState {
         }
         Self {
             hwnd: null_mut(),
+            arabic_font: null_mut(),
             owner_hwnd: null_mut(),
             tool: unsafe { zeroed() },
             primary: OverlayPrimary::Hidden,
+            locale: Locale::En,
             notice: None,
             target_level: 0.0,
             display_level: 0.0,
@@ -263,6 +276,13 @@ impl TooltipState {
 
     fn handle_command(&mut self, command: OverlayCommand) {
         match command {
+            OverlayCommand::SetLocale(locale) => {
+                if self.locale != locale {
+                    self.locale = locale;
+                    self.notice = None;
+                    self.destroy_tooltip();
+                }
+            }
             OverlayCommand::StartRecording(hwnd, indicators) => {
                 self.start_recording(hwnd, indicators)
             }
@@ -372,11 +392,12 @@ impl TooltipState {
     }
 
     fn render_text(&self) -> String {
-        render_overlay_text(
+        render_overlay_text_with_locale(
             self.primary,
             self.notice.as_ref().map(|notice| notice.text.as_str()),
             &self.visualizer_levels,
             self.indicators,
+            self.locale,
         )
     }
 
@@ -427,9 +448,21 @@ impl TooltipState {
             return Err(anyhow!("CreateWindowExW TOOLTIPS_CLASSW failed"));
         }
         self.hwnd = hwnd;
+        if self.locale == Locale::Ar {
+            self.arabic_font = native_arabic_font(hwnd);
+            if !self.arabic_font.is_null() {
+                unsafe { SendMessageW(hwnd, WM_SETFONT, self.arabic_font as usize, 0) };
+            }
+        }
         self.tool = TTTOOLINFOW {
             cbSize: tooltip_info_size(),
-            uFlags: TTF_TRACK | TTF_ABSOLUTE,
+            uFlags: TTF_TRACK
+                | TTF_ABSOLUTE
+                | if self.locale == Locale::Ar {
+                    TTF_RTLREADING
+                } else {
+                    0
+                },
             hwnd: self.owner_hwnd,
             uId: 1,
             rect: RECT {
@@ -512,12 +545,63 @@ impl TooltipState {
             self.hwnd = null_mut();
             self.last_text.clear();
         }
+        if !self.arabic_font.is_null() {
+            unsafe { DeleteObject(self.arabic_font) };
+            self.arabic_font = null_mut();
+        }
         if !self.owner_hwnd.is_null() {
             unsafe {
                 DestroyWindow(self.owner_hwnd);
             }
             self.owner_hwnd = null_mut();
         }
+    }
+}
+
+fn native_arabic_font(hwnd: HWND) -> HFONT {
+    static REGISTER: Once = Once::new();
+    REGISTER.call_once(|| {
+        let bytes = include_bytes!("../../assets/fonts/NotoSansArabic-Regular.ttf");
+        let mut count = 0;
+        // The OS keeps this private registration for the process lifetime. The
+        // embedded bytes stay alive; no installed font or network is required.
+        let handle = unsafe {
+            AddFontMemResourceEx(
+                bytes.as_ptr().cast(),
+                bytes.len() as u32,
+                null_mut(),
+                std::ptr::addr_of_mut!(count),
+            )
+        };
+        if handle.is_null() {
+            tracing::warn!("bundled Arabic font registration failed");
+        }
+    });
+    unsafe {
+        let default_font = SendMessageW(hwnd, WM_GETFONT, 0, 0) as HFONT;
+        let default_font = if default_font.is_null() {
+            GetStockObject(DEFAULT_GUI_FONT)
+        } else {
+            default_font
+        };
+        let mut description: LOGFONTW = zeroed();
+        if GetObjectW(
+            default_font,
+            std::mem::size_of::<LOGFONTW>() as i32,
+            (&mut description as *mut LOGFONTW).cast(),
+        ) == 0
+        {
+            return null_mut();
+        }
+        description.lfFaceName.fill(0);
+        for (slot, character) in description
+            .lfFaceName
+            .iter_mut()
+            .zip("Noto Sans Arabic".encode_utf16())
+        {
+            *slot = character;
+        }
+        CreateFontIndirectW(&description)
     }
 }
 

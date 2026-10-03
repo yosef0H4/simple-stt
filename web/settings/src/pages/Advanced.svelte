@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../lib/i18n";
   import { ui, action } from "../lib/state.svelte";
   import { fields } from "../lib/settings";
   import Group from "../components/Group.svelte";
@@ -7,7 +8,7 @@
 </script>
 
 <Group
-  title="Runtime"
+  title="ui.runtime.c4740e"
   icon="advanced"
   paths={[
     "speech.runtime_dir",
@@ -18,7 +19,7 @@
 >
   {#snippet actions()}<IconButton
       icon="close"
-      label="Unload speech model"
+      label="ui.unload_speech_model.045291"
       disabled={!ui.state?.service_online}
       onclick={() => action("unload_model")}
     />{/snippet}
@@ -26,13 +27,13 @@
       spec={fields[key]}
     />{/each}
   <details class="guide">
-    <summary>Resolved locations</summary><code
-      >{ui.state?.resolved_runtime_dir || "Unavailable"}</code
-    ><code>{ui.state?.resolved_model_dir || "Unavailable"}</code>
+    <summary>{t("ui.resolved_locations.59a9d0")}</summary><code
+      >{ui.state?.resolved_runtime_dir || t("ui.unavailable.2c9c1f")}</code
+    ><code>{ui.state?.resolved_model_dir || t("ui.unavailable.2c9c1f")}</code>
   </details>
 </Group>
 <Group
-  title="Diagnostics"
+  title="ui.diagnostics.3af227"
   icon="diagnostics"
   paths={[
     "diagnostics.log_level",

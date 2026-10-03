@@ -2,6 +2,7 @@
   import type { FieldSpec } from "../lib/types";
   import { get, set } from "../lib/state.svelte";
   import Help from "./Help.svelte";
+  import { t } from "../lib/i18n";
   let { spec, extra }: { spec: FieldSpec; extra?: import("svelte").Snippet } =
     $props();
   const value = $derived(get(spec.path));
@@ -25,8 +26,8 @@
   data-setting-path={spec.path}
 >
   <div class="field-copy">
-    <label for={spec.path}>{spec.label}</label>{#if spec.help}<Help
-        text={spec.help}
+    <label for={spec.path}>{t(spec.label)}</label>{#if spec.help}<Help
+        text={t(spec.help)}
       />{/if}
   </div>
   <div class="control">
@@ -44,11 +45,12 @@
         disabled={spec.disabled}
         onchange={change}
         >{#each spec.options || [] as [v, label]}<option value={v}
-            >{label}</option
+            >{t(label)}</option
           >{/each}</select
       >
     {:else if spec.type === "textarea"}<textarea
         id={spec.path}
+        dir={spec.path === "cleanup.prompt" ? "auto" : "ltr"}
         rows="4"
         value={String(value ?? "")}
         disabled={spec.disabled}
@@ -62,9 +64,10 @@
         step={spec.step || 1}
         disabled={spec.disabled}
         oninput={change}
-      /><output class="range-value">{String(value)}{spec.suffix}</output>
+      /><output class="range-value">{String(value)}{spec.suffix ? t(spec.suffix) : ""}</output>
     {:else}<input
         id={spec.path}
+        dir="ltr"
         type={spec.type === "number" ? "number" : "text"}
         value={String(value ?? "")}
         min={spec.min}

@@ -9,6 +9,7 @@
     load,
   } from "../lib/state.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import { t } from "../lib/i18n";
   let file: HTMLInputElement;
   $effect(() => {
     if (!ui.jsonPending) ui.jsonText = JSON.stringify(ui.config, null, 2);
@@ -18,7 +19,7 @@
     if (uploaded)
       await preview(
         JSON.parse(await uploaded.text()),
-        "Import previewed. Save to write it.",
+        t("ui.import_previewed_save_to_write.1403f7"),
       );
     file.value = "";
   }
@@ -38,32 +39,32 @@
 <div class="config-toolbar">
   <IconButton
     icon="config"
-    label="Open file"
+    label="ui.open_file.f11b87"
     onclick={() => platformAction("open_config")}
   /><IconButton
     icon="folder"
-    label="Open folder"
+    label="ui.open_folder.f96301"
     onclick={() => platformAction("open_config_folder")}
   /><IconButton
     icon="refresh"
-    label="Reload"
+    label="ui.reload.cce715"
     onclick={async () => {
       await load();
     }}
   /><span class="toolbar-spacer"></span><IconButton
     icon="upload"
-    label="Import"
+    label="ui.import.d6fbc9"
     onclick={() => file.click()}
   /><IconButton
     icon="download"
-    label="Export"
+    label="ui.export.f3e4fa"
     onclick={exportFile}
   /><IconButton
     icon="copy"
-    label="Copy JSON"
+    label="ui.copy_json.35db7b"
     onclick={() =>
       navigator.clipboard.writeText(JSON.stringify(ui.config, null, 2))}
-  /><IconButton icon="reset" label="Reset preview" onclick={reset} />
+  /><IconButton icon="reset" label="ui.reset_preview.830d3b" onclick={reset} />
 </div>
 <input
   id="import-file"

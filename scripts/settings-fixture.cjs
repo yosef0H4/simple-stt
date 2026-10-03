@@ -35,6 +35,7 @@ const makeConfig = () => ({
     capslock_behavior: "preserve_tap",
     start_at_login: false,
     ui_theme: "light",
+    ui_language: "auto",
   },
   audio: { preferred_device_id: "", gain: 1 },
   speech: {
@@ -215,6 +216,7 @@ const server = http.createServer(async (req, res) => {
         config: clone(serverConfig),
         config_hash: `hash-${configHash}`,
         platform: options.platform,
+        ui_localization: { system_locale: options.systemLocale || "en", locale: serverConfig.general.ui_language === "auto" ? (options.systemLocale || "en") : serverConfig.general.ui_language, direction: (serverConfig.general.ui_language === "ar" || (serverConfig.general.ui_language === "auto" && options.systemLocale === "ar")) ? "rtl" : "ltr" },
         service_online: options.online,
         microphones: [],
         models: clone(models),
@@ -375,7 +377,8 @@ const server = http.createServer(async (req, res) => {
       url.pathname === "/" ||
       url.pathname.endsWith(".html") ||
       url.pathname.endsWith(".js") ||
-      url.pathname.endsWith(".css")
+      url.pathname.endsWith(".css") ||
+      url.pathname.endsWith(".woff2")
     ) {
       const relative =
         url.pathname === "/" ? "index.html" : url.pathname.slice(1);
@@ -387,6 +390,7 @@ const server = http.createServer(async (req, res) => {
         ".html": "text/html; charset=utf-8",
         ".js": "text/javascript; charset=utf-8",
         ".css": "text/css; charset=utf-8",
+        ".woff2": "font/woff2",
       };
       res.writeHead(200, {
         "Content-Type": types[ext] || "application/octet-stream",

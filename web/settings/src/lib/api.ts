@@ -1,4 +1,20 @@
 const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+export class ApiError extends Error {
+  message_id?: string;
+  message_args?: Record<string, string | number>;
+  raw?: string;
+  constructor(message: string, detail?: { message_id?: string; message_args?: unknown }) {
+    super(message);
+    this.name = "ApiError";
+    this.message_id = detail?.message_id;
+    if (typeof detail?.message_args === "string") {
+      try { this.message_args = JSON.parse(detail.message_args); } catch { this.message_args = {}; }
+    } else if (detail?.message_args && typeof detail.message_args === "object") {
+      this.message_args = detail.message_args as Record<string, string | number>;
+    }
+    this.raw = message;
+  }
+}
 export async function api<T>(
   path: string,
   body?: unknown,
@@ -14,7 +30,7 @@ export async function api<T>(
     signal,
   });
   const data = await response.json();
-  if (!response.ok) throw Error(data.error || response.statusText);
+  if (!response.ok) throw new ApiError(data.error || response.statusText, data);
   return data as T;
 }
 export async function events(

@@ -1,24 +1,25 @@
 class TrayController {
     __New(app) {
         this.app := app
-        A_IconTip := "SimpleStt local dictation"
+        A_IconTip := UiText("menu.iconTip")
         this.Rebuild()
     }
 
     Rebuild() {
+        A_IconTip := UiText("menu.iconTip")
         menu := A_TrayMenu
         menu.Delete()
-        menu.Add("Open Settings", ObjBindMethod(this.app, "OpenSettings"))
-        menu.Default := "Open Settings"
-        menu.Add(this.app.config.Bool("hotkey_enabled", true) ? "Disable Hotkey" : "Enable Hotkey", ObjBindMethod(this.app, "ToggleHotkey"))
-        menu.Add("Reload Settings", ObjBindMethod(this.app, "ReloadSettings"))
-        menu.Add("Reload App", ObjBindMethod(this.app, "ReloadApp"))
+        menu.Add(UiText("menu.openSettings"), ObjBindMethod(this.app, "OpenSettings"))
+        menu.Default := UiText("menu.openSettings")
+        menu.Add(this.app.config.Bool("hotkey_enabled", true) ? UiText("menu.disable") : UiText("menu.enable"), ObjBindMethod(this.app, "ToggleHotkey"))
+        menu.Add(UiText("menu.reloadSettings"), ObjBindMethod(this.app, "ReloadSettings"))
+        menu.Add(UiText("menu.reloadApp"), ObjBindMethod(this.app, "ReloadApp"))
         menu.Add()
-        menu.Add("Open Latest Log", ObjBindMethod(this.app, "OpenLatestLog"))
-        menu.Add("Restart Audio Service", ObjBindMethod(this.app, "RestartAudioService"))
-        menu.Add("Unload Speech Model", ObjBindMethod(this.app, "UnloadSpeechModel"))
-        menu.Add("Test Model", ObjBindMethod(this.app, "TestModel"))
+        menu.Add(UiText("menu.latestLog"), ObjBindMethod(this.app, "OpenLatestLog"))
+        menu.Add(UiText("menu.restartAudio"), ObjBindMethod(this.app, "RestartAudioService"))
+        menu.Add(UiText("menu.unload"), ObjBindMethod(this.app, "UnloadSpeechModel"))
+        menu.Add(UiText("menu.test"), ObjBindMethod(this.app, "TestModel"))
         menu.Add()
-        menu.Add("Exit", (*) => ExitApp())
+        menu.Add(UiText("menu.exit"), (*) => ExitApp())
     }
 }

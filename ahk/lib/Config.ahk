@@ -1,3 +1,5 @@
+#Include %A_LineFile%\..\Locale.ahk
+
 class ConfigStore {
     __New(ctlExe) {
         this.ctlExe := ctlExe
@@ -16,13 +18,14 @@ class ConfigStore {
         if !response["ok"]
             throw Error("Unable to load SimpleStt config: " . response["message"])
         this.values := response["values"]
+        UiSetLanguage(this.Get("resolved_ui_language", "auto"))
         return this
     }
 
     SaveSync() {
         input := SimpleSttTempFile("config-save-input")
         output := SimpleSttTempFile("config-save-output")
-        keys := ["hotkey_enabled", "recording_mode", "record_hotkey", "toggle_delivery_hotkey", "cancel_hotkey", "toggle_cleanup_hotkey", "retry_delivery_hotkey", "preserve_clipboard", "cleanup_enabled", "capslock_behavior", "audio_device_contains", "audio_gain", "paced_typing_enabled", "typing_speed_wpm", "trailing_space", "text_delivery_mode", "remove_punctuation", "lowercase_output", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "start_with_windows", "log_level", "diagnostic_overlay", "log_transcripts", "inference_device", "ui_theme", "parakeet_runtime_dir", "model_dir", "single_model_filename", "language_models", "selection_mode"]
+        keys := ["hotkey_enabled", "recording_mode", "record_hotkey", "toggle_delivery_hotkey", "cancel_hotkey", "toggle_cleanup_hotkey", "retry_delivery_hotkey", "preserve_clipboard", "cleanup_enabled", "capslock_behavior", "audio_device_contains", "audio_gain", "paced_typing_enabled", "typing_speed_wpm", "trailing_space", "text_delivery_mode", "remove_punctuation", "lowercase_output", "idle_worker_timeout_secs", "worker_shutdown_grace_ms", "start_with_windows", "log_level", "diagnostic_overlay", "log_transcripts", "inference_device", "ui_theme", "ui_language", "parakeet_runtime_dir", "model_dir", "single_model_filename", "language_models", "selection_mode"]
         text := ""
         for key in keys
             text .= TabProtocol.Escape(key) . "`t" . TabProtocol.Escape(this.Get(key, "")) . "`n"
@@ -39,6 +42,7 @@ class ConfigStore {
         if !response["ok"]
             throw Error("Unable to save SimpleStt config: " . response["message"])
         this.values := response["values"]
+        UiSetLanguage(this.Get("resolved_ui_language", "auto"))
         return this
     }
 

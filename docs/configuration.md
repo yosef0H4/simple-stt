@@ -89,3 +89,9 @@ contain at least one choice.
 The settings server detects external edits with a content hash before Save. A successful Save asks the capture service to reload and emits `configuration_reloaded`; Windows AHK then reapplies its owned hotkeys, startup registration, transforms, and delivery settings.
 
 On Windows and Linux, GPU mode selects a physical Vulkan GPU, preferring a discrete GPU over integrated graphics. It rejects CPU/software Vulkan devices and errors if no physical GPU is available. Automatic mode uses the same preference with CPU fallback. CPU mode always uses the CPU.
+
+## Interface language
+
+`general.ui_language` accepts `auto` (default), `en`, or `ar` within schema 9. Missing/invalid values become `auto`. This setting is independent of keyboard layout, speech model assignments, and transcript content. Settings previews changes immediately; Save applies them to desktop menus and capture notices. System uses Windows user UI language or Linux message-locale preferences, with English fallback.
+
+Canonical messages live in `web/settings/src/lib/locales/`: `en.json`/`ar.json` for Settings and `desktop.en.json`/`desktop.ar.json` for native UI. Use stable keys and named placeholders. `node web/settings/tools/locales.mjs` validates key/placeholder parity and generates `ahk/lib/Locale.ahk`; `npm run build` runs it automatically. Rust embeds the same desktop catalogs. Do not edit the generated AHK catalog directly.

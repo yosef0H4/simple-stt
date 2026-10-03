@@ -69,15 +69,46 @@ pub fn render_overlay_text(
     visualizer: &VisualizerLevels,
     indicators: RecordingIndicators,
 ) -> String {
+    render_overlay_text_with_locale(
+        primary,
+        notice_text,
+        visualizer,
+        indicators,
+        crate::localization::Locale::En,
+    )
+}
+
+pub fn render_overlay_text_with_locale(
+    primary: OverlayPrimary,
+    notice_text: Option<&str>,
+    visualizer: &VisualizerLevels,
+    indicators: RecordingIndicators,
+    locale: crate::localization::Locale,
+) -> String {
     let primary = match primary {
         OverlayPrimary::Hidden => None,
-        OverlayPrimary::Recording => Some(format!(
-            "\u{1f399}{} {}",
-            indicators.text(),
-            ascii_visualizer(visualizer)
+        OverlayPrimary::Recording => {
+            let line = format!(
+                "\u{1f399}{} {}",
+                indicators.text(),
+                ascii_visualizer(visualizer)
+            );
+            Some(if locale == crate::localization::Locale::Ar {
+                format!("\u{2066}{line}\u{2069}")
+            } else {
+                line
+            })
+        }
+        OverlayPrimary::Transcribing => Some(crate::localization::translate(
+            locale,
+            "overlay.transcribing",
+            &[],
         )),
-        OverlayPrimary::Transcribing => Some("\u{1f399} Transcribing...".to_owned()),
-        OverlayPrimary::Typing => Some("\u{1f399} Typing...".to_owned()),
+        OverlayPrimary::Typing => Some(crate::localization::translate(
+            locale,
+            "overlay.typing",
+            &[],
+        )),
     };
     match (primary, notice_text.filter(|text| !text.trim().is_empty())) {
         (Some(primary), Some(notice)) => format!("{primary}\r\n{}", notice.trim()),
@@ -102,10 +133,18 @@ pub fn linux_overlay_lines(
             ascii_visualizer(visualizer)
         ))),
         OverlayPrimary::Transcribing => {
-            lines.push(Cow::Borrowed("\u{1f399} Transcribing..."));
+            lines.push(Cow::Owned(crate::localization::translate(
+                crate::localization::Locale::En,
+                "overlay.transcribing",
+                &[],
+            )));
         }
         OverlayPrimary::Typing => {
-            lines.push(Cow::Borrowed("\u{1f399} Typing..."));
+            lines.push(Cow::Owned(crate::localization::translate(
+                crate::localization::Locale::En,
+                "overlay.typing",
+                &[],
+            )));
         }
     }
     if let Some(text) = notice_text.filter(|text| !text.trim().is_empty()) {

@@ -12,6 +12,7 @@ use simple_stt::capture::state::ServiceState;
 use simple_stt::cleanup::{self, CleanupHistoryEntry};
 use simple_stt::common::shell_protocol::{NoticeLevel, ServiceEvent, ShellCommand, ShellResponse};
 use simple_stt::config::{AppConfig, CleanupConfig, ModelSelectionMode};
+use simple_stt::localization::tr;
 use std::collections::{HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
@@ -229,6 +230,7 @@ fn main() -> Result<()> {
         .unwrap_or_else(AppConfig::service_state_path);
     let mut config = AppConfig::load()?;
     config.validate()?;
+    let locale = simple_stt::localization::set_language(config.general.ui_language);
     simple_stt::logging::init_component(
         "capture",
         &AppConfig::capture_log_path(),
@@ -237,6 +239,7 @@ fn main() -> Result<()> {
     tracing::info!(pid = std::process::id(), config = %AppConfig::config_path().display(), "capture service starting");
 
     let overlay = OverlayHandle::spawn()?;
+    overlay.set_locale(locale);
     let recording_active = Arc::new(AtomicBool::new(false));
     let cancel_generation = Arc::new(AtomicU64::new(0));
     let (frame_tx, frame_rx) = bounded::<Vec<i16>>(4096);
@@ -299,8 +302,8 @@ fn main() -> Result<()> {
                             tracing::error!(%error, generation, "audio service stream failure");
                             capture = None;
                             device_recovery = Some(DeviceRecovery::new(Instant::now()));
-                            overlay.notify_warning("🎙 Microphone disconnected — reconnecting…", Duration::from_secs(3));
-                            events.push(notice_event(NoticeLevel::Warning, "Microphone disconnected — reconnecting…"));
+                            overlay.notify_warning(tr("notice.microphoneDisconnected"), Duration::from_secs(3));
+                            events.push(notice_event(NoticeLevel::Warning, "notice.microphoneDisconnected"));
                         } else {
                             tracing::debug!(%error, generation, "ignoring stale audio-stream error");
                         }
@@ -373,12 +376,12 @@ fn main() -> Result<()> {
                                 if preferred_ready && !preferred_detected_notice_sent {
                                     preferred_detected_notice_sent = true;
                                     overlay.notify_info(
-                                        "🎙 Preferred microphone ready — release and record again",
+                                        tr("notice.microphoneReturn"),
                                         Some(Duration::from_secs(4)),
                                     );
                                     events.push(notice_event(
                                         NoticeLevel::Info,
-                                        "Preferred microphone ready — release and record again",
+                                        "notice.microphoneReturn",
                                     ));
                                 }
                                 preferred_ready
@@ -397,12 +400,12 @@ fn main() -> Result<()> {
                             Ok(preferred_restored) => {
                                 if preferred_restored {
                                     overlay.notify_info(
-                                        "🎙 Preferred microphone ready",
+                                        tr("notice.microphoneReady"),
                                         Some(Duration::from_secs(3)),
                                     );
                                     events.push(notice_event(
                                         NoticeLevel::Info,
-                                        "Preferred microphone ready",
+                                        "notice.microphoneReady",
                                     ));
                                 } else if capture.as_ref().is_some_and(|handle| {
                                     handle.selection().using_default_fallback
@@ -414,12 +417,12 @@ fn main() -> Result<()> {
                                         recovery.fallback_notice_sent = true;
                                     }
                                     overlay.notify_warning(
-                                        "🎙 Preferred microphone unavailable — using system default",
+                                        tr("notice.microphoneFallback"),
                                         Duration::from_secs(4),
                                     );
                                     events.push(notice_event(
                                         NoticeLevel::Warning,
-                                        "Preferred microphone unavailable — using system default",
+                                        "notice.microphoneFallback",
                                     ));
                                 }
                                 config.audio.preferred_device_id.trim().is_empty()
@@ -619,7 +622,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 for old_session in superseded {
                     events.push(terminal_notice_event_for_session(
                         NoticeLevel::Info,
-                        "Superseded by newer recording",
+                        "notice.superseded",
                         old_session,
                     ));
                 }
@@ -667,8 +670,8 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 Ok(preferred_restored) => preferred_restored,
                 Err(error) => {
                     tracing::error!(%error, "microphone unavailable when recording was requested");
-                    overlay.notify_error("🎙 No microphone available", Duration::from_secs(3));
-                    events.push(notice_event(NoticeLevel::Error, "No microphone available"));
+                    overlay.notify_error(tr("notice.noMicrophone"), Duration::from_secs(3));
+                    events.push(notice_event(NoticeLevel::Error, "notice.noMicrophone"));
                     return ShellResponse::error(error.to_string());
                 }
             };
@@ -704,10 +707,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                         .expect("recording was just created")
                         .screen_context,
                 );
-                overlay.notify_info("Screen context requested…", Some(Duration::from_secs(2)));
+                overlay.notify_info(tr("notice.screenContext"), Some(Duration::from_secs(2)));
                 events.push(notice_event_for_session(
                     NoticeLevel::Info,
-                    "Screen context requested",
+                    "notice.screenContext",
                     session_id,
                 ));
                 std::thread::spawn(move || {
@@ -729,13 +732,10 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             if preferred_restored {
                 overlay.notify_info(
-                    "🎙 Preferred microphone restored — recording with it now",
+                    tr("notice.microphoneRestored"),
                     Some(Duration::from_secs(3)),
                 );
-                events.push(notice_event(
-                    NoticeLevel::Info,
-                    "Preferred microphone restored — recording with it now",
-                ));
+                events.push(notice_event(NoticeLevel::Info, "notice.microphoneRestored"));
             }
             let mut event = ServiceEvent::simple("recording_started");
             event.session_id = Some(session_id);
@@ -803,15 +803,15 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 });
             }
             tracing::info!(session_id, "recording start");
-            ShellResponse::ok("recording started")
+            message_response(true, "capture.recordingStarted")
         }
         ShellCommand::StopRecording { session_id } => {
             let Some(recording) = active.take() else {
-                return ShellResponse::error("no recording is active");
+                return message_response(false, "capture.noRecording");
             };
             if recording.session_id != session_id {
                 *active = Some(recording);
-                return ShellResponse::error("recording session id mismatch");
+                return message_response(false, "capture.sessionMismatch");
             }
             recording_active.store(false, Ordering::Relaxed);
             let duration_ms = recording.started.elapsed().as_millis();
@@ -825,20 +825,20 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 "recording stop"
             );
             if samples.len() < MIN_RECORDING_SAMPLES {
-                overlay.notify_warning("🎙 Recording too short", Duration::from_secs(2));
+                overlay.notify_warning(tr("notice.recordingShort"), Duration::from_secs(2));
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
                 events.push(terminal_notice_event_for_session(
                     NoticeLevel::Warning,
-                    "Recording too short",
+                    "notice.recordingShort",
                     session_id,
                 ));
-                return ShellResponse::ok("recording rejected as too short");
+                return message_response(true, "capture.recordingShort");
             }
             if !frozen_worker.model_path.is_file() {
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
                 events.push(terminal_notice_event_for_session(
                     NoticeLevel::Info,
-                    "Dictation skipped",
+                    "notice.dictationSkipped",
                     session_id,
                 ));
                 return skipped_recording_response();
@@ -849,7 +849,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             event.session_id = Some(session_id);
             events.push(event);
             if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info("🎙 Loading speech model…", None);
+                overlay.notify_info(tr("notice.modelLoading"), None);
                 let mut loading = ServiceEvent::simple("model_loading");
                 loading.session_id = Some(session_id);
                 events.push(loading);
@@ -887,11 +887,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     screen_context,
                 });
             });
-            ShellResponse::ok("transcription queued")
+            message_response(true, "capture.transcriptionQueued")
         }
         ShellCommand::RememberDelivery { session_id, text } => {
             if !last_delivery.remember(session_id, text, delivering.contains(&session_id)) {
-                return ShellResponse::error("no current bounded dictation to remember");
+                return message_response(false, "capture.rememberFailed");
             }
             ShellResponse::ok("dictation remembered in memory")
         }
@@ -923,7 +923,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             delivering.clear();
             recording_active.store(false, Ordering::Relaxed);
             overlay.hide();
-            events.push(notice_event(NoticeLevel::Warning, "Cancelled"));
+            events.push(notice_event(NoticeLevel::Warning, "notice.cancelled"));
             tracing::warn!(
                 generation,
                 had_recording,
@@ -944,7 +944,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     let _ = tx.send(BackgroundResult::ModelUnloaded { result });
                 });
             }
-            ShellResponse::ok("cancel requested")
+            message_response(true, "capture.cancelRequested")
         }
         ShellCommand::PollEvents { after_seq } => {
             let mut response = ShellResponse::ok("events");
@@ -964,7 +964,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         }
         ShellCommand::ClearCleanupHistory => {
             cleanup_history.clear();
-            ShellResponse::ok("cleanup history cleared")
+            message_response(true, "capture.cleanupHistoryCleared")
         }
         ShellCommand::ReloadConfig => match AppConfig::load() {
             Ok(next) => {
@@ -973,15 +973,18 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 match idle_worker_config(&next) {
                     Ok(next_worker) => {
                         *config = next;
+                        let locale =
+                            simple_stt::localization::set_language(config.general.ui_language);
+                        overlay.set_locale(locale);
                         if audio_changed {
                             let _ = audio_event_tx.send(AudioEvent::DeviceTopologyChanged);
                             overlay.notify_info(
-                                "🎙 Microphone settings changed — switching…",
+                                tr("notice.microphoneSwitching"),
                                 Some(Duration::from_secs(2)),
                             );
                             events.push(notice_event(
                                 NoticeLevel::Info,
-                                "Microphone settings changed — switching…",
+                                "notice.microphoneSwitching",
                             ));
                         }
                         let worker = Arc::clone(worker);
@@ -1003,7 +1006,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                             audio_changed,
                             "configuration reload accepted; worker changes queued"
                         );
-                        let mut response = ShellResponse::ok("configuration reload queued");
+                        let mut response = message_response(true, "capture.configReload");
                         events.push(ServiceEvent::simple("configuration_reloaded"));
                         response
                             .values
@@ -1025,7 +1028,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     shutdown_shared(worker, tracker, grace).map_err(|error| error.to_string());
                 let _ = tx.send(BackgroundResult::ModelUnloaded { result });
             });
-            ShellResponse::ok("speech-model worker shutdown requested")
+            message_response(true, "capture.unloadRequested")
         }
         ShellCommand::TestModel { language, filename } => {
             let language_id = if language == simple_stt::config::SpeechLanguage::Arabic {
@@ -1040,21 +1043,21 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     .map(str::to_owned)
             });
             let Some(filename) = filename else {
-                return ShellResponse::error("No model selected for testing");
+                return message_response(false, "error.noModel");
             };
             if let Err(error) = simple_stt::config::validate_model_filename(&filename) {
                 return ShellResponse::error(error.to_string());
             }
             let model_path = config.model_dir_path().join(&filename);
             if !model_path.is_file() {
-                return ShellResponse::error("Model is not installed");
+                return message_response(false, "error.modelMissing");
             }
             let audio = simple_stt::models::smoke_audio_path_for(language);
             if let Err(error) = simple_stt::models::ensure_smoke_audio(&audio) {
                 return ShellResponse::error(error.to_string());
             }
             if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info("🎙 Loading speech model…", None);
+                overlay.notify_info(tr("notice.modelLoading"), None);
                 events.push(ServiceEvent::simple("model_loading"));
             }
             let worker = Arc::clone(worker);
@@ -1077,7 +1080,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     });
                 let _ = tx.send(BackgroundResult::ModelTested { generation, result });
             });
-            ShellResponse::ok("model test queued")
+            message_response(true, "capture.modelTestQueued")
         }
         ShellCommand::DownloadModel { filename } => {
             let config = config.clone();
@@ -1102,11 +1105,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     result,
                 });
             });
-            ShellResponse::ok("model download queued")
+            message_response(true, "capture.downloadQueued")
         }
         ShellCommand::RemoveModel { filename } => {
             match simple_stt::models::remove_model(config, &filename) {
-                Ok(()) => ShellResponse::ok("model removed"),
+                Ok(()) => message_response(true, "capture.modelRemoved"),
                 Err(error) => ShellResponse::error(error.to_string()),
             }
         }
@@ -1160,7 +1163,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         }
         ShellCommand::RefreshModels => match simple_stt::models::refresh_catalog_cache() {
             Ok(files) => {
-                let mut response = ShellResponse::ok("model catalog refreshed");
+                let mut response = message_response(true, "capture.catalogRefreshed");
                 response
                     .values
                     .insert("count".into(), files.len().to_string());
@@ -1174,12 +1177,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 NoticeLevel::Warning => overlay.notify_warning(&text, Duration::from_secs(3)),
                 NoticeLevel::Error => overlay.notify_error(&text, Duration::from_secs(3)),
             }
-            ShellResponse::ok("notice shown")
+            message_response(true, "capture.noticeShown")
         }
         ShellCommand::Shutdown => {
             recording_active.store(false, Ordering::Relaxed);
             *shutting_down = true;
-            ShellResponse::ok("capture service shutting down")
+            message_response(true, "capture.shutdown")
         }
     }
 }
@@ -1208,7 +1211,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 Ok(text) if text.trim().is_empty() => {
                     context
                         .overlay
-                        .notify_warning("🎙 No speech detected", Duration::from_secs(2));
+                        .notify_warning(tr("notice.noSpeech"), Duration::from_secs(2));
                     restore_overlay_work_state(
                         context.overlay,
                         context.active_recording,
@@ -1216,7 +1219,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     );
                     context.events.push(terminal_notice_event_for_session(
                         NoticeLevel::Warning,
-                        "No speech detected",
+                        "notice.noSpeech",
                         session_id,
                     ));
                 }
@@ -1227,7 +1230,10 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     if context.cleanup_config.enabled {
                         context.cleaning.insert(session_id);
                         let heard = truncate_notice(&text, 72);
-                        context.overlay.notify_info(format!("Heard: {heard}"), None);
+                        context.overlay.notify_info(
+                            simple_stt::localization::format("notice.heard", &[("text", &heard)]),
+                            None,
+                        );
                         let mut event = ServiceEvent::simple("cleanup_started");
                         event.session_id = Some(session_id);
                         context.events.push(event);
@@ -1259,7 +1265,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     tracing::error!(session_id, %error, "speech engine failed");
                     context
                         .overlay
-                        .notify_error("🎙 Speech engine failed — see log", Duration::from_secs(3));
+                        .notify_error(tr("notice.engineFailed"), Duration::from_secs(3));
                     restore_overlay_work_state(
                         context.overlay,
                         context.active_recording,
@@ -1267,7 +1273,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     );
                     context.events.push(terminal_notice_event_for_session(
                         NoticeLevel::Error,
-                        "Speech engine failed — see log",
+                        "notice.engineFailed",
                         session_id,
                     ));
                 }
@@ -1333,11 +1339,20 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     context
                         .overlay
                         .notify_warning(&failure_notice, Duration::from_secs(5));
-                    context.events.push(notice_event_for_session(
-                        NoticeLevel::Warning,
-                        &failure_notice,
-                        session_id,
-                    ));
+                    let id = cleanup_failure_id(&error);
+                    let args = [(
+                        "seconds",
+                        timeout_ms_seconds(context.cleanup_config.timeout_ms),
+                    )];
+                    let mut event = notice_event_for_session(NoticeLevel::Warning, id, session_id);
+                    event.text = failure_notice;
+                    event
+                        .values
+                        .extend(simple_stt::localization::message_values(
+                            id,
+                            &[(args[0].0, &args[0].1)],
+                        ));
+                    context.events.push(event);
                     context.delivering.insert(session_id);
                     restore_overlay_work_state(context.overlay, context.active_recording, true);
                     push_transcript_event(context.events, session_id, raw);
@@ -1348,7 +1363,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             Ok(()) => {
                 context
                     .overlay
-                    .notify_info("🎙 Speech model unloaded", Some(Duration::from_secs(2)));
+                    .notify_info(tr("notice.modelUnloaded"), Some(Duration::from_secs(2)));
             }
             Err(error) => tracing::warn!(%error, "worker shutdown failed"),
         },
@@ -1356,10 +1371,9 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             Ok(()) => tracing::info!("disposable inference-worker configuration applied"),
             Err(error) => {
                 tracing::error!(%error, "applying inference-worker configuration failed");
-                context.events.push(notice_event(
-                    NoticeLevel::Error,
-                    "Speech-worker settings failed — see log",
-                ));
+                context
+                    .events
+                    .push(notice_event(NoticeLevel::Error, "notice.workerFailed"));
             }
         },
         BackgroundResult::ModelLoading {
@@ -1369,7 +1383,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 return;
             }
-            context.overlay.notify_info("🎙 Loading speech model…", None);
+            context.overlay.notify_info(tr("notice.modelLoading"), None);
             let mut loading = ServiceEvent::simple("model_loading");
             loading.session_id = Some(session_id);
             context.events.push(loading);
@@ -1386,9 +1400,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 return;
             }
             tracing::info!("speech model loaded; priming inference engine");
-            context
-                .overlay
-                .notify_info("🎙 Speech model loaded - warming up...", None);
+            context.overlay.notify_info(tr("notice.modelWarming"), None);
             let mut loaded = ServiceEvent::simple("model_loaded");
             loaded.session_id = session_id;
             context.events.push(loaded);
@@ -1413,7 +1425,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     tracing::info!("speech model warmed while recording");
                     context
                         .overlay
-                        .notify_info("🎙 Speech model ready", Some(Duration::from_secs(2)));
+                        .notify_info(tr("notice.modelReady"), Some(Duration::from_secs(2)));
                     let mut ready = ServiceEvent::simple("model_ready");
                     ready.session_id = session_id;
                     context.events.push(ready);
@@ -1426,10 +1438,9 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 }
                 Err(error) => {
                     tracing::warn!(%error, "speech-model warm-up failed; transcription will retry");
-                    context.overlay.notify_warning(
-                        "🎙 Speech model load failed — transcription will retry",
-                        Duration::from_secs(3),
-                    );
+                    context
+                        .overlay
+                        .notify_warning(tr("notice.modelRetry"), Duration::from_secs(3));
                 }
             }
         }
@@ -1449,20 +1460,28 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     }
                     context
                         .overlay
-                        .notify_info("🎙 Model test passed", Some(Duration::from_secs(2)));
+                        .notify_info(tr("notice.testPassed"), Some(Duration::from_secs(2)));
                     let mut event = ServiceEvent::simple("model_test_complete");
-                    event.text = format!("Model test passed ({} characters)", text.chars().count());
+                    event.text = simple_stt::localization::format(
+                        "notice.testResult",
+                        &[("count", &text.chars().count().to_string())],
+                    );
+                    event
+                        .values
+                        .extend(simple_stt::localization::message_values(
+                            "notice.testResult",
+                            &[("count", &text.chars().count().to_string())],
+                        ));
                     context.events.push(event);
                 }
                 Err(error) => {
                     tracing::error!(%error, "model test failed");
                     context
                         .overlay
-                        .notify_error("🎙 Model test failed — see log", Duration::from_secs(3));
-                    context.events.push(notice_event(
-                        NoticeLevel::Error,
-                        "Model test failed — see log",
-                    ));
+                        .notify_error(tr("notice.testFailed"), Duration::from_secs(3));
+                    context
+                        .events
+                        .push(notice_event(NoticeLevel::Error, "notice.testFailed"));
                 }
             }
         }
@@ -1492,7 +1511,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             }
             Err(error) => {
                 tracing::error!(%error, "model download failed");
-                let mut event = notice_event(NoticeLevel::Error, "Model download failed — see log");
+                let mut event = notice_event(NoticeLevel::Error, "notice.downloadFailed");
                 event.kind = "model_download_failed".into();
                 event.values.insert("filename".into(), filename);
                 context.events.push(event);
@@ -1502,36 +1521,44 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
 }
 
 fn cleanup_failure_notice(error: &str, timeout_ms: u64) -> String {
+    simple_stt::localization::format(
+        cleanup_failure_id(error),
+        &[("seconds", &timeout_ms_seconds(timeout_ms))],
+    )
+}
+fn timeout_ms_seconds(timeout_ms: u64) -> String {
+    timeout_ms.div_ceil(1_000).to_string()
+}
+fn cleanup_failure_id(error: &str) -> &'static str {
     let detail = error.to_ascii_lowercase();
-    let reason = if detail.contains("timed out") || detail.contains("timeout") {
-        format!("timed out after {} seconds", timeout_ms.div_ceil(1_000))
+    if detail.contains("timed out") || detail.contains("timeout") {
+        "notice.cleanupTimeout"
     } else if detail.contains("http 401")
         || detail.contains("http 403")
         || detail.contains("authentication")
     {
-        "API key or account was rejected".to_owned()
+        "notice.cleanupAuth"
     } else if detail.contains("http 429") || detail.contains("rate limit") {
-        "provider rate limit reached".to_owned()
+        "notice.cleanupRate"
     } else if detail.contains("token limit") || detail.contains("too many tokens") {
-        "output token limit reached".to_owned()
+        "notice.cleanupTokens"
     } else if detail.contains("image") || detail.contains("vision") {
-        "model rejected screen context".to_owned()
+        "notice.cleanupImage"
     } else if detail.contains("sending cleanup request")
         || detail.contains("connect")
         || detail.contains("dns")
     {
-        "provider could not be reached".to_owned()
+        "notice.cleanupConnect"
     } else if detail.contains("unreadable")
         || detail.contains("decoding")
         || detail.contains("response text")
     {
-        "provider returned an unreadable response".to_owned()
+        "notice.cleanupResponse"
     } else if detail.contains("empty text") {
-        "provider returned no text".to_owned()
+        "notice.cleanupEmpty"
     } else {
-        "provider request failed".to_owned()
-    };
-    format!("AI cleanup {reason} — original text used")
+        "notice.cleanupFailed"
+    }
 }
 fn restore_overlay_after_success(
     overlay: &OverlayHandle,
@@ -1600,7 +1627,14 @@ fn trim_cleanup_history(history: &mut VecDeque<CleanupHistoryEntry>) {
 fn notice_event(level: NoticeLevel, text: &str) -> ServiceEvent {
     let mut event = ServiceEvent::simple("notice");
     event.level = level;
-    event.text = text.into();
+    if simple_stt::localization::contains(text) {
+        event.text = tr(text);
+        event
+            .values
+            .extend(simple_stt::localization::message_values(text, &[]));
+    } else {
+        event.text = text.into();
+    }
     event
 }
 fn notice_event_for_session(level: NoticeLevel, text: &str, session_id: u64) -> ServiceEvent {
@@ -1619,7 +1653,7 @@ fn terminal_notice_event_for_session(
     event
 }
 fn skipped_recording_response() -> ShellResponse {
-    let mut response = ShellResponse::ok("dictation skipped");
+    let mut response = message_response(true, "capture.skipped");
     response.values.insert("recording".into(), "skipped".into());
     response
 }
@@ -1673,6 +1707,17 @@ fn sibling_executable(stem: &str) -> Result<PathBuf> {
     Ok(parent.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX)))
 }
 
+fn message_response(ok: bool, id: &str) -> ShellResponse {
+    let mut response = if ok {
+        ShellResponse::ok(tr(id))
+    } else {
+        ShellResponse::error(tr(id))
+    };
+    response
+        .values
+        .extend(simple_stt::localization::message_values(id, &[]));
+    response
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1864,6 +1909,25 @@ mod tests {
             30_000
         )
         .contains("output token limit reached"));
+    }
+
+    #[test]
+    fn localized_notices_keep_identity_and_terminal_metadata() {
+        let event = terminal_notice_event_for_session(NoticeLevel::Warning, "notice.noSpeech", 42);
+        assert_eq!(
+            event.values.get("message_id").map(String::as_str),
+            Some("notice.noSpeech")
+        );
+        assert_eq!(
+            event.values.get("terminal").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(event.text, "No speech detected");
+        let response = message_response(true, "capture.modelTestQueued");
+        assert_eq!(
+            response.values.get("message_id").map(String::as_str),
+            Some("capture.modelTestQueued")
+        );
     }
 
     #[test]

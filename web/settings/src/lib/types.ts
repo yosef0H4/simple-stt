@@ -24,6 +24,7 @@ export interface Config {
     capslock_behavior: "preserve_tap" | "always_off";
     start_at_login: boolean;
     ui_theme: "auto" | "light" | "dark";
+    ui_language: "auto" | "en" | "ar";
   };
   audio: { preferred_device_id: string; gain: number };
   speech: {
@@ -122,6 +123,11 @@ export interface SettingsState {
   config_path?: string;
   config_error?: string;
   platform: "linux" | "windows" | "other";
+  ui_localization: {
+    system_locale: "en" | "ar";
+    locale: "en" | "ar";
+    direction: "ltr" | "rtl";
+  };
   service_online: boolean;
   models: Model[];
   microphones: { id: string; name: string }[];
@@ -150,6 +156,8 @@ export interface SaveResult {
 }
 export interface ActionResult {
   message?: string;
+  message_id?: string;
+  message_args?: Record<string, string | number> | string;
   url?: string;
   code?: string;
   app_id?: string;
@@ -198,6 +206,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "capslock_behavior",
       "start_at_login",
       "ui_theme",
+      "ui_language",
     ],
     audio: ["preferred_device_id", "gain"],
     speech: [
@@ -303,6 +312,7 @@ export function assertConfig(value: unknown): asserts value is Config {
     "general.linux_hotkey_backend": ["auto", "portal", "x11", "desktop"],
     "general.capslock_behavior": ["preserve_tap", "always_off"],
     "general.ui_theme": ["auto", "light", "dark"],
+    "general.ui_language": ["auto", "en", "ar"],
     "speech.inference_device": ["auto", "cpu", "gpu"],
     "speech.selection_mode": ["single_model", "follow_keyboard"],
     "output.delivery_mode": [

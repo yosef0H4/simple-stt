@@ -420,6 +420,16 @@ fn config_show() -> Result<ShellResponse> {
         .values
         .insert("ui_theme".into(), config.general.ui_theme.as_str().into());
     response.values.insert(
+        "ui_language".into(),
+        config.general.ui_language.as_str().into(),
+    );
+    response.values.insert(
+        "resolved_ui_language".into(),
+        simple_stt::localization::resolve(config.general.ui_language)
+            .as_str()
+            .into(),
+    );
+    response.values.insert(
         "parakeet_runtime_dir".into(),
         config.speech.runtime_dir.clone(),
     );
@@ -651,6 +661,14 @@ fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
             };
         }
         "ui_theme" => config.general.ui_theme = parse_ui_theme(value)?,
+        "ui_language" => {
+            config.general.ui_language = match value {
+                "auto" => simple_stt::config::UiLanguage::Auto,
+                "en" => simple_stt::config::UiLanguage::En,
+                "ar" => simple_stt::config::UiLanguage::Ar,
+                _ => anyhow::bail!("invalid ui_language: {value}"),
+            }
+        }
         _ => return Ok(false),
     }
     Ok(true)

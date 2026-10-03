@@ -13,6 +13,7 @@
   import Advanced from "./pages/Advanced.svelte";
   import Config from "./pages/Config.svelte";
   import type { Page } from "./lib/types";
+  import { direction, locale, t, tEnglish } from "./lib/i18n";
   let query = $state(""),
     searchIndex = $state(0);
   const results = $derived(
@@ -20,7 +21,7 @@
       ? searchEntries
           .map((e) => ({
             ...e,
-            score: fuzzyScore(query, e.label + " " + e.path),
+            score: fuzzyScore(query, `${t(e.label)} ${tEnglish(e.label)} ${e.path}`),
           }))
           .filter((e) => e.score >= 0)
           .sort((a, b) => b.score - a.score)
@@ -43,6 +44,9 @@
   $effect(() => {
     document.documentElement.dataset.theme =
       ui.config?.general.ui_theme || "auto";
+    document.documentElement.lang = locale();
+    document.documentElement.dir = direction();
+    document.title = `${t("ui.settings.c7f73b")} · Simple STT`;
   });
   async function jump(page: Page, path = "") {
     ui.page = page;
@@ -103,13 +107,13 @@
         type="search"
         role="combobox"
         aria-autocomplete="list"
-        aria-label="Search all settings"
+        aria-label={t("ui.search_all_settings.46e7c7")}
         aria-controls="settings-search-results"
         aria-expanded={results.length > 0}
         aria-activedescendant={results[searchIndex]
           ? `setting-result-${searchIndex}`
           : undefined}
-        placeholder="Find a setting"
+        placeholder={t("ui.find_a_setting.fff44d")}
         bind:value={query}
         oninput={() => (searchIndex = 0)}
         onkeydown={searchKey}
@@ -117,7 +121,7 @@
           id="settings-search-results"
           class="settings-search-results"
           role="listbox"
-          aria-label="Settings search"
+          aria-label={t("ui.settings_search.b702dd")}
         >
           {#each results as result, i}<button
               type="button"
@@ -125,22 +129,22 @@
               id={`setting-result-${i}`}
               aria-selected={i === searchIndex}
               onclick={() => jump(result.page, result.path)}
-              >{result.label}<small
-                >{pages.find((p) => p.id === result.page)?.name}</small
+              >{t(result.label)}<small
+                >{t(pages.find((p) => p.id === result.page)?.name || "")}</small
               ></button
             >{/each}
         </div>{/if}
     </div>
-    <nav aria-label="Settings pages">
+    <nav aria-label={t("ui.settings_pages.032a4a")}>
       {#each pages as page}<button
           type="button"
           data-page={page.id}
-          aria-label={page.name}
-          title={page.name}
+          aria-label={t(page.name)}
+          title={t(page.name)}
           aria-current={ui.page === page.id ? "page" : undefined}
           class:active={ui.page === page.id}
           onclick={() => jump(page.id)}
-          ><Icon name={page.icon} /><span>{page.name}</span></button
+          ><Icon name={page.icon} /><span>{t(page.name)}</span></button
         >{/each}
     </nav>
     <div class="rail-bottom">
@@ -149,15 +153,15 @@
         class="service-pill"
         data-state={ui.state?.service_online ? "online" : "offline"}
         title={ui.state?.service_online
-          ? "Capture service connected"
-          : "Offline editing"}
-        ><i></i><span>{ui.state?.service_online ? "Connected" : "Offline"}</span
+          ? t("ui.capture_service_connected.45ad0f")
+          : t("ui.offline_editing.aba8c0")}
+        ><i></i><span>{t(ui.state?.service_online ? "Connected" : "Offline")}</span
         ></span
-      ><IconButton icon="close" label="Close Settings" onclick={close} />
+      ><IconButton icon="close" label="ui.close_settings.5bd91a" onclick={close} />
     </div>
   </aside>
   <main>
-    <header class="page-head"><h1>{current.name}</h1></header>
+    <header class="page-head"><h1>{t(current.name)}</h1></header>
     <form
       id="settings"
       onsubmit={(event) => {
@@ -175,7 +179,7 @@
             />{/if}
         </section>{:else}<div
           class="loading-skeleton"
-          aria-label="Loading Settings"
+          aria-label={t("ui.loading_settings.2ee974")}
         >
           <span></span><span></span><span></span>
         </div>{/if}
@@ -189,13 +193,13 @@
     role="status"
     aria-live="polite"
   >
-    {ui.notice}
+    <span>{ui.notice}</span>{#if ui.noticeDetails}<details class="notice-detail" open><summary>{t("ui.details.dc3dec")}</summary><div dir="auto">{ui.noticeDetails}</div></details>{/if}
   </div>{/if}
 {#if ui.dirty}<footer id="savebar" class="savebar">
-    <span id="dirty"><i></i>Unsaved changes</span><button
+    <span id="dirty"><i></i>{t("ui.unsaved_changes.292672")}</span><button
       type="submit"
       form="settings"
       class="primary"
-      disabled={ui.saving}>{ui.saving ? "Saving…" : "Save"}</button
+      disabled={ui.saving}>{t(ui.saving ? "Saving…" : "Save")}</button
     >
   </footer>{/if}

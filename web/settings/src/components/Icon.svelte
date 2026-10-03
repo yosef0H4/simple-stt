@@ -41,6 +41,7 @@
 </script>
 
 <svg
+  class:directional={name === "output"}
   width={size}
   height={size}
   viewBox="0 0 24 24"

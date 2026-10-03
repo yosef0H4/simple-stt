@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from "./Icon.svelte";
   import { run } from "../lib/state.svelte";
+  import { t } from "../lib/i18n";
   let {
     icon,
     label,
@@ -29,8 +30,8 @@
 <button
   type="button"
   class="icon-button {kind}"
-  aria-label={label}
-  {title}
+  aria-label={t(label)}
+  title={t(title)}
   disabled={disabled || busy}
   aria-busy={busy}
   data-model-test={modelTest ? "true" : undefined}

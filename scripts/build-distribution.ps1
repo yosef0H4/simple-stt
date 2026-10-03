@@ -95,6 +95,9 @@ foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-
     Copy-Item -LiteralPath (Join-Path $ResolvedTargetDir "release\$Name") -Destination $Runtime -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $Portable -Force
+New-Item -ItemType Directory -Path (Join-Path $Portable 'licenses') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $Root 'assets\fonts\LICENSE-NotoSansArabic.txt') -Destination (Join-Path $Portable 'licenses') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'assets\fonts\LICENSE-JetBrainsMono.txt') -Destination (Join-Path $Portable 'licenses') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'THIRD_PARTY_NOTICES.md') -Destination $Portable -Force
 Copy-Item -LiteralPath (Join-Path $Root 'START_HERE.txt') -Destination $Portable -Force
 Set-Content -LiteralPath (Join-Path $Portable 'simple-stt.cmd') -Encoding ASCII -Value '@echo off','start "" "%~dp0runtime\AutoHotkey64.exe" "%~dp0runtime\simple-stt.ahk"'

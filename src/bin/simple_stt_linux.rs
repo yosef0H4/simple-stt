@@ -6,6 +6,9 @@ use simple_stt::config::{
     replace_file_atomic, unique_atomic_temp_path, AppConfig, AppDeliveryOverride,
     LinuxAutomationBackend, LinuxHotkeyBackend, TextDeliveryMode,
 };
+use simple_stt::localization::tr;
+#[cfg(target_os = "linux")]
+use simple_stt::localization::Locale;
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
@@ -75,6 +78,7 @@ struct CtlResult {
 
 #[derive(Debug, Clone)]
 struct CtlEvent {
+    values: std::collections::BTreeMap<String, String>,
     seq: u64,
     kind: String,
     session_id: String,
@@ -125,6 +129,11 @@ fn recording_transition(recording: bool) -> RecordingTransition {
 }
 
 fn main() -> Result<()> {
+    #[cfg(target_os = "linux")]
+    simple_stt::localization::set_language(match saved_ui_locale() {
+        Locale::Ar => simple_stt::config::UiLanguage::Ar,
+        Locale::En => simple_stt::config::UiLanguage::En,
+    });
     match Args::parse().command {
         LinuxCommand::Daemon { config } => daemon(config),
         LinuxCommand::Toggle {
@@ -152,6 +161,9 @@ fn main() -> Result<()> {
 }
 
 fn daemon(config: Option<PathBuf>) -> Result<()> {
+    if let Some(path) = &config {
+        std::env::set_var("SIMPLE_STT_CONFIG", path);
+    }
     ensure_dirs()?;
     #[cfg(target_os = "linux")]
     wait_for_graphical_environment(Duration::from_secs(60));
@@ -368,7 +380,9 @@ fn cleanup_runtime_markers() {
 
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
-struct LinuxTray;
+struct LinuxTray {
+    locale: Locale,
+}
 
 #[cfg(target_os = "linux")]
 impl ksni::Tray for LinuxTray {
@@ -378,6 +392,14 @@ impl ksni::Tray for LinuxTray {
 
     fn title(&self) -> String {
         "Simple STT".to_owned()
+    }
+
+    fn text_direction(&self) -> ksni::TextDirection {
+        if self.locale == Locale::Ar {
+            ksni::TextDirection::RightToLeft
+        } else {
+            ksni::TextDirection::LeftToRight
+        }
     }
 
     fn icon_name(&self) -> String {
@@ -391,7 +413,7 @@ impl ksni::Tray for LinuxTray {
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
             title: "Simple STT".to_owned(),
-            description: "Right-click for recording, settings, and exit".to_owned(),
+            description: simple_stt::localization::translate(self.locale, "menu.tip", &[]),
             ..Default::default()
         }
     }
@@ -407,12 +429,11 @@ impl ksni::Tray for LinuxTray {
         let recording = read_session().is_ok_and(|state| state.recording);
         vec![
             StandardItem {
-                label: if recording {
-                    "Stop recording"
-                } else {
-                    "Start recording"
-                }
-                .to_owned(),
+                label: simple_stt::localization::translate(
+                    self.locale,
+                    if recording { "menu.stop" } else { "menu.start" },
+                    &[],
+                ),
                 icon_name: "media-record".to_owned(),
                 activate: Box::new(|_| {
                     std::thread::spawn(|| {
@@ -425,7 +446,7 @@ impl ksni::Tray for LinuxTray {
             }
             .into(),
             StandardItem {
-                label: "Settings".to_owned(),
+                label: simple_stt::localization::translate(self.locale, "menu.settings", &[]),
                 icon_name: "configure".to_owned(),
                 activate: Box::new(|_| {
                     if let Err(error) = settings() {
@@ -436,7 +457,7 @@ impl ksni::Tray for LinuxTray {
             }
             .into(),
             StandardItem {
-                label: "Unload speech model".to_owned(),
+                label: simple_stt::localization::translate(self.locale, "menu.unload", &[]),
                 icon_name: "edit-clear".to_owned(),
                 activate: Box::new(|_| {
                     if let Err(error) = unload_model() {
@@ -448,7 +469,7 @@ impl ksni::Tray for LinuxTray {
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Close Simple STT".to_owned(),
+                label: simple_stt::localization::translate(self.locale, "menu.close", &[]),
                 icon_name: "application-exit".to_owned(),
                 activate: Box::new(|_| {
                     if let Err(error) = shutdown() {
@@ -465,13 +486,42 @@ impl ksni::Tray for LinuxTray {
 #[cfg(target_os = "linux")]
 fn start_linux_tray() -> Option<ksni::blocking::Handle<LinuxTray>> {
     use ksni::blocking::TrayMethods;
-    match LinuxTray.assume_sni_available(true).spawn() {
-        Ok(handle) => Some(handle),
+    let locale = saved_ui_locale();
+    match (LinuxTray { locale }).assume_sni_available(true).spawn() {
+        Ok(handle) => {
+            let watcher = handle.clone();
+            std::thread::spawn(move || {
+                let mut previous = (locale, false);
+                loop {
+                    std::thread::sleep(Duration::from_millis(500));
+                    let next = (
+                        saved_ui_locale(),
+                        read_session().is_ok_and(|state| state.recording),
+                    );
+                    if next != previous {
+                        let locale = next.0;
+                        watcher.update(move |tray| tray.locale = locale);
+                        previous = next;
+                    }
+                }
+            });
+            Some(handle)
+        }
         Err(error) => {
             eprintln!("[{APP}] system tray unavailable: {error}");
             None
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn saved_ui_locale() -> Locale {
+    let language = fs::read(AppConfig::config_path())
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
+        .and_then(|value| serde_json::from_value(value["general"]["ui_language"].clone()).ok())
+        .unwrap_or_default();
+    simple_stt::localization::resolve(language)
 }
 
 fn toggle(timeout_s: f64, shift_insert: bool) -> Result<()> {
@@ -743,8 +793,14 @@ fn cancel() -> Result<()> {
     ensure_service()?;
     invalidate_delivery_session()?;
     let _ = run_ctl(["cancel"], Duration::from_secs(5), false)?;
+    // A portal shortcut can run in the long-lived daemon after Settings saves
+    // another locale. Resolve this notice from disk rather than startup state.
+    #[cfg(target_os = "linux")]
+    let text = simple_stt::localization::translate(saved_ui_locale(), "notice.cancelled", &[]);
+    #[cfg(not(target_os = "linux"))]
+    let text = tr("notice.cancelled");
     let _ = run_ctl(
-        ["notice", "--level", "warning", "--text", "🎙 Cancelled"],
+        ["notice", "--level", "warning", "--text", &text],
         Duration::from_secs(3),
         false,
     );
@@ -1324,10 +1380,28 @@ fn toggle_linux_delivery_mode() -> Result<()> {
     }
     config.save()?;
     let _ = run_ctl(["reload-config"], Duration::from_secs(5), false);
-    let text = format!(
-        "🎙 Delivery: {} · {}",
-        automation_backend_label(backend),
-        delivery_mode_label(mode)
+    simple_stt::localization::set_language(config.general.ui_language);
+    let mode_id = match mode {
+        TextDeliveryMode::SmartPaste => "delivery.smart_paste",
+        TextDeliveryMode::Type => "delivery.type",
+        TextDeliveryMode::Clipboard => "delivery.clipboard",
+        TextDeliveryMode::PasteShiftInsert => "delivery.paste_shift_insert",
+        TextDeliveryMode::PasteCtrlV => "delivery.paste_ctrl_v",
+        TextDeliveryMode::PasteCtrlShiftV => "delivery.paste_ctrl_shift_v",
+    };
+    let text = simple_stt::localization::format(
+        "notice.linuxDelivery",
+        &[
+            (
+                "backend",
+                &match backend {
+                    LinuxAutomationBackend::Auto => tr("backend.auto"),
+                    LinuxAutomationBackend::Native => tr("backend.native"),
+                    _ => automation_backend_label(backend).to_owned(),
+                },
+            ),
+            ("mode", &tr(mode_id)),
+        ],
     );
     let _ = run_ctl(
         ["notice", "--level", "info", "--text", &text],
@@ -1386,7 +1460,7 @@ fn automation_backend_label(backend: LinuxAutomationBackend) -> &'static str {
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 fn delivery_mode_label(mode: TextDeliveryMode) -> &'static str {
     match mode {
         TextDeliveryMode::Type => "Type",
@@ -1536,7 +1610,12 @@ fn transcript_outcome(events: &[CtlEvent], session_id: u64) -> TranscriptOutcome
         }
         if event.kind == "notice" {
             eprintln!("[{APP}] {}: {}", event.level, event.text);
-            if terminal_transcription_notice(&event.text) {
+            if event
+                .values
+                .get("terminal")
+                .is_some_and(|flag| flag == "true")
+                || terminal_transcription_notice(&event.text)
+            {
                 return TranscriptOutcome::Terminal;
             }
         }
@@ -2203,12 +2282,20 @@ fn parse_ctl(raw: &str) -> CtlResult {
             }
             "event" if parts.len() >= 6 => {
                 events.push(CtlEvent {
+                    values: Default::default(),
                     seq: parts[1].parse().unwrap_or(0),
                     kind: unescape(parts[2]),
                     session_id: parts[3].to_owned(),
                     level: parts[4].to_owned(),
                     text: unescape(parts[5]),
                 });
+            }
+            "event_value" if parts.len() >= 4 => {
+                if let Ok(seq) = parts[1].parse::<u64>() {
+                    if let Some(event) = events.iter_mut().find(|event| event.seq == seq) {
+                        event.values.insert(unescape(parts[2]), unescape(parts[3]));
+                    }
+                }
             }
             _ => {}
         }
@@ -2555,8 +2642,40 @@ root.after(150,ready);root.mainloop()
     }
 
     #[test]
+    fn arabic_terminal_notice_survives_helper_transport() {
+        let parsed = parse_ctl("status\tok\nevent\t7\tnotice\t42\twarning\tلم يُرصد كلام\nevent_value\t7\tterminal\ttrue\nevent_value\t7\tmessage_id\tnotice.noSpeech\n");
+        assert_eq!(
+            parsed.events[0]
+                .values
+                .get("message_id")
+                .map(String::as_str),
+            Some("notice.noSpeech")
+        );
+        assert_eq!(
+            transcript_outcome(&parsed.events, 42),
+            TranscriptOutcome::Terminal
+        );
+    }
+
+    #[test]
     fn next_session_id_is_monotonic() {
         assert!(next_session_id(42) >= 43);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn tray_labels_follow_resolved_locale() {
+        use ksni::Tray;
+        let english = LinuxTray { locale: Locale::En };
+        let arabic = LinuxTray { locale: Locale::Ar };
+        assert!(english.tool_tip().description.contains("Right-click"));
+        assert!(arabic.tool_tip().description.contains("انقر"));
+        assert_eq!(english.text_direction(), ksni::TextDirection::LeftToRight);
+        assert_eq!(arabic.text_direction(), ksni::TextDirection::RightToLeft);
+        assert!(arabic.menu().into_iter().any(|item| match item {
+            ksni::MenuItem::Standard(item) => item.label == "الإعدادات",
+            _ => false,
+        }));
     }
 
     #[test]
@@ -2575,6 +2694,7 @@ root.after(150,ready);root.mainloop()
     #[test]
     fn terminal_transcription_events_end_wait_immediately() {
         let no_speech = CtlEvent {
+            values: Default::default(),
             seq: 1,
             kind: "notice".to_owned(),
             session_id: "42".to_owned(),
@@ -2586,6 +2706,7 @@ root.after(150,ready);root.mainloop()
             TranscriptOutcome::Terminal
         );
         let transcript = CtlEvent {
+            values: Default::default(),
             seq: 2,
             kind: "transcript".to_owned(),
             session_id: "42".to_owned(),
@@ -2597,6 +2718,7 @@ root.after(150,ready);root.mainloop()
             TranscriptOutcome::Transcript("hello".to_owned())
         );
         let superseded = CtlEvent {
+            values: Default::default(),
             seq: 3,
             kind: "notice".to_owned(),
             session_id: "42".to_owned(),

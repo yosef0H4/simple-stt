@@ -12,7 +12,8 @@ use std::sync::OnceLock;
 
 /// Bundled font: JetBrains Mono (SIL OFL 1.1). See assets/fonts/LICENSE-JetBrainsMono.txt.
 const FONT_BYTES: &[u8] = include_bytes!("../../assets/fonts/JetBrainsMono-Regular.ttf");
-const BUNDLED_FAMILY: &str = "JetBrains Mono";
+const BUNDLED_FAMILY: &str = "JetBrains Mono + Noto Sans Arabic";
+const ARABIC_BYTES: &[u8] = include_bytes!("../../assets/fonts/NotoSansArabic-Regular.ttf");
 
 static REGISTERED: OnceLock<bool> = OnceLock::new();
 
@@ -33,25 +34,30 @@ pub fn ensure_registered() -> bool {
     })
 }
 
-fn cache_path() -> anyhow::Result<PathBuf> {
+fn cache_path(filename: &str) -> anyhow::Result<PathBuf> {
     let dir = dirs::cache_dir()
         .ok_or_else(|| anyhow::anyhow!("no cache dir"))?
         .join("simple-stt")
         .join("fonts");
-    Ok(dir.join("JetBrainsMono-Regular.ttf"))
+    Ok(dir.join(filename))
 }
 
 fn register() -> anyhow::Result<()> {
-    let path = cache_path()?;
+    register_font("JetBrainsMono-Regular.ttf", FONT_BYTES)?;
+    register_font("NotoSansArabic-Regular.ttf", ARABIC_BYTES)
+}
+
+fn register_font(filename: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let path = cache_path(filename)?;
     let needs_write = match std::fs::metadata(&path) {
-        Ok(meta) => meta.len() != FONT_BYTES.len() as u64,
+        Ok(meta) => meta.len() != bytes.len() as u64,
         Err(_) => true,
     };
     if needs_write {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, FONT_BYTES)?;
+        std::fs::write(&path, bytes)?;
     }
 
     // FcBool FcConfigAppFontAddFile(FcConfig *config, const FcChar8 *file)

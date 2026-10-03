@@ -42,10 +42,21 @@ def main():
                     return json.load(response)
 
             state = api('/api/state')
+            assert state['config']['general']['ui_language'] == 'auto'
+            assert state['ui_localization']['system_locale'] in ('en', 'ar')
+            assert api('/api/normalize', {'schema_version': 9, 'general': {'ui_language': 'invalid'}})['config']['general']['ui_language'] == 'auto'
             speech = state['config']['speech']
             assert state['config']['schema_version'] == 9
             assert speech['selection_mode'] == 'single_model'
             assert speech['single_model_filename'] is None and speech['language_models'] == {}
+            language_draft = copy.deepcopy(state['config'])
+            language_draft['general']['ui_language'] = 'ar'
+            api('/api/save', {'config': language_draft, 'expected_hash': state['config_hash']})
+            localized = api('/api/state')
+            assert localized['ui_localization']['locale'] == 'ar' and localized['ui_localization']['direction'] == 'rtl'
+            assert localized['config']['speech'] == speech
+            language_draft['general']['ui_language'] = 'auto'
+            api('/api/save', {'config': language_draft, 'expected_hash': localized['config_hash']})
             before = config.read_bytes()
             try:
                 api('/api/keyboard-languages', auth=False)

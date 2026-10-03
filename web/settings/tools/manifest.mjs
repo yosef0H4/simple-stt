@@ -16,9 +16,10 @@ const files = [
   "tsconfig.json",
   "svelte.config.js",
 ].sort();
-const assets = ["index.html", "app.js", "styles.css"];
+const assets = ["index.html", "app.js", "styles.css", "arabic.woff2"];
 const manifest = {
   sources: Object.fromEntries(files.map((p) => [p, hash(p)])),
+  shared_sources: Object.fromEntries(["assets/fonts/NotoSansArabic-Regular.ttf", "assets/fonts/NotoSansArabic-Regular.woff2", "assets/fonts/LICENSE-NotoSansArabic.txt"].map(p => [p, hash(`../../${p}`)])),
   assets: Object.fromEntries(assets.map((p) => [p, hash(`dist/${p}`)])),
 };
 const gzip = assets

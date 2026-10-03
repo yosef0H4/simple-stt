@@ -1,6 +1,7 @@
 #Requires AutoHotkey v2.0
 #SingleInstance Force
 
+#Include lib\Locale.ahk
 #Include lib\Utils.ahk
 #Include lib\TabProtocol.ahk
 #Include lib\Logging.ahk
@@ -18,11 +19,11 @@ class SimpleSttShell {
         this.captureExe := SimpleSttResolveExe("simple-stt-capture")
         this.settingsExe := SimpleSttResolveExe("simple-stt-settings")
         if !FileExist(this.ctlExe)
-            throw Error("Missing simple-stt-ctl.exe. Build or package the Rust binaries beside the shell.")
+            throw Error(UiText("error.missingBinary", Map("binary", "simple-stt-ctl.exe")))
         if !FileExist(this.captureExe)
-            throw Error("Missing simple-stt-capture.exe. Build or package the Rust binaries beside the shell.")
+            throw Error(UiText("error.missingBinary", Map("binary", "simple-stt-capture.exe")))
         if !FileExist(this.settingsExe)
-            throw Error("Missing simple-stt-settings.exe. Build or package the Rust binaries beside the shell.")
+            throw Error(UiText("error.missingBinary", Map("binary", "simple-stt-settings.exe")))
         this.config := ConfigStore(this.ctlExe)
         this.logger := ShellLog(this.config.Get("shell_log_path"), this.EffectiveLogLevel())
         this.logger.Write("info", "shell start")
@@ -60,7 +61,7 @@ class SimpleSttShell {
             this.retryDeliveryHotkey.Configure(this.config.Get("retry_delivery_hotkey", "CapsLock+V"), true, capsMode)
         } catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
-            MsgBox(err.Message, "SimpleStt hotkey error", "Iconx")
+            MsgBox(err.Message, UiText("error.hotkeys"), "Iconx")
         }
     }
 
@@ -70,12 +71,12 @@ class SimpleSttShell {
             return
         }
         if !this.ipc.ready {
-            this.Notice("Audio service is not ready", "warning")
+            this.Notice(UiText("notice.audioNotReady"), "warning")
             return
         }
         target := WinActive("A")
         if !target {
-            this.Notice("Recording cancelled: no active target window", "warning")
+            this.Notice(UiText("notice.noTarget"), "warning")
             return
         }
         this.CancelSupersededShellWork()
@@ -102,7 +103,7 @@ class SimpleSttShell {
         }
         if !response["ok"] {
             this.logger.Write("error", "recording start rejected: " . response["message"], session)
-            this.Notice("Audio service rejected recording — see log", "error")
+            this.Notice(UiText("notice.recordingRejected"), "error")
             this.ipc.CallService("stop-recording --session-id " . session)
             if this.activeRecordingSession = session
                 this.activeRecordingSession := 0
@@ -140,7 +141,7 @@ class SimpleSttShell {
         if response["ok"]
             return
         this.logger.Write("error", "recording stop rejected: " . response["message"], session)
-        this.Notice("Recording failed — see log", "error")
+        this.Notice(UiText("notice.recordingFailed"), "error")
         if this.sessions.Has(session)
             this.sessions.Delete(session)
     }
@@ -217,7 +218,7 @@ class SimpleSttShell {
         this.sessions := Map()
         this.pendingStarts := Map()
         this.pendingStops := Map()
-        this.Notice(hadActive ? "Recording cancelled: audio service restarted" : "Audio service restarting…", hadActive ? "warning" : "info")
+        this.Notice(hadActive ? UiText("notice.audioRestartCancelled") : UiText("notice.audioRestarting"), hadActive ? "warning" : "info")
     }
 
     TransformTranscript(text) {
@@ -237,7 +238,7 @@ class SimpleSttShell {
         }
         catch Error as err {
             this.logger.Write("error", "settings launch failed: " . err.Message)
-            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
+            MsgBox(err.Message, UiText("error.settings"), "Iconx")
         }
     }
 
@@ -256,7 +257,7 @@ class SimpleSttShell {
         this.CancelAll()
         target := WinActive("A")
         if !target {
-            this.Notice("Retry cancelled: no active target window", "warning")
+            this.Notice(UiText("notice.retryNoTarget"), "warning")
             return
         }
         this.sessionId += 1
@@ -279,7 +280,7 @@ class SimpleSttShell {
         if this.ipc.ready
             this.ipc.CallService("cancel")
         if hadActive
-            this.Notice("Cancelled", "warning")
+            this.Notice(UiText("notice.cancelled"), "warning")
         else
             this.logger.Write("info", "global cancel pressed with no active shell work")
     }
@@ -295,20 +296,20 @@ class SimpleSttShell {
             this.logger.Write("info", "delivery mode toggled mode=" . next)
         } catch Error as err {
             this.logger.Write("error", "delivery mode toggle failed: " . err.Message)
-            this.Notice("Delivery mode toggle failed — see log", "error")
+            this.Notice(UiText("notice.deliveryFailed"), "error")
         }
     }
 
     ShowDeliveryModeTooltip(mode) {
         labels := Map(
-            "smart_paste", "Smart Paste",
-            "type", "Typing",
-            "clipboard", "Clipboard only",
-            "paste_shift_insert", "Shift+Insert",
-            "paste_ctrl_shift_v", "Ctrl+Shift+V",
-            "paste_ctrl_v", "Ctrl+V"
+            "smart_paste", UiText("delivery.smart_paste"),
+            "type", UiText("delivery.type"),
+            "clipboard", UiText("delivery.clipboard"),
+            "paste_shift_insert", UiText("delivery.paste_shift_insert"),
+            "paste_ctrl_shift_v", UiText("delivery.paste_ctrl_shift_v"),
+            "paste_ctrl_v", UiText("delivery.paste_ctrl_v")
         )
-        message := "🎙 Delivery: " . (labels.Has(mode) ? labels[mode] : mode)
+        message := UiText("notice.delivery", Map("mode", labels.Has(mode) ? labels[mode] : mode))
         ToolTip(message)
         SetTimer(this.modeTooltipTimer, -1200)
     }
@@ -326,9 +327,9 @@ class SimpleSttShell {
             this.hotkeys.SetEnabled(enabled)
             this.tray.Rebuild()
             this.logger.Write("info", "hotkey enabled=" . SimpleSttBoolText(enabled))
-            this.Notice(enabled ? "Hotkey enabled" : "Hotkey disabled")
+            this.Notice(enabled ? UiText("notice.hotkeyOn") : UiText("notice.hotkeyOff"))
         } catch Error as err {
-            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
+            MsgBox(err.Message, UiText("error.settings"), "Iconx")
         }
     }
 
@@ -338,12 +339,12 @@ class SimpleSttShell {
         try {
             this.config.SaveSync()
             this.PublishRuntimeConfigChange()
-            ToolTip("AI cleanup: " . (enabled ? "On" : "Off"))
+            ToolTip(UiText(enabled ? "notice.cleanupOn" : "notice.cleanupOff"))
             SetTimer(this.modeTooltipTimer, -1200)
             this.logger.Write("info", "AI cleanup toggled enabled=" . SimpleSttBoolText(enabled))
         } catch Error as err {
             this.logger.Write("error", "AI cleanup toggle failed: " . err.Message)
-            this.Notice("AI cleanup toggle failed — see log", "error")
+            this.Notice(UiText("notice.cleanupToggleFailed"), "error")
         }
     }
 
@@ -363,7 +364,7 @@ class SimpleSttShell {
             this.logger.Write("info", "settings reload requested")
         } catch Error as err {
             this.logger.Write("error", "settings reload failed: " . err.Message)
-            MsgBox(err.Message, "SimpleStt settings error", "Iconx")
+            MsgBox(err.Message, UiText("error.settings"), "Iconx")
         }
     }
 
@@ -377,7 +378,7 @@ class SimpleSttShell {
             this.logger.Write("info", "settings applied from config reload")
         } catch Error as err {
             this.logger.Write("error", "browser settings apply failed: " . err.Message)
-            this.Notice("Settings saved, but Windows hotkeys could not reload", "error")
+            this.Notice(UiText("notice.hotkeyReloadFailed"), "error")
         }
     }
 
@@ -396,7 +397,7 @@ class SimpleSttShell {
 
     ReloadServiceComplete(response) {
         if !response["ok"] {
-            this.Notice("Settings reload failed — see log", "error")
+            this.Notice(UiText("notice.settingsReloadFailed"), "error")
             this.logger.Write("error", "service config reload failed: " . response["message"])
             return
         }
@@ -421,7 +422,7 @@ class SimpleSttShell {
 
     TestModel(*) {
         this.ipc.CallService("test-model")
-        this.Notice("Model test queued")
+        this.Notice(UiText("notice.testQueued"))
     }
 
     OpenLatestLog(*) {
@@ -483,6 +484,6 @@ try {
     OnError(ObjBindMethod(SimpleStt, "OnError"))
     Persistent
 } catch Error as err {
-    MsgBox(err.Message, "SimpleStt startup error", "Iconx")
+    MsgBox(err.Message, UiText("error.startup"), "Iconx")
     ExitApp(1)
 }

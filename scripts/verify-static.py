@@ -90,6 +90,18 @@ for path in ["fixtures/parakeet-smoke.wav"]:
     if not (root / path).is_file():
         errors.append(f"missing {path}")
 
+# Localization is shared across browser, Rust and generated AHK; speech routing stays separate.
+locale_check = subprocess.run(["node", "web/settings/tools/locales.mjs", "--check"], cwd=root, capture_output=True, text=True)
+if locale_check.returncode:
+    errors.append("localization catalogs or generated AHK translations are stale: " + locale_check.stderr.strip())
+need("src/localization.rs", "GetUserDefaultUILanguage", 'env("LC_MESSAGES")', "message_values", "pub fn resolve")
+need("src/config.rs", "pub ui_language: UiLanguage", "ui_language: UiLanguage::Auto")
+need("ahk/lib/Config.ahk", '\"ui_language\"', "UiSetLanguage")
+need("src/capture/overlay_render.rs", "Noto Sans Arabic", "set_base_dir", "set_auto_dir(false)")
+need("src/bin/simple_stt_settings.rs", "ui_localization", "arabic.woff2", "font-src 'self'")
+need("src/bin/simple_stt_linux.rs", 'get("terminal")', "saved_ui_locale")
+checks.append("shared locale catalogs, RTL rendering, and structured terminal notices")
+
 # Application releases should commit a fresh lockfile after the first Windows build.
 gitignore = text(".gitignore")
 if any(line.strip() == "Cargo.lock" for line in gitignore.splitlines()):
@@ -160,11 +172,11 @@ need("tests/worker_lifecycle.rs", "repeated_recordings_skip_priming_and_progress
 need("tests/worker_lifecycle.rs", "obsolete_queued_shutdown_preserves_the_current_ready_worker")
 need("scripts/test-recording-worker-reuse.py", "new start aborts blocked inference", "without loading/warm-up notices", "rapid model switches deliver only the latest session")
 need("src/capture/process.rs", "OpenProcess", "TerminateProcess", "WaitForSingleObject", "PROCESS_TERMINATE", "exact child PID")
-need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.diagnostics.log_level != config.diagnostics.log_level", "log_level: config.diagnostics.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion", "cancel_generation", "ShellCommand::Cancel", "ShellCommand::DeliveryComplete", "Superseded by newer recording", "delivering.insert(session_id)", "discarding stale transcript after cancellation", "had_warming", "had_transcribing")
+need("src/bin/simple_stt_capture.rs", "shutdown_shared", "nonzero_pid", "next.diagnostics.log_level != config.diagnostics.log_level", "log_level: config.diagnostics.log_level.clone()", "HashSet::<u64>::new()", "restore_overlay_after_success", "restore_overlay_work_state", "newer_overlay_work_survives_older_transcript_completion", "cancel_generation", "ShellCommand::Cancel", "ShellCommand::DeliveryComplete", "notice.superseded", "delivering.insert(session_id)", "discarding stale transcript after cancellation", "had_warming", "had_transcribing")
 need("ahk/simple-stt.ahk", "CancelSupersededShellWork", "DeliveryFinished", "delivery-complete --session-id")
 need("ahk/lib/Typist.ahk", "onFinished", "NotifyFinished", 'item["session_id"]')
 need("src/bin/simple_stt_linux.rs", "delivery_session_is_current", "signal_delivery_complete", "Superseded by newer recording")
-need("src/bin/simple_stt_capture.rs", "resolve_input_device", "refresh_audio_capture", "ShellCommand::StartRecording", "using_default_fallback", "Preferred microphone unavailable — using system default", "Preferred microphone ready", "Preferred microphone restored — recording with it now", "Microphone settings changed — switching…", "DeviceRecovery", "endpoint_recovery_retries_are_bounded", "audio_error_is_current", "stale_audio_error_does_not_invalidate_replacement_stream")
+need("src/bin/simple_stt_capture.rs", "resolve_input_device", "refresh_audio_capture", "ShellCommand::StartRecording", "using_default_fallback", "notice.microphoneFallback", "notice.microphoneReady", "notice.microphoneRestored", "notice.microphoneSwitching", "DeviceRecovery", "endpoint_recovery_retries_are_bounded", "audio_error_is_current", "stale_audio_error_does_not_invalidate_replacement_stream")
 need("src/capture/audio.rs", "choose_input_device_id", "preferred_microphone_falls_back_and_returns", "automatic_mode_tracks_the_default", "InputDeviceSelection", "opening system default after preferred microphone failed", "RegisterEndpointNotificationCallback", "linux_input_topology_signature", "DeviceTopologyChanged", "watch_device_changes")
 need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "inference_device: InferenceDevice", "PARAKEET_DEVICE", "InferenceDevice::Cpu", "InferenceDevice::Gpu", "InferenceDevice::Auto", "Vulkan0", "language: String")
 need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 9", "pub struct GeneralConfig", "pub struct AudioConfig", "pub struct SpeechConfig", "pub struct OutputConfig", "pub struct CleanupConfig", "pub struct DiagnosticsConfig", "normalize_json", "malformed_json_is_preserved", "pub enum RecordingMode", "pub enum InferenceDevice", "pub enum SpeechLanguage", "pub enum ModelSelectionMode", "single_model_filename", "language_models", "pub enum LinuxAutomationBackend", "pub enum LinuxHotkeyBackend", "pub struct LinuxDeliveryChoice", "pub struct AppDeliveryOverride", "app_overrides", "linux_hotkey_backend", "linux_automation_backend", "linux_delivery_cycle", "enabled_delivery_modes", "toggle_cleanup_hotkey", "Clipboard", "Gpu", "Auto", "auto_inference_device")
@@ -186,7 +198,7 @@ need("src/cleanup/secrets.rs", "CredWriteW", "secret-tool", "SIMPLE_STT_AI_API_K
 need("src/bin/simple_stt_capture.rs", "CleanupFinished", "cleanup_failure_notice", "AI cleanup timed out", "Screen context requested", "trim_cleanup_history", "ListCleanupHistory")
 need("src/capture/screen_context.rs", "Screenshot::request", "interactive(true)", "excluded_apps", "JpegEncoder")
 forbid("src/config.rs", "pub api_key", "pub access_token", "pub refresh_token")
-need("src/bin/simple_stt_linux.rs", "impl ksni::Tray for LinuxTray", "audio-input-microphone", "Close Simple STT", "start_linux_tray")
+need("src/bin/simple_stt_linux.rs", "impl ksni::Tray for LinuxTray", "audio-input-microphone", "menu.close", "start_linux_tray")
 need("src/models.rs", "pub fn remove_model", "save another choice before removing it", "installed_non_selected_model_can_be_removed", "selected_model_is_not_removed")
 need("resources/simple-stt.iss", "Flags: external download ignoreversion", "Hash:", "RecommendedModelNeedsDownload", "GetSHA256OfFile")
 forbid("resources/simple-stt.iss", "Invoke-WebRequest", "exit 0\"\"\"; StatusMsg: \"Downloading recommended speech model")
@@ -204,7 +216,7 @@ checks.append("Parakeet DLL/model loading is isolated to disposable simple-stt-i
 checks.append("microphone preference uses stable IDs, temporary default fallback, endpoint notifications with bounded retries, and recording-start resolution")
 
 # AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
-tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", "Open Settings", "Restart Audio Service", "Unload Speech Model")
+tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", 'UiText("menu.openSettings")', 'UiText("menu.restartAudio")', 'UiText("menu.unload")')
 for needle in ["TraySetIcon", "SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
     if needle in tray_ahk:
         errors.append(f"tray menu must use the default Windows/AHK drawing path, but found {needle!r}")
@@ -274,7 +286,8 @@ need("src/bin/simple_stt_linux.rs", 'value == "skipped"', 'recording: false,', '
 need("ahk/simple-stt.ahk", "RetryLastDelivery", "lastDeliveryText", "SimpleSttFinalDeliveryPayload", 'Bool("preserve_clipboard", true)')
 need("ahk/lib/Typist.ahk", "PublishCleanClipboardText", "ExcludeClipboardContentFromMonitorProcessing", "CanIncludeInClipboardHistory", "CanUploadToCloudClipboard", "AllocClipboardDword")
 need("src/bin/simple_stt_capture.rs", "LastDeliveryCache", "ShellCommand::RememberDelivery", "ShellCommand::LastDelivery", "delivering.contains(&session_id)")
-need("web/settings/src/lib/settings.ts", "Keep clipboard clean", "general.retry_delivery_hotkey")
+need("web/settings/src/lib/settings.ts", "ui.keep_clipboard_clean.10b3d3", "general.retry_delivery_hotkey")
+need("web/settings/src/lib/locales/en.json", "Keep clipboard clean")
 
 if errors:
     print("STATIC VERIFY FAILED")

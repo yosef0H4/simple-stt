@@ -3,6 +3,7 @@
   import Icon from "./Icon.svelte";
   import { tick, type Snippet } from "svelte";
   import Help from "./Help.svelte";
+  import { t } from "../lib/i18n";
   let {
     label,
     ariaLabel,
@@ -34,11 +35,11 @@
   let position = $state({ left: 0, top: 0, width: 0, height: 260 });
   const selected = $derived(
     items.find((i) => i.value === value)?.label ||
-      (unavailable ? `Unavailable · ${value}` : value),
+      (unavailable ? `${t("ui.unavailable.2c9c1f")} · ${value}` : value),
   );
   const filtered = $derived(
     items.filter((i) =>
-      `${i.label} ${i.meta || ""}`.toLowerCase().includes(query.toLowerCase()),
+      `${t(i.label)} ${i.label} ${i.meta || ""}`.toLowerCase().includes(query.toLowerCase()),
     ),
   );
   function expand() {
@@ -107,8 +108,8 @@
 <svelte:window onresize={() => (open = false)} />
 <div class="field" data-setting-path={path} bind:this={root}>
   <div class="field-copy">
-    <label for={`combo-${path}`}>{label}</label>{#if help}<Help
-        text={help}
+    <label for={`combo-${path}`}>{t(label)}</label>{#if help}<Help
+        text={t(help)}
       />{/if}
   </div>
   <div class="control assignment-control">
@@ -119,13 +120,9 @@
           id={`combo-${path}`}
           class="combo-input"
           type="text"
+          dir="auto"
           role="combobox"
-          aria-label={ariaLabel ||
-            (label === "Model"
-              ? "Speech model"
-              : label.endsWith("model")
-                ? label
-                : `${label} model`)}
+          aria-label={t(ariaLabel || label)}
           aria-autocomplete="list"
           aria-expanded={open}
           aria-controls={`list-${path}`}
@@ -163,7 +160,7 @@
     id={`list-${path}`}
     data-combo-list={path}
     role="listbox"
-    aria-label={`${label} choices`}
+    aria-label={`${t(label)} ${t("ui.choices.153eb4")}`}
     style:left={`${position.left}px`}
     style:top={`${position.top}px`}
     style:width={`${position.width}px`}
@@ -177,9 +174,9 @@
         class:highlighted={active === i}
         onpointerdown={(event) => event.preventDefault()}
         onclick={() => choose(item)}
-        >{item.label}{#if item.value === value}<Icon
+        >{t(item.label)}{#if item.value === value}<Icon
             name="check"
             size={15}
           />{/if}</button
-      >{:else}<span class="empty">No matches</span>{/each}
+      >{:else}<span class="empty">{t("ui.no_matches.cd0af6")}</span>{/each}
   </div>{/if}

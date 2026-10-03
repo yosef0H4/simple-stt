@@ -5,6 +5,7 @@
   import { modelItems } from "../lib/models";
   import Combo from "./Combo.svelte";
   import IconButton from "./IconButton.svelte";
+  import { languageName, t } from "../lib/i18n";
   const controller = new AbortController();
   onDestroy(() => controller.abort());
   let {
@@ -20,7 +21,8 @@
 
 <Combo
   {path}
-  {label}
+  label={language ? languageName(language.id) : label}
+  ariaLabel={language ? languageName(language.id) : t("ui.speech_model.3c5f0b")}
   {value}
   items={modelItems(ui.state?.models || [], language)}
   unavailable={Boolean(value && !installed)}
@@ -28,8 +30,8 @@
 >
   {#snippet extra()}<IconButton
       icon="test"
-      label={`Test ${label === "Model" ? "speech" : label} model`}
-      title={ui.dirty ? "Save changes before testing" : "Test model"}
+      label={t(path.startsWith("speech.") ? "ui.test_speech_model.05240f" : "ui.test_model.cfb11e")}
+      title={t(ui.dirty ? "Save changes before testing" : "Test model")}
       modelTest
       disabled={!value || !installed || ui.dirty || !ui.state?.service_online}
       onclick={() =>

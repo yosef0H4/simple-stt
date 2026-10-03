@@ -51,3 +51,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+# Bundled fonts
+
+JetBrains Mono is used for waveform glyphs; Noto Sans Arabic is used for Arabic UI text. Both are licensed under SIL Open Font License 1.1. The font license texts are in `assets/fonts/LICENSE-JetBrainsMono.txt` and `assets/fonts/LICENSE-NotoSansArabic.txt`, and Windows packages include them in `licenses/`. Noto Sans Arabic's Regular face and browser WOFF2 are derived from the upstream variable face at weight 400.

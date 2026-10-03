@@ -35,6 +35,7 @@ mod platform {
         }
         pub fn start_recording(&self, _: isize, _: RecordingIndicators) {}
         pub fn set_primary(&self, _: OverlayPrimary) {}
+        pub fn set_locale(&self, _: crate::localization::Locale) {}
         pub fn notify_info(&self, _: impl Into<String>, _: Option<Duration>) {}
         pub fn notify_warning(&self, _: impl Into<String>, _: Duration) {}
         pub fn notify_error(&self, _: impl Into<String>, _: Duration) {}

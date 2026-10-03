@@ -23,10 +23,11 @@ export default defineConfig({
   build: {
     target: "es2022",
     cssCodeSplit: false,
+    assetsInlineLimit: 0,
     rolldownOptions: {
       output: {
         entryFileNames: "app.js",
-        assetFileNames: "styles.css",
+        assetFileNames: (asset) => asset.names.some((name) => name.endsWith(".woff2")) ? "arabic.woff2" : "styles.css",
         codeSplitting: false,
       },
     },

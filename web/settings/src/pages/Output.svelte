@@ -13,6 +13,7 @@
   import Field from "../components/Field.svelte";
   import Combo from "../components/Combo.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import { t } from "../lib/i18n";
   let query = $state("");
   const tools = $derived(ui.state?.linux_automation || {});
   const linux = $derived(ui.state?.platform === "linux");
@@ -49,7 +50,7 @@
   );
   const shown = $derived(
     choices.filter((c) =>
-      `${c.label} ${c.tool}`.toLowerCase().includes(query.toLowerCase()),
+      `${t(c.label)} ${t(c.tool)} ${c.label} ${c.tool}`.toLowerCase().includes(query.toLowerCase()),
     ),
   );
   function select(value: string) {
@@ -70,7 +71,7 @@
     if (linux) {
       if (included(mode, backend)) {
         if (output.linux_delivery_cycle.length === 1)
-          return notice("Keep at least one delivery choice.", "error");
+          return notice(t("ui.keep_at_least_one_delivery.2d7d41"), "error");
         output.linux_delivery_cycle = output.linux_delivery_cycle.filter(
           (c) => c.mode !== mode || c.backend !== backend,
         );
@@ -78,7 +79,7 @@
     } else {
       if (included(mode, backend)) {
         if (output.enabled_delivery_modes.length === 1)
-          return notice("Keep at least one delivery choice.", "error");
+          return notice(t("ui.keep_at_least_one_delivery.2d7d41"), "error");
         output.enabled_delivery_modes = output.enabled_delivery_modes.filter(
           (m) => m !== mode,
         );
@@ -122,7 +123,7 @@
 </script>
 
 <Group
-  title="Delivery"
+  title="ui.delivery.9631af"
   icon="output"
   paths={[
     "output.delivery_mode",
@@ -134,23 +135,23 @@
 >
   {#snippet actions()}{#if linux}<IconButton
         icon="refresh"
-        label="Refresh tools"
+        label="ui.refresh_tools.311c38"
         onclick={() => refreshState()}
       />{/if}{/snippet}
   <Combo
-    label="Use now"
+    label="ui.use_now.36690a"
     path="output.delivery_mode"
-    ariaLabel={`Current ${linux ? "Linux" : "Windows"} delivery method`}
+    ariaLabel={t(linux ? "Current Linux delivery method" : "Current Windows delivery method")}
     value={`${linux ? ui.config?.output.linux_automation_backend : "auto"}|${ui.config?.output.delivery_mode}`}
     items={choices.map((c) => ({
       value: c.key,
-      label: `${c.label}${linux ? ` · ${c.tool}` : ""}${c.installed ? "" : " · Not installed"}`,
+      label: `${t(c.label)}${linux ? ` · ${c.tool}` : ""}${c.installed ? "" : ` · ${t("ui.not_installed.1aab9f")}`}`,
     }))}
     onselect={select}
   />
   <Field spec={fields.preserveClipboard} />
   <details class="delivery-picker-advanced">
-    <summary>Cycle between</summary>
+    <summary>{t("ui.cycle_between.75667a")}</summary>
     <div
       data-setting-path={linux
         ? "output.linux_delivery_cycle"
@@ -158,17 +159,17 @@
     >
       <input
         type="search"
-        placeholder="Search tools and delivery methods"
-        aria-label="Search tools and delivery methods"
+        placeholder={t("ui.search_tools_and_delivery_methods.717e7b")}
+        aria-label={t("ui.search_tools_and_delivery_methods.717e7b")}
         bind:value={query}
       />{#each shown as c}<label class="cycle-row"
           ><span
-            >{c.label}{#if linux}<small
-                >{c.tool}{c.installed ? "" : " · Not installed"}</small
+            >{t(c.label)}{#if linux}<small dir="ltr"
+                >{c.tool}{c.installed ? "" : ` · ${t("ui.not_installed.1aab9f")}`}</small
               >{/if}</span
           ><input
             type="checkbox"
-            aria-label={`Include ${c.label}${linux ? ` ${c.tool}` : ""} in delivery cycle`}
+            aria-label={t("ui.include_method_in_delivery_cycle.d45eee", { method: `${t(c.label)}${linux ? ` ${c.tool}` : ""}` })}
             checked={included(c.mode, c.backend)}
             onchange={() => toggle(c.mode, c.backend)}
           /></label
@@ -176,19 +177,15 @@
     </div>
   </details>
   {#if linux}<details class="guide">
-      <summary>Tool setup</summary>
+      <summary>{t("ui.tool_setup.f7caa3")}</summary>
       <p>{tools.distro} · {tools.desktop} · {tools.session}</p>
-      <p>Automatic: {tools.recommended || "Not available"}</p>
+      <p>{t("ui.automatic.ac9041")}: {tools.recommended || t("ui.not_available.d1a17a")}</p>
       <code>{install}</code>
-      <p>
-        wl-clipboard handles clipboard data. wtype supports virtual-keyboard
-        Wayland desktops. ydotool requires ydotoold and input-device access.
-        xdotool is for X11. Native fast paste supports compositor-aware paste.
-      </p>
+        <p>{t("ui.wl_clipboard_handles_clipboard_data.68c501")}</p>
     </details>{/if}
 </Group>
 <Group
-  title="Typing"
+  title="ui.typing.5614fd"
   icon="keyboard"
   paths={["output.paced_typing_enabled", "output.typing_speed_wpm"]}
   ><Field spec={fields.paced} /><Field
@@ -198,10 +195,10 @@
     }}
   /></Group
 >
-<Group title="App overrides" icon="apps" paths={["output.app_overrides"]}>
+<Group title="ui.app_overrides.9e577a" icon="apps" paths={["output.app_overrides"]}>
   {#snippet actions()}<IconButton
       icon="plus"
-      label="Add manually"
+      label="ui.add_manually.a1d9c2"
       onclick={() => {
         ui.config?.output.app_overrides.push({
           app_id: "",
@@ -211,8 +208,8 @@
       }}
     /><IconButton
       icon="output"
-      label="Add current app"
-      title="Add current app · focus it within 3 seconds"
+      label="ui.add_current_app.4321a4"
+      title="ui.add_current_app_focus_it.319c40"
       onclick={addCurrent}
     />{/snippet}
   <div data-setting-path="output.app_overrides">
@@ -220,15 +217,15 @@
         class="app-override-row"
       >
         <input
-          aria-label="Application identity"
+          aria-label={t("ui.application_identity.74e9a6")}
           value={entry.app_id}
-          placeholder="Application ID"
+          placeholder={t("ui.application_id.557031")}
           oninput={(e) => {
             entry.app_id = e.currentTarget.value;
             markDirty();
           }}
         /><select
-          aria-label={`Delivery mode for ${entry.app_id || "application"}`}
+          aria-label={t("ui.delivery_mode_for_app.763ef6", { app: entry.app_id || t("ui.application.d2005c") })}
           value={entry.mode}
           onchange={(e) => {
             entry.mode = e.currentTarget.value as DeliveryMode;
@@ -239,17 +236,17 @@
             >{/each}</select
         ><IconButton
           icon="trash"
-          label="Remove app override"
+          label="ui.remove_app_override.10d229"
           onclick={() => {
             ui.config?.output.app_overrides.splice(index, 1);
             markDirty();
           }}
         />
-      </div>{:else}<p class="empty">No overrides</p>{/each}
+      </div>{:else}<p class="empty">{t("ui.no_overrides.473cfd")}</p>{/each}
   </div>
 </Group>
 <Group
-  title="Text"
+  title="ui.text.c3328c"
   icon="text"
   paths={[
     "output.trailing_space",

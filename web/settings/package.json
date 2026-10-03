@@ -5,8 +5,8 @@
   "scripts": {
     "dev": "vite",
     "check": "svelte-check --tsconfig ./tsconfig.json",
-    "build": "npm run check && vite build && node tools/manifest.mjs",
-    "verify": "node tools/manifest.mjs --verify",
+    "build": "node tools/locales.mjs && npm run check && vite build && node tools/manifest.mjs",
+    "verify": "node tools/locales.mjs --check && node tools/manifest.mjs --verify",
     "format": "prettier --plugin prettier-plugin-svelte --write src vite.config.ts svelte.config.js index.html tools"
   },
   "dependencies": {

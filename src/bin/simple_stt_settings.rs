@@ -22,6 +22,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const INDEX: &str = include_str!("../../web/settings/dist/index.html");
 const CSS: &str = include_str!("../../web/settings/dist/styles.css");
+const ARABIC_FONT: &[u8] = include_bytes!("../../web/settings/dist/arabic.woff2");
 const JS: &str = include_str!("../../web/settings/dist/app.js");
 const MAX_BODY: usize = 2 * 1024 * 1024;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
@@ -194,6 +195,14 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
             "/" | "/index.html" => return Ok(asset(INDEX, "text/html; charset=utf-8", state)),
             "/styles.css" => return Ok(asset(CSS, "text/css; charset=utf-8", state)),
             "/app.js" => return Ok(asset(JS, "text/javascript; charset=utf-8", state)),
+            "/arabic.woff2" => {
+                return Ok(response_bytes(
+                    StatusCode(200),
+                    ARABIC_FONT.to_vec(),
+                    "font/woff2",
+                    state,
+                ))
+            }
             "/favicon.ico" => {
                 return Ok(response_bytes(
                     StatusCode(204),
@@ -347,6 +356,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
                     "config_hash":hash_bytes(&raw),
                     "config_path":path,
                     "config_error":format!("{error:#}"),
+                    "ui_localization":simple_stt::localization::state(simple_stt::config::UiLanguage::Auto),
                     "platform":if cfg!(windows){"windows"}else if cfg!(target_os="linux"){"linux"}else{"other"},
                     "service_online":false,
                     "microphones":[],
@@ -396,6 +406,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "config_path":AppConfig::config_path(),
             "resolved_runtime_dir":config.parakeet_runtime_dir_path(),
             "resolved_model_dir":config.model_dir_path(),
+            "ui_localization":simple_stt::localization::state(config.general.ui_language),
             "platform":if cfg!(windows){"windows"}else if cfg!(target_os="linux"){"linux"}else{"other"},
             "service_online":service_online,
             "shortcut_state":shortcut_state,
@@ -428,15 +439,15 @@ fn cleanup_action_response(
     let value = match body.action.as_str() {
         "save_api_key" => {
             secrets::set_compatible_api_key(&body.secret)?;
-            json!({"message":"API key saved in the operating-system vault"})
+            json!({"message":"API key saved in the operating-system vault","message_id":"api.keySaved","message_args":{}})
         }
         "delete_api_key" => {
             secrets::delete_compatible_api_key()?;
-            json!({"message":"API key removed"})
+            json!({"message":"API key removed","message_id":"api.keyRemoved","message_args":{}})
         }
         "list_models" => {
             let models = cleanup::list_models(&config.cleanup)?;
-            json!({"message":"Models refreshed","models":models})
+            json!({"message":"Models refreshed","message_id":"api.modelsRefreshed","message_args":{},"models":models})
         }
         "test" => {
             let transcript = if body.transcript.trim().is_empty() {
@@ -445,7 +456,7 @@ fn cleanup_action_response(
                 body.transcript
             };
             let result = cleanup::clean_transcript(&config.cleanup, &transcript, None)?;
-            json!({"message":"Cleanup test passed","result":result})
+            json!({"message":"Cleanup test passed","message_id":"api.testPassed","message_args":{},"result":result})
         }
         "chatgpt_login_browser" => {
             let login = auth::begin_browser_login()?;
@@ -464,7 +475,7 @@ fn cleanup_action_response(
                         json!({"state":"error","message":format!("{error:#}")});
                 }
             });
-            json!({"message":"Finish connecting in your browser","url":url})
+            json!({"message":"Finish connecting in your browser","message_id":"api.browserOpened","message_args":{},"url":url})
         }
         "chatgpt_login_code" => {
             let login = auth::begin_device_login()?;
@@ -483,17 +494,17 @@ fn cleanup_action_response(
                         json!({"state":"error","message":format!("{error:#}")});
                 }
             });
-            json!({"message":"Enter the code in your browser","url":url,"code":code})
+            json!({"message":"Enter the code in your browser","message_id":"api.enterCode","message_args":{},"url":url,"code":code})
         }
         "chatgpt_logout" => {
             secrets::delete_chatgpt_tokens()?;
             *state.cleanup_auth_status.lock().expect("cleanup auth lock") = json!({"state":"idle"});
-            json!({"message":"ChatGPT disconnected"})
+            json!({"message":"ChatGPT disconnected","message_id":"api.disconnected","message_args":{}})
         }
         "clear_history" => {
             let response = capture_request(state, ShellCommand::ClearCleanupHistory)?;
             anyhow::ensure!(response.ok, "{}", response.message);
-            json!({"message":"Cleanup history cleared"})
+            json!({"message":"Cleanup history cleared","message_id":"api.historyCleared","message_args":{}})
         }
         _ => anyhow::bail!("unsupported cleanup action"),
     };
@@ -639,10 +650,21 @@ fn action_response(
         _ => anyhow::bail!("unsupported service action"),
     };
     let response = capture_request(state, command)?;
-    anyhow::ensure!(response.ok, "{}", response.message);
+    if !response.ok {
+        return Ok(json_response(
+            StatusCode(400),
+            &json!({"error":response.message,
+                "message_id":response.values.get("message_id"),
+                "message_args":response.values.get("message_args").and_then(|args| serde_json::from_str::<Value>(args).ok()).unwrap_or_else(|| json!({}))}),
+            state,
+        ));
+    }
     Ok(json_response(
         StatusCode(200),
-        &json!({"message":response.message,"values":response.values}),
+        &json!({"message":response.message,
+            "message_id":response.values.get("message_id"),
+            "message_args":response.values.get("message_args").and_then(|args| serde_json::from_str::<Value>(args).ok()).unwrap_or_else(|| json!({})),
+            "values":response.values}),
         state,
     ))
 }
@@ -683,7 +705,7 @@ fn platform_action(
         let identity = focused_app_identity()?;
         return Ok(json_response(
             StatusCode(200),
-            &json!({"message":"Focused app detected","app_id":identity}),
+            &json!({"message":"Focused app detected","message_id":"api.focusedApp","message_args":{},"app_id":identity}),
             state,
         ));
     }
@@ -700,7 +722,7 @@ fn platform_action(
     }
     Ok(json_response(
         StatusCode(200),
-        &json!({"message":"Request opened"}),
+        &json!({"message":"Request opened","message_id":"api.requestOpened","message_args":{}}),
         state,
     ))
 }
@@ -911,7 +933,7 @@ fn response_bytes(
         ("Cache-Control","no-store"),
         ("X-Content-Type-Options","nosniff"),
         ("Referrer-Policy","no-referrer"),
-        ("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"),
+        ("Content-Security-Policy","default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"),
         ("Cross-Origin-Resource-Policy","same-origin"),
     ] { response.add_header(Header::from_bytes(name,value).expect("valid header")); }
     response.add_header(

@@ -14,6 +14,7 @@
   import Combo from "../components/Combo.svelte";
   import IconButton from "../components/IconButton.svelte";
   import type { Reasoning } from "../lib/types";
+  import { t } from "../lib/i18n";
   let key = $state(""),
     test = $state("uh hello jason no sorry Jayson comma this is a test"),
     result = $state(""),
@@ -71,32 +72,32 @@
 </script>
 
 <Group
-  title="AI cleanup"
+  title="ui.ai_cleanup.05cb5b"
   icon="cleanup"
   paths={["cleanup.enabled", "cleanup.provider"]}
   ><Field spec={fields.cleanup} /><Field spec={fields.provider} /></Group
 >
 <Group
-  title="Connection"
+  title="ui.connection.6512ee"
   icon="connect"
   paths={["cleanup.openai_compatible", "cleanup.chatgpt"]}
 >
   {#if !chatgpt}<Field spec={fields.url} />
     <div class="field" data-setting-path="cleanup.secret">
-      <label for="api-key">API key</label>
+      <label for="api-key">{t("ui.api_key.cf678c")}</label>
       <div class="control">
         <input
           id="api-key"
           type="password"
-          aria-label="Provider API key"
+          aria-label={t("ui.provider_api_key.593b11")}
           autocomplete="new-password"
           placeholder={ui.state?.cleanup?.compatible_key_saved
-            ? "Replace saved key"
-            : "Paste API key"}
+            ? t("ui.replace_saved_key.893959")
+            : t("ui.paste_api_key.7da909")}
           bind:value={key}
         /><IconButton
           icon="check"
-          label="Save API key"
+          label="ui.save_api_key.d8e28f"
           disabled={!key.trim()}
           onclick={async () => {
             await cleanupAction("save_api_key", { secret: key });
@@ -105,7 +106,7 @@
           }}
         />{#if ui.state?.cleanup?.compatible_key_saved}<IconButton
             icon="trash"
-            label="Remove saved API key"
+            label="ui.remove_saved_api_key.05f45c"
             onclick={async () => {
               await cleanupAction("delete_api_key");
               await refreshState();
@@ -117,10 +118,10 @@
       <span>ChatGPT</span>
       <div class="control">
         <span class="account-status"
-          >{connected ? "Connected" : "Not connected"}</span
+          >{t(connected ? "Connected" : "Not connected")}</span
         >{#if connected}<IconButton
             icon="close"
-            label="Disconnect ChatGPT"
+            label="ui.disconnect_chatgpt.32f28b"
             onclick={async () => {
               await cleanupAction("chatgpt_logout");
               await refreshState();
@@ -131,7 +132,7 @@
             onclick={() => login()}
           /><IconButton
             icon="copy"
-            label="Connect using a code"
+            label="ui.connect_using_a_code.2693e0"
             onclick={() => login(true)}
           />{/if}
       </div>
@@ -140,17 +141,17 @@
         >{ui.state.cleanup.auth_status.code}</code
       >{/if}{/if}
   <Combo
-    label="Cleanup model"
+    label="ui.cleanup_model.eddd54"
     path={modelPath}
     value={String(get(modelPath) || "")}
     items={ui.cleanupModels.map((m) => ({ value: m.id, label: m.id }))}
     custom
     onselect={(v) => set(modelPath, v)}
-    help="Fetch models or enter the provider’s exact model ID."
+    help="ui.fetch_models_or_enter_the.7587f4"
   >
     {#snippet extra()}<IconButton
         icon="refresh"
-        label="Fetch models"
+        label="ui.fetch_models.197c2c"
         onclick={async () =>
           (ui.cleanupModels =
             (await cleanupAction("list_models")).models || [])}
@@ -158,7 +159,7 @@
   >
 </Group>
 <Group
-  title="Text cleanup"
+  title="ui.text_cleanup.52f093"
   icon="text"
   paths={[
     "cleanup.prompt",
@@ -187,26 +188,26 @@
       spec={fields[key]}
     />{/each}
   <div class="cleanup-test">
-    <textarea aria-label="Test transcript" rows="3" bind:value={test}
+    <textarea aria-label={t("ui.test_transcript.94cf2f")} rows="3" bind:value={test}
     ></textarea><IconButton
       icon="test"
-      label="Test cleanup"
+      label="ui.test_cleanup.300d30"
       disabled={testing}
       onclick={testCleanup}
     />{#if result}<output>{result}</output>{/if}
   </div>
 </Group>
-<Group title="Screen context" icon="screen" paths={["cleanup.screenshot"]}>
+<Group title="ui.screen_context.2ca2ca" icon="screen" paths={["cleanup.screenshot"]}>
   {#each ["screenshot", "scope", "imageSize", "quality"] as key}<Field
       spec={{ ...fields[key], disabled: !ui.config?.cleanup.enabled }}
     />{/each}
   <div class="field" data-setting-path="cleanup.screenshot.excluded_apps">
-    <label for="excluded-apps">Never capture</label><textarea
+    <label for="excluded-apps">{t("ui.never_capture.91a15d")}</label><textarea
       id="excluded-apps"
       rows="3"
       disabled={!ui.config?.cleanup.enabled}
       value={ui.config?.cleanup.screenshot.excluded_apps.join("\n") || ""}
-      placeholder="One application per line"
+      placeholder={t("ui.one_application_per_line.01a114")}
       oninput={(e) =>
         set(
           "cleanup.screenshot.excluded_apps",
@@ -217,10 +218,10 @@
         )}></textarea>
   </div>
 </Group>
-<Group title="Recent cleanup" icon="history">
+<Group title="ui.recent_cleanup.3d7efa" icon="history">
   {#snippet actions()}<IconButton
       icon="trash"
-      label="Clear cleanup history"
+      label="ui.clear_cleanup_history.4e7baf"
       disabled={!ui.state?.cleanup?.history.length}
       onclick={async () => {
         await cleanupAction("clear_history");
@@ -229,19 +230,19 @@
     />{/snippet}
   {#each ui.state?.cleanup?.history || [] as entry}<article class="history-row">
       <small
-        >{entry.model} · {entry.latency_ms} ms · {entry.outcome === "cleaned"
+        >{entry.model} · {entry.latency_ms} ms · {t(entry.outcome === "cleaned"
           ? "Cleaned"
-          : "Original used"}</small
+          : "Original used")}</small
       >
       <details>
-        <summary>Original</summary>
+        <summary>{t("ui.original.c0a806")}</summary>
         <p dir="auto">{entry.raw}</p>
       </details>
       <p dir="auto">{entry.cleaned}</p>
       <IconButton
         icon="copy"
-        label="Copy cleaned text"
+        label="ui.copy_cleaned_text.ab6654"
         onclick={() => navigator.clipboard.writeText(entry.cleaned)}
       />
-    </article>{:else}<p class="empty">No cleaned dictation yet</p>{/each}
+    </article>{:else}<p class="empty">{t("ui.no_cleaned_dictation_yet.2380b4")}</p>{/each}
 </Group>

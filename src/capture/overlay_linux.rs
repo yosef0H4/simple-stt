@@ -2,7 +2,8 @@ use super::overlay_model::{
     empty_visualizer_levels, set_visualizer_level, NoticeLevel, OverlayPrimary,
     RecordingIndicators, VisualizerLevels,
 };
-use super::overlay_render::{plan_for, render_surface, LayoutPlan, MAX_HEIGHT, MAX_WIDTH};
+use super::overlay_render::{plan_for_locale, render_surface, LayoutPlan, MAX_HEIGHT, MAX_WIDTH};
+use crate::localization::Locale;
 use anyhow::{Context, Result};
 use smithay_client_toolkit::reexports::calloop::{
     channel::{self, Event},
@@ -50,6 +51,7 @@ pub struct OverlayHandle {
 
 #[derive(Debug, Clone)]
 enum OverlayCommand {
+    SetLocale(Locale),
     StartRecording(RecordingIndicators),
     SetPrimary(OverlayPrimary),
     Notify {
@@ -94,6 +96,10 @@ impl OverlayHandle {
 
     pub fn start_recording(&self, _: isize, indicators: RecordingIndicators) {
         let _ = self.tx.send(OverlayCommand::StartRecording(indicators));
+    }
+
+    pub fn set_locale(&self, locale: Locale) {
+        let _ = self.tx.send(OverlayCommand::SetLocale(locale));
     }
 
     pub fn set_primary(&self, primary: OverlayPrimary) {
@@ -174,6 +180,7 @@ fn overlay_thread(rx: channel::Channel<OverlayCommand>, level: Arc<AtomicU32>) -
         configured: false,
         mapped: false,
         primary: OverlayPrimary::Hidden,
+        locale: Locale::En,
         notice: None,
         target_level: 0.0,
         display_level: 0.0,
@@ -230,6 +237,7 @@ struct LayerOverlay {
     configured: bool,
     mapped: bool,
     primary: OverlayPrimary,
+    locale: Locale,
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
@@ -245,6 +253,13 @@ struct LayerOverlay {
 impl LayerOverlay {
     fn handle_command(&mut self, command: OverlayCommand) {
         match command {
+            OverlayCommand::SetLocale(locale) => {
+                if self.locale != locale {
+                    self.locale = locale;
+                    self.notice = None;
+                    self.last_signature.clear();
+                }
+            }
             OverlayCommand::StartRecording(indicators) => {
                 self.primary = OverlayPrimary::Recording;
                 self.notice = None;
@@ -466,11 +481,12 @@ impl LayerOverlay {
 
     /// Build the lines to render plus the surface size needed to fit them.
     fn build_plan(&self) -> Option<LayoutPlan> {
-        plan_for(
+        plan_for_locale(
             self.primary,
             self.notice.as_ref().map(|notice| notice.text.as_str()),
             &self.visualizer_levels,
             self.indicators,
+            self.locale,
         )
     }
 }
@@ -574,11 +590,12 @@ impl LayerShellHandler for LayerOverlay {
         self.configured = true;
         // The compositor has acked our size; attach a buffer now to map at the
         // confirmed size, or destroy the surface if there is nothing to show.
-        match self.build_plan() {
-            Some(plan) => self.draw_buffer(&plan),
-            None => self.destroy_layer(),
-        }
-        self.needs_redraw = false;
+        // Commands can change the text while a configure is in flight. Never
+        // copy a newer, differently sized Cairo surface into the old SHM buffer:
+        // the differing strides would scramble every row. Request the current
+        // plan's size through the normal presentation path instead.
+        self.needs_redraw = true;
+        self.present();
     }
 }
 

@@ -60,6 +60,15 @@ if set(sources) != expected_sources:
         f"(missing: {', '.join(missing)}; extra: {', '.join(extra)})"
     )
 
+shared_expected = {"assets/fonts/NotoSansArabic-Regular.ttf", "assets/fonts/NotoSansArabic-Regular.woff2", "assets/fonts/LICENSE-NotoSansArabic.txt"}
+shared = data.get("shared_sources", {})
+if set(shared) != shared_expected:
+    ERRORS.append("shared font source manifest differs from expected inputs")
+for relative, expected in shared.items():
+    path = resolve(ROOT, relative)
+    if path is not None and hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+        ERRORS.append(f"shared frontend source {relative!r} is stale")
+
 for relative, expected in sources.items():
     path = resolve(WEB, relative)
     if path is None:
@@ -72,12 +81,12 @@ for relative, expected in sources.items():
     if actual != expected:
         ERRORS.append(f"source {relative!r} changed since the last frontend build")
 
-for name in ("index.html", "app.js", "styles.css"):
+for name in ("index.html", "app.js", "styles.css", "arabic.woff2"):
     if name not in assets:
         ERRORS.append(f"manifest omits required asset {name!r}")
 
-if set(assets) != {"index.html", "app.js", "styles.css"}:
-    ERRORS.append("manifest assets must contain exactly index.html, app.js, and styles.css")
+if set(assets) != {"index.html", "app.js", "styles.css", "arabic.woff2"}:
+    ERRORS.append("manifest assets must contain exactly index.html, app.js, styles.css, and arabic.woff2")
 
 asset_bytes = 0
 gzip_bytes = 0

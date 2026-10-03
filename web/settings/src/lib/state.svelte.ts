@@ -1,4 +1,5 @@
-import { api, events } from "./api";
+import { api, events, ApiError } from "./api";
+import { responseMessage, t } from "./i18n";
 import { assertConfig } from "./types";
 import type {
   Config,
@@ -17,6 +18,7 @@ export const ui = $state({
   dirty: false,
   page: "general" as Page,
   notice: "",
+  noticeDetails: "",
   noticeKind: "info",
   saving: false,
   ready: false,
@@ -28,8 +30,9 @@ export const ui = $state({
 });
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
-export function notice(message: string, kind = "info") {
+export function notice(message: string, kind = "info", details = "") {
   ui.notice = message;
+  ui.noticeDetails = details;
   ui.noticeKind = kind;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => (ui.notice = ""), 6500);
@@ -147,7 +150,7 @@ export async function load() {
   } else {
     ui.baseline = null;
     ui.config = (await api<{ config: Config }>("/api/defaults")).config;
-    notice(`Configuration preserved: ${ui.state?.config_error}`, "error");
+    notice(t("ui.configuration_preserved_detail.6fe0a0", { detail: ui.state?.config_error || "" }), "error");
   }
   assertConfig(ui.config);
   try {
@@ -188,9 +191,7 @@ export async function save(retried = false) {
     ui.jsonInvalid = false;
     markDirty();
     notice(
-      result.reloaded
-        ? "Saved and applied."
-        : "Saved. Capture service is offline.",
+      t(result.reloaded ? "Saved and applied." : "Saved. Capture service is offline."),
       "success",
     );
   } catch (e) {
@@ -213,7 +214,10 @@ export async function save(retried = false) {
         return save(true);
       }
     }
-    notice(message, "error");
+    const localized = e instanceof ApiError
+      ? responseMessage(e.message_id, e.message_args, "")
+      : "";
+    notice(localized || t("ui.operation_failed.c4e6ed"), "error", localized ? "" : message);
   } finally {
     ui.saving = false;
   }
@@ -232,7 +236,7 @@ export async function reset() {
   ui.jsonInvalid = false;
   ui.config = (await api<{ config: Config }>("/api/defaults")).config;
   markDirty();
-  notice("Defaults previewed. Save to apply.");
+  notice(t("ui.defaults_previewed_save_to_apply.d36d8c"));
 }
 export async function resetPaths(paths: string[]) {
   const defaults = (await api<{ config: Config }>("/api/defaults")).config;
@@ -244,7 +248,7 @@ export async function resetPaths(paths: string[]) {
         .reduce<unknown>((v, k) => (v as Record<string, unknown>)[k], defaults),
     );
   initializeLanguages();
-  notice("Group reset. Save to apply.");
+  notice(t("ui.group_reset_save_to_apply.e9aec1"));
 }
 export async function action(
   action: string,
@@ -262,7 +266,7 @@ export async function action(
     },
     signal,
   );
-  if (r.message) notice(r.message, "success");
+  if (r.message_id || r.message) notice(responseMessage(r.message_id, r.message_args, r.message || ""), "success");
   return r;
 }
 export async function cleanupAction(
@@ -279,7 +283,7 @@ export async function cleanupAction(
     },
     signal,
   );
-  if (r.message) notice(r.message, "success");
+  if (r.message_id || r.message) notice(responseMessage(r.message_id, r.message_args, r.message || ""), "success");
   return r;
 }
 export async function platformAction(action: string) {
@@ -292,7 +296,10 @@ export async function run(task: () => Promise<unknown>) {
     await task();
   } catch (e) {
     if (!(e instanceof DOMException && e.name === "AbortError"))
-      notice(e instanceof Error ? e.message : String(e), "error");
+      if (e instanceof ApiError) {
+        const localized = responseMessage(e.message_id, e.message_args);
+        notice(localized || t("ui.operation_failed.c4e6ed"), "error", localized ? "" : e.message);
+      } else notice(t("ui.operation_failed.c4e6ed"), "error", e instanceof Error ? e.message : String(e));
   }
 }
 export async function download(file: string) {
@@ -324,7 +331,11 @@ export async function eventLoop(signal: AbortSignal) {
           await refreshState();
         }
         if (e.kind === "configuration_reloaded") await refreshState(true);
-        if (e.text) notice(e.text);
+        if (e.text || e.values.message_id) {
+          const args = e.values.message_args;
+          const localized = responseMessage(e.values.message_id, args, e.text || "");
+          notice(localized || e.text || "");
+        }
       }
       if (!batch.length) await delay(500, signal);
     } catch {

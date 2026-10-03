@@ -24,6 +24,32 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
+@font-face {
+  font-family: "Noto Sans Arabic";
+  src: url("../../../assets/fonts/NotoSansArabic-Regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+:root[lang="ar"] {
+  font-family: "Noto Sans Arabic", ui-sans-serif, system-ui, sans-serif;
+  font-size: 14px;
+  font-synthesis: weight;
+}
+:root[dir="rtl"] .app-shell {
+  direction: rtl;
+}
+:root[dir="rtl"] svg.directional {
+  transform: scaleX(-1);
+}
+:root[dir="rtl"] :is(code, input[type="number"], input[type="range"], .json-editor) {
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: plaintext;
+}
+:root[dir="rtl"] :is(input[type="text"], input[type="search"], textarea) {
+  unicode-bidi: plaintext;
+}
 :root[data-theme="dark"] {
   color-scheme: dark;
   --paper: #151a23;
@@ -143,7 +169,7 @@ textarea {
   line-height: 1.5;
 }
 select {
-  padding-right: 25px;
+  padding-inline-end: 25px;
 }
 input[type="range"] {
   width: 100%;
@@ -164,24 +190,24 @@ input[role="switch"] {
   background: var(--muted);
   border-radius: 11px;
   position: relative;
-  margin-right: 0;
+  margin-inline-end: 0;
 }
 input[role="switch"]::after {
   content: "";
   position: absolute;
   top: 3px;
-  left: 3px;
+  inset-inline-start: 3px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
   background: var(--raised);
-  transition: left 120ms ease-out;
+  transition: inset-inline-start 120ms ease-out;
 }
 input[role="switch"]:checked {
   background: var(--accent);
 }
 input[role="switch"]:checked::after {
-  left: 17px;
+  inset-inline-start: 17px;
 }
 code {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -199,11 +225,11 @@ svg {
 }
 .rail {
   background: var(--rail);
-  border-right: 1px solid var(--line);
+  border-inline-end: 1px solid var(--line);
   padding: 25px 14px 16px;
   position: fixed;
   top: 0;
-  left: 0;
+  inset-inline-start: 0;
   width: 200px;
   height: 100vh;
   height: 100dvh;
@@ -231,17 +257,17 @@ svg {
 }
 .settings-search > svg {
   position: absolute;
-  left: 10px;
+  inset-inline-start: 10px;
   color: var(--muted);
 }
 .settings-search input {
-  padding-left: 33px !important;
+  padding-inline-start: 33px !important;
   font-size: 12px;
 }
 .settings-search-results {
   position: absolute;
   top: 42px;
-  left: 0;
+  inset-inline-start: 0;
   width: 285px;
   z-index: 30;
   border: 1px solid var(--line);
@@ -257,7 +283,7 @@ svg {
   gap: 12px;
   width: 100%;
   border: 0;
-  text-align: left;
+  text-align: start;
   font-size: 12px;
 }
 .settings-search-results small {
@@ -386,7 +412,7 @@ h2 {
   font-weight: 500;
 }
 .field output {
-  text-align: right;
+  text-align: end;
   font-size: 13px;
   color: var(--muted);
 }
@@ -447,12 +473,12 @@ h2 {
   position: relative;
 }
 .combo-shell input {
-  padding-right: 29px !important;
+  padding-inline-end: 29px !important;
   text-overflow: ellipsis;
 }
 .combo-shell > svg {
   position: absolute;
-  right: 11px;
+  inset-inline-end: 11px;
   top: 11px;
   pointer-events: none;
   color: var(--muted);
@@ -473,7 +499,7 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 9px;
-  text-align: left;
+  text-align: start;
   border: 0;
   background: transparent;
   font-size: 12px;
@@ -514,7 +540,7 @@ details code {
   padding: 10px 0;
 }
 .removed-keyboard-languages .field {
-  padding-left: 12px;
+  padding-inline-start: 12px;
 }
 .catalog-toolbar {
   display: flex;
@@ -528,12 +554,12 @@ details code {
 }
 .search-input svg {
   position: absolute;
-  left: 12px;
+  inset-inline-start: 12px;
   top: 10px;
   color: var(--muted);
 }
 .search-input input {
-  padding-left: 39px !important;
+  padding-inline-start: 39px !important;
 }
 .model-result {
   padding: 17px 0;
@@ -580,7 +606,7 @@ progress {
   height: 4px;
   width: 85px;
   position: absolute;
-  right: 0;
+  inset-inline-end: 0;
   bottom: -8px;
 }
 .app-override-row {
@@ -641,7 +667,7 @@ progress {
 .history-row > .icon-button {
   position: absolute;
   top: 15px;
-  right: 0;
+  inset-inline-end: 0;
 }
 .config-toolbar {
   display: flex;
@@ -673,7 +699,7 @@ progress {
 .savebar {
   position: fixed;
   bottom: 18px;
-  left: calc(200px + (100vw - 200px) / 2);
+  inset-inline-start: calc(200px + (100vw - 200px) / 2);
   transform: translateX(-50%);
   width: min(600px, calc(100vw - 240px));
   display: flex;
@@ -686,6 +712,9 @@ progress {
   border-radius: 9px;
   box-shadow: 0 6px 24px #0002;
   z-index: 20;
+}
+:root[dir="rtl"] .savebar {
+  transform: translateX(50%);
 }
 .savebar span {
   display: flex;
@@ -703,7 +732,7 @@ progress {
 .notice {
   position: fixed;
   bottom: 85px;
-  right: 25px;
+  inset-inline-end: 25px;
   z-index: 60;
   background: var(--ink);
   color: var(--paper);
@@ -717,6 +746,15 @@ progress {
 .notice[data-kind="error"] {
   background: var(--danger);
   color: var(--raised);
+}
+.notice-detail {
+  display: block;
+  margin-block-start: 5px;
+  max-width: 65ch;
+  unicode-bidi: plaintext;
+}
+.notice-detail > summary {
+  color: inherit;
 }
 dialog {
   background: var(--raised);
@@ -774,7 +812,7 @@ dialog::backdrop {
     width: 40px;
   }
   .settings-search > svg {
-    left: 11px;
+    inset-inline-start: 11px;
     pointer-events: none;
   }
   .settings-search input {
@@ -793,7 +831,7 @@ dialog::backdrop {
   }
   .settings-search:focus-within input {
     position: absolute;
-    left: 0;
+    inset-inline-start: 0;
     width: 250px;
     padding: 7px 10px !important;
     background: var(--raised);
@@ -834,21 +872,24 @@ dialog::backdrop {
     justify-content: flex-start;
   }
   .control > input[role="switch"] {
-    margin-left: 0;
+    margin-inline-start: 0;
   }
   .field:has(input[role="switch"]) {
     grid-template-columns: minmax(0, 1fr) 34px;
   }
   .savebar {
-    left: calc(58px + (100vw - 58px) / 2);
+    inset-inline-start: calc(58px + (100vw - 58px) / 2);
     width: calc(100vw - 80px);
     bottom: 12px;
+  }
+  :root[dir="rtl"] .savebar {
+    transform: translateX(50%);
   }
   .savebar span {
     font-size: 11px;
   }
   .notice {
-    right: 14px;
+    inset-inline-end: 14px;
     bottom: 78px;
   }
   .model-result {
