@@ -2387,6 +2387,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "wayland-client",
+ "wayland-protocols",
  "windows",
  "windows-core",
  "windows-sys 0.60.2",

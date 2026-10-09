@@ -1,5 +1,5 @@
 ; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
-; catalog-sha256: 87b2e57c46aeb727547d17e8ede12e26e232c4fe0f033e4977910c23b5b1ba57
+; catalog-sha256: f9f6e1fc8de618484121153b4811ae94f39a33e339e9d945e15ce18d61879cce
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
     if language = "auto"
@@ -126,7 +126,8 @@ UiText(id, args := unset) {
         "notice.retryDisabled", "App is paused",
         "notice.retryFailed", "Retry failed. Try again.",
         "notice.retryCopied", "Copied. Paste manually.",
-        "notice.retrySent", "Retry sent"
+        "notice.retrySent", "Retry sent",
+        "notice.clipboardPreserveUnavailable", "Clipboard kept. Try another field or Retry."
     )
     static arabic := Map(
         "overlay.transcribing", "🎙 جارٍ التفريغ…",
@@ -246,7 +247,8 @@ UiText(id, args := unset) {
         "notice.retryDisabled", "التطبيق متوقف مؤقتًا",
         "notice.retryFailed", "تعذّرت الإعادة. حاول مجددًا.",
         "notice.retryCopied", "نُسخ النص. الصقه يدويًا.",
-        "notice.retrySent", "أُرسل النص مجددًا"
+        "notice.retrySent", "أُرسل النص مجددًا",
+        "notice.clipboardPreserveUnavailable", "الحافظة محفوظة. جرّب حقلًا آخر أو أعد المحاولة."
     )
     if !IsSet(SimpleSttUiLocale)
         UiSetLanguage()

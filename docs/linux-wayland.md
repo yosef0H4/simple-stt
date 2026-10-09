@@ -165,12 +165,13 @@ choice. Selecting a row switches temporarily; its separate Cycle checkbox
 controls whether the portal shortcut includes it. This allows cycling across
 tools as well as paste, typing, terminal paste, and clipboard-only delivery.
 
-The Linux shell verifies the transcript on the normal clipboard before sending
-one paste keystroke. Shift+Insert also verifies the primary selection. It retains
-the transcript rather than restoring old clipboard text after a timer, so a slow
-target cannot paste the previous contents. Completion means the shortcut was
-submitted; generic editors do not acknowledge insertion. Clipboard delivery is
-serialized and checks cancellation before injection.
+With **Keep clipboard clean** enabled, Linux first tries AT-SPI insertion without touching the clipboard. On Wayland compositors supporting `ext-data-control-v1`, the paste fallback saves every clipboard format in memory, publishes dictation, and sends the configured paste shortcut. After a complete text transfer and a 250 ms quiet period it restores the original formats. Shift+Insert also preserves the primary selection. New copies cancel restoration so they remain current. No read within eight seconds, a failed backup, or a failed shortcut leaves dictation available for Retry. Clipboard-only mode still copies normally.
+
+The transfer confirms that a client read the text; it cannot universally confirm editor insertion. The isolated test harness verifies actual GTK and Kitty insertion, including Unicode, as well as full-format restoration. Generic X11 preservation needs a supported AT-SPI target; otherwise it keeps the original clipboard and reports that delivery is unavailable.
+
+With preservation disabled, the existing paste path is retained. The transcript remains on the clipboard for manual paste; the shell does not
+restore old contents on a timer. Delivery is serialized and cancellation is
+checked before input.
 
 ## System tray
 
@@ -179,7 +180,7 @@ Left-click opens Settings. The context menu can start or stop recording, open
 Settings, unload the speech model, or close Simple STT. Closing shuts down the
 capture service cleanly, so systemd's `Restart=on-failure` does not reopen it.
 
-Paste order:
+Paste order when clipboard preservation is disabled:
 
 1. `resources/bin/linux-fast-paste --portal` on Wayland when available.
 2. `linux-fast-paste --uinput` fallback when available.

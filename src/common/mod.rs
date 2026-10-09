@@ -4,3 +4,6 @@ pub mod shell_protocol;
 
 #[cfg(target_os = "linux")]
 pub mod private_clipboard;
+
+#[cfg(target_os = "linux")]
+pub mod wayland_clipboard;

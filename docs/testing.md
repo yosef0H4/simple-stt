@@ -367,3 +367,13 @@ Rust tests exercise bounded cache replacement, stale/cancelled/empty writes, and
 ### UI localization
 
 Run `node scripts/test-settings-localization.cjs` with Playwright available. Set `SETTINGS_VISUAL_REVIEW=1` to retain English/Arabic light/dark captures at 360/768/1280px, including RTL, draft language changes, dropdowns, search, and mixed identifiers. The suite also checks 200% zoom. Run `cargo run --bin overlay-e2e -- --offscreen` for isolated PNG rendering with the production Pango/Cairo font, bidi, measurement and drawing paths under `artifacts/localization/offscreen`. For an explicitly requested desktop check, run `cargo run --bin overlay-e2e` inside KDE Wayland with Spectacle to capture the production overlay's Arabic loading/ready/unloaded, multiline, mixed-direction, and recording states under `artifacts/localization/native`. These are screenshots of a real compositor surface, not browser approximations. Inspect joining, clipping, alignment, waveform order, and font fallback. Native Windows/AHK validation still requires `scripts\test-full.cmd` on Windows.
+
+## Isolated Wayland clipboard restoration
+
+Build `simple-stt-linux` and the native paste helper, then run:
+
+```sh
+python scripts/test-linux-unicode-input.py
+```
+
+The harness creates a private D-Bus session, XDG home/runtime and virtual KWin compositor. It never sends input or clipboard requests to the user's desktop. It exercises the production clipboard transaction and paste helper against real GTK and Kitty targets, compares original text, custom binary and PNG formats after restoration, and covers Retry routing and selection replacement. The earlier rejected native keysym experiment's Kitty wire-order evidence is retained under ignored `artifacts/linux-unicode-failure/`.

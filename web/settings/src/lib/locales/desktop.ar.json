@@ -116,5 +116,6 @@
   "notice.retryDisabled": "التطبيق متوقف مؤقتًا",
   "notice.retryFailed": "تعذّرت الإعادة. حاول مجددًا.",
   "notice.retryCopied": "نُسخ النص. الصقه يدويًا.",
-  "notice.retrySent": "أُرسل النص مجددًا"
+  "notice.retrySent": "أُرسل النص مجددًا",
+  "notice.clipboardPreserveUnavailable": "الحافظة محفوظة. جرّب حقلًا آخر أو أعد المحاولة."
 }

@@ -93,7 +93,7 @@
   "ui.ctrl_shift_v.a939f7": "Ctrl+Shift+V",
   "ui.ctrl_v.652c7d": "Ctrl+V",
   "ui.keep_clipboard_clean.10b3d3": "Keep clipboard clean",
-  "ui.insert_without_the_clipboard_where.4abefd": "Insert without the clipboard where supported; otherwise exclude dictation from supported clipboard histories. Restore previous contents only after confirmed insertion; otherwise keep the text available safely. Some clipboard managers ignore exclusion hints. Clipboard-only mode always copies normally.",
+  "ui.insert_without_the_clipboard_where.4abefd": "Keep previous clipboard contents after paste. Linux restores all formats after the text is read; unsupported targets keep dictation for Retry. Clipboard-only mode copies normally.",
   "ui.gradual_typing.e05780": "Gradual typing",
   "ui.turn_off_to_insert_the.e880c8": "Turn off to insert the whole transcript at once.",
   "ui.speed.2d2cb0": "Speed",

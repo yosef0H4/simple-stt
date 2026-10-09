@@ -82,6 +82,9 @@ need("src/common/private_clipboard.rs", 'x-kde-passwordManagerHint', 'INCR', 'MA
 need("src/bin/simple_stt_linux.rs", 'RetryDelivery', 'NewShortcut::new("retry"', 'insert_text_without_clipboard', 'memory_delivery_command')
 need("resources/linux-fast-paste.c", '--insert-text', 'ATSPI_ROLE_PASSWORD_TEXT', 'g_dbus_connection_call_sync', 'attempt\\n')
 need("scripts/test-linux-clean-clipboard.py", 'test_retry', 'application/x-simple-stt-test', 'UTF8_STRING', 'empty retry cancelled work')
+need("src/common/wayland_clipboard.rs", 'x-kde-passwordManagerHint', 'read_finished', 'state.cancelled[0]', 'MAX_TOTAL', 'clipboard changed during backup')
+need("src/bin/simple_stt_linux.rs", 'preserving_wayland_paste', 'ClipboardTransaction', 'notice.clipboardPreserveUnavailable', 'clipboard_free_input_never_falls_back_after_submission')
+need("scripts/test-linux-unicode-input.py", '--virtual', 'DBUS_SESSION_BUS_ADDRESS', 'application/x-simple-stt-e2e', 'image/png')
 
 if errors:
     for error in errors:

@@ -93,8 +93,8 @@ impl Frame {
             "PCM sample count does not match body length"
         );
         let mut samples = Vec::with_capacity(count);
-        for bytes in self.body[8..].chunks_exact(2) {
-            samples.push(i16::from_le_bytes(bytes.try_into().unwrap()));
+        for bytes in self.body[8..].as_chunks::<2>().0 {
+            samples.push(i16::from_le_bytes(*bytes));
         }
         Ok((sample_rate, samples))
     }

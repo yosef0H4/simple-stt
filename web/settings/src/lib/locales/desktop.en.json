@@ -116,5 +116,6 @@
   "notice.retryDisabled": "App is paused",
   "notice.retryFailed": "Retry failed. Try again.",
   "notice.retryCopied": "Copied. Paste manually.",
-  "notice.retrySent": "Retry sent"
+  "notice.retrySent": "Retry sent",
+  "notice.clipboardPreserveUnavailable": "Clipboard kept. Try another field or Retry."
 }
