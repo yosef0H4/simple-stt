@@ -31,6 +31,7 @@
   "ui.shortcuts.90c935": "الاختصارات",
   "ui.refresh_or_register_system_shortcuts.5cdfff": "تحديث اختصارات النظام أو تسجيلها",
   "ui.configure_system_shortcuts.4c779e": "إعداد اختصارات النظام",
+  "ui.set_up_shortcuts.a104f9": "إعداد الاختصارات",
   "ui.shortcut_system.7d97bc": "نظام الاختصارات",
   "ui.desktop_portal_shortcuts_are_assigned.48b1ea": "تُعيّن اختصارات بوابة سطح المكتب في نافذة النظام. تُحفظ اختصارات X11 هنا، وتُربط أوامر سطح المكتب في مدير النوافذ.",
   "ui.linux_support_is_experimental_kde.199d9c": "دعم لينكس تجريبي؛ اختُبر KDE Plasma Wayland على جهاز فعلي.",
@@ -237,5 +238,9 @@
   "ui.spanish_language.368635": "الإسبانية",
   "ui.italian_language.9e6234": "الإيطالية",
   "ui.language_name.43ea60": "اللغة {name}",
-  "ui.download_model.16005c": "تنزيل {model}"
+  "ui.download_model.16005c": "تنزيل {model}",
+  "ui.downloadRecommendedPrompt": "تنزيل النماذج الموصى بها؟",
+  "ui.downloadSelected": "تنزيل",
+  "ui.skipModelSetup": "تخطي",
+  "ui.startAppDownload": "شغّل التطبيق لتنزيل النماذج."
 }

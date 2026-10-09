@@ -47,7 +47,7 @@ The current schema is version 9:
 }
 ```
 
-Every parseable file is normalized immediately: exact current fields with valid values are retained, missing or invalid fields receive defaults, and unknown/obsolete fields are dropped. Schema-v7/v8 fixed English or Arabic selections migrate into `single_model_filename`; Follow keyboard migrates into `language_models.en` and `.ar`. Missing filenames are retained for recovery. The old default Windows CUDA runtime path migrates to Vulkan, and an existing English model is copied into the shared model directory when present. A syntactically malformed file is preserved byte-for-byte and Settings requires an explicit Import or Reset preview followed by Save before replacing it.
+Every parseable file is normalized immediately: exact current fields with valid values are retained, missing or invalid fields receive defaults, and unknown/obsolete fields are dropped. This first release uses the current schema only; explicit unsupported schema versions are rejected without rewriting the file; obsolete model-selection fields are ignored and no runtime/model paths or files are migrated. Current model assignments, including missing filenames, are retained. A syntactically malformed file is preserved byte-for-byte and Settings requires an explicit Import or Reset preview followed by Save before replacing it.
 
 `speech.selection_mode` is `single_model` (Use one model) or `follow_keyboard`.
 Fresh installations use one model with `single_model_filename: null` (None).
@@ -73,8 +73,7 @@ or None. Existing assignments, including None and removed languages, are retaine
 Save activates choices. Model installer handles downloads and removal independently;
 installing a model never replaces an assignment, and saved assignments block removal.
 
-`speech.inference_device` is `auto`, `gpu`, or `cpu`; old `nvidia_gpu` values are
-accepted as `gpu`. Vulkan GPU selection prefers a physical discrete GPU.
+`speech.inference_device` is `auto`, `gpu`, or `cpu`. Vulkan GPU selection prefers a physical discrete GPU.
 
 Writes use a temporary file, flush it, and atomically replace the destination. Relative runtime/model paths are preserved in JSON and resolved against the runtime root only when used. An unavailable `audio.preferred_device_id` is retained while capture temporarily follows the system default.
 

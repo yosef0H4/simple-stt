@@ -371,6 +371,9 @@ fn known_size_mb(file: &str) -> Option<u32> {
 
 fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32>) -> Option<u8> {
     let file = file.to_ascii_lowercase();
+    if file == "lemura-arabic-asr-lite-q8_0.gguf" {
+        return Some(2);
+    }
     let preferred_family =
         file.starts_with("tdt_ctc-110m") || file.starts_with("realtime_eou_120m-v1");
     match device.effective() {
@@ -533,6 +536,7 @@ mod tests {
             .find(|model| model.file == "lemura-arabic-asr-lite-q8_0.gguf")
             .unwrap();
         assert_eq!(model.languages, ["Arabic (ar)"]);
+        assert!(model.recommended);
         assert_eq!(model.download_url.as_deref(), Some(ARABIC_Q8_URL));
         assert_eq!(pinned_model_sha256(&model.file).unwrap().len(), 64);
         fs::write(temp.path().join(&model.file), b"fixture").unwrap();
@@ -541,6 +545,7 @@ mod tests {
             .find(|m| m.file == model.file)
             .unwrap();
         assert_eq!(installed.download_url, model.download_url);
+        assert!(installed.recommended);
     }
     #[test]
     fn catalog_preserves_legacy_families() {
@@ -581,6 +586,23 @@ mod tests {
             "tdt_ctc-110m-f16.gguf",
             &InferenceDevice::Cpu
         ));
+    }
+    #[test]
+    fn arabic_q8_is_recommended_on_cpu_gpu_and_auto() {
+        for device in [
+            InferenceDevice::Cpu,
+            InferenceDevice::Gpu,
+            InferenceDevice::Auto,
+        ] {
+            assert!(is_recommended_for_device(
+                "lemura-arabic-asr-lite-q8_0.gguf",
+                &device
+            ));
+            assert!(!is_recommended_for_device(
+                "lemura-arabic-asr-lite-f16.gguf",
+                &device
+            ));
+        }
     }
     #[test]
     fn only_approved_names_are_downloadable() {

@@ -47,7 +47,7 @@ const { chromium } = require("playwright");
       await fetch(parsed.origin + "/api/normalize", {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ schema_version: 8 }),
+        body: JSON.stringify({ schema_version: 9 }),
       })
     ).json();
     assertConfig(normalized.config);
@@ -108,7 +108,7 @@ const { chromium } = require("playwright");
       body: "{}",
     });
     console.log(
-      "PASS TypeScript contracts against real Rust state/defaults/migration/discovery/catalog and compiled browser UI under CSP",
+      "PASS TypeScript contracts against real Rust state/defaults/normalization/discovery/catalog and compiled browser UI under CSP",
     );
   } finally {
     await browser?.close();

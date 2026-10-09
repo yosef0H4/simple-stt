@@ -27,12 +27,22 @@ AutoHotkey shell with a Rust Linux shell.
   from OpenWhispr and supports terminal-aware paste, Shift+Insert, XTest,
   optional uinput, and optional RemoteDesktop portal paste.
 
+## Installation
+
+For Fedora and Arch/Omarchy, use the installable packages described in
+[Linux packages](linux-installation.md). The commands below are for checkout
+development, whose settings and runtime paths stay isolated from installed apps.
+
 ## Build
 
+For desktop use, build and install the native package:
+
 ```bash
-cargo build --release
-python3 scripts/build-linux-fast-paste.py
+scripts/package-linux-release.sh fedora  # or arch
 ```
+
+Cargo build outputs are for isolated tests only. See the installation guide for
+DNF/Pacman installation; do not launch the desktop app from a build directory.
 
 The paste helper build is best-effort. If `libxtst-dev` / `libX11` headers are
 not installed, Simple STT still works but automatic paste falls back to tools
@@ -94,44 +104,48 @@ ordering can change after reconnects or reboots.
 
 ## Start the daemon
 
-From the checkout after building:
+After installing the package:
 
 ```bash
-target/release/simple-stt-linux daemon
+simple-stt daemon
 ```
 
-Or install a systemd user service:
+The package already supplies the systemd user service:
 
 ```bash
-target/release/simple-stt-linux install-user-service
 systemctl --user daemon-reload
 systemctl --user enable --now simple-stt-linux.service
 ```
 
 ## Bind desktop shortcuts
 
-Ask Simple STT to open the detected desktop shortcut settings:
+Wayland automatically binds shortcuts through the portal when the app starts.
+Use Settings → General → **Set up shortcuts**, or request configuration again:
 
 ```bash
-target/release/simple-stt-linux configure-shortcuts
+simple-stt configure-shortcuts
 ```
 
-If no compatible settings application is detected, the command prints the
-manual commands below.
+On Wayland this requests the active portal session’s configuration UI. The app
+must be running; portal failures appear in Settings instead of opening an
+unrelated desktop panel. Previously approved bindings may skip the first-run
+dialog. Desktop-managed shortcuts open the detected desktop settings instead.
+If no compatible settings application is detected in that mode, the command
+prints the manual commands below.
 
 Print the commands:
 
 ```bash
-target/release/simple-stt-linux print-shortcut-commands
+simple-stt print-shortcut-commands
 ```
 
 Bind these in your desktop's shortcut settings:
 
 ```text
-Toggle dictation: /path/to/simple-stt/target/release/simple-stt-linux toggle
-Cancel dictation: /path/to/simple-stt/target/release/simple-stt-linux cancel
-Unload model:     /path/to/simple-stt/target/release/simple-stt-linux unload-model
-Stop daemon:      /path/to/simple-stt/target/release/simple-stt-linux shutdown
+Toggle dictation: simple-stt toggle
+Cancel dictation: simple-stt cancel
+Unload model:     simple-stt unload-model
+Stop daemon:      simple-stt shutdown
 ```
 
 Recommended first shortcut: `Super+Alt+Space` for toggle. Caps Lock and true
@@ -191,7 +205,7 @@ Paste order when clipboard preservation is disabled:
 For terminals, use:
 
 ```bash
-target/release/simple-stt-linux toggle --shift-insert
+simple-stt toggle --shift-insert
 ```
 
 or bind the stop/toggle shortcut with `--shift-insert` if your terminal drops

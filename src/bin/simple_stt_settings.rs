@@ -50,6 +50,7 @@ struct AppState {
     capture: Option<CaptureConnection>,
     last_activity: Mutex<Instant>,
     closing: AtomicBool,
+    config_lock: Mutex<()>,
     cleanup_auth_status: Arc<Mutex<Value>>,
 }
 
@@ -147,6 +148,7 @@ fn run() -> Result<()> {
         capture,
         last_activity: Mutex::new(Instant::now()),
         closing: AtomicBool::new(false),
+        config_lock: Mutex::new(()),
         cleanup_auth_status: Arc::new(Mutex::new(json!({"state":"idle"}))),
     });
     let url = format!("{origin}/#token={web_token}");
@@ -236,6 +238,7 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
         (&Method::Get, "/api/events") => events_response(request, state),
         (&Method::Post, "/api/normalize") => {
             let input: Value = serde_json::from_slice(&read_body(request)?)?;
+            AppConfig::validate_json_schema(&input)?;
             let config = AppConfig::normalize_json(&input);
             config.validate()?;
             Ok(json_response(
@@ -245,6 +248,14 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
             ))
         }
         (&Method::Post, "/api/save") => save_response(request, state),
+        (&Method::Post, "/api/model-setup") => {
+            let choice: simple_stt::model_setup::ModelSetupChoice =
+                serde_json::from_slice(&read_body(request)?)?;
+            let _config_guard = state.config_lock.lock().expect("config lock");
+            let config = AppConfig::load()?;
+            simple_stt::model_setup::accept_choice(&AppConfig::local_data_dir(), &config, choice)?;
+            Ok(json_response(StatusCode(200), &json!({"ok":true}), state))
+        }
         (&Method::Post, "/api/action") => action_response(request, state),
         (&Method::Post, "/api/cleanup-action") => cleanup_action_response(request, state),
         (&Method::Post, "/api/platform-action") => platform_action(request, state),
@@ -343,7 +354,31 @@ fn locate_hotkey_recorder() -> Result<(PathBuf, PathBuf)> {
     Ok((runtime, script))
 }
 
+fn model_setup_state(config: &AppConfig) -> Result<Value> {
+    let models = simple_stt::models::catalog_for_config(config);
+    let recommended = simple_stt::model_setup::recommended_files(config)?;
+    let missing = [
+        recommended.english_file.as_str(),
+        recommended.arabic_file.as_str(),
+    ]
+    .iter()
+    .any(|file| {
+        !models
+            .iter()
+            .any(|model| model.file == *file && model.installed)
+    });
+    let (show, pending) =
+        simple_stt::model_setup::prompt_state(&AppConfig::local_data_dir(), missing)?;
+    Ok(json!({
+        "show": show,
+        "pending": pending,
+        "english_file": recommended.english_file,
+        "arabic_file": recommended.arabic_file
+    }))
+}
+
 fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
+    let config_guard = state.config_lock.lock().expect("config lock");
     let path = AppConfig::config_path();
     let mut raw = fs::read(&path).unwrap_or_default();
     let mut config = match AppConfig::load() {
@@ -366,12 +401,22 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             ))
         }
     };
+    let setup_outcome = simple_stt::model_setup::finalize_pending(
+        &AppConfig::local_data_dir(),
+        &path,
+        &mut config,
+    )?;
+    if setup_outcome == simple_stt::model_setup::FinalizeOutcome::Applied {
+        let _ = capture_request(state, ShellCommand::ReloadConfig);
+    }
     cleanup::apply_development_env(&mut config.cleanup);
     raw = fs::read(&path)?;
     let models = simple_stt::models::catalog_for_config(&config)
         .into_iter()
         .map(|model| json!({"family":model.family,"quant":model.quant,"file":model.file,"size_mb":model.size_mb,"recommended":model.recommended,"installed":model.installed,"languages":model.languages,"download_url":model.download_url}))
         .collect::<Vec<_>>();
+    let model_setup = model_setup_state(&config)?;
+    drop(config_guard);
     let service_online = capture_request(state, ShellCommand::Ping).is_ok();
     let microphones = if service_online {
         capture_request(state, ShellCommand::ListInputs)
@@ -414,7 +459,8 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "linux_automation":linux_automation_state(),
             "microphones":microphones,
             "keyboard_languages":simple_stt::capture::input_language::keyboard_languages(),
-            "models":models
+            "models":models,
+            "model_setup":model_setup
             ,"cleanup": {
                 "compatible_key_saved": compatible_key_saved,
                 "chatgpt_connected": chatgpt_connected,
@@ -434,6 +480,7 @@ fn cleanup_action_response(
     let config = if body.config.is_null() {
         AppConfig::load()?
     } else {
+        AppConfig::validate_json_schema(&body.config)?;
         AppConfig::normalize_json(&body.config)
     };
     let value = match body.action.as_str() {
@@ -607,6 +654,7 @@ fn save_response(
     request: &mut Request,
     state: &AppState,
 ) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
+    let _config_guard = state.config_lock.lock().expect("config lock");
     let body: SaveRequest = serde_json::from_slice(&read_body(request)?)?;
     let path = AppConfig::config_path();
     let current = fs::read(&path).unwrap_or_default();
@@ -614,6 +662,7 @@ fn save_response(
         hash_bytes(&current) == body.expected_hash,
         "config changed outside Settings; reload before saving"
     );
+    AppConfig::validate_json_schema(&body.config)?;
     let config = AppConfig::normalize_json(&body.config);
     config.validate()?;
     config.save()?;
@@ -1115,10 +1164,15 @@ fn configure_shortcuts() -> Result<()> {
         .parent()
         .context("settings executable has no directory")?
         .join("simple-stt-linux");
-    Command::new(executable)
+    let output = Command::new(executable)
         .arg("configure-shortcuts")
-        .spawn()
+        .output()
         .context("requesting Linux shortcut configuration")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
     Ok(())
 }
 #[cfg(not(target_os = "linux"))]

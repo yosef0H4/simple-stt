@@ -9,31 +9,35 @@ export function compatible(model: Model, language: Language): boolean {
     (id === "ar" && model.file.startsWith("lemura-arabic-asr-lite-"))
   );
 }
+const compareFiles = (a: Model, b: Model) =>
+  a.file < b.file ? -1 : a.file > b.file ? 1 : 0;
+
+export function orderModels(models: Model[], language?: Language): Model[] {
+  return [...models].sort(
+    (a, b) =>
+      Number(b.recommended) - Number(a.recommended) ||
+      (language
+        ? Number(compatible(b, language)) - Number(compatible(a, language))
+        : 0) ||
+      Number(/q8/i.test(b.quant)) - Number(/q8/i.test(a.quant)) ||
+      (a.size_mb ?? Infinity) - (b.size_mb ?? Infinity) ||
+      compareFiles(a, b),
+  );
+}
+
 export function recommendedModel(
   models: Model[],
   language: Language,
 ): Model | undefined {
-  return models
-    .filter((m) => m.installed && compatible(m, language))
-    .sort(
-      (a, b) =>
-        Number(b.recommended) - Number(a.recommended) ||
-        Number(/q8/i.test(b.quant)) - Number(/q8/i.test(a.quant)) ||
-        (a.size_mb ?? Infinity) - (b.size_mb ?? Infinity) ||
-        (a.file < b.file ? -1 : a.file > b.file ? 1 : 0),
-    )[0];
+  return orderModels(
+    models.filter((model) => model.installed && compatible(model, language)),
+    language,
+  )[0];
 }
 export function modelItems(models: Model[], language?: Language): ComboItem[] {
   return [
     { value: "", label: "None" },
-    ...models
-      .filter((m) => m.installed)
-      .sort(
-        (a, b) =>
-          (language
-            ? Number(compatible(b, language)) - Number(compatible(a, language))
-            : 0) || a.file.localeCompare(b.file),
-      )
+    ...orderModels(models.filter((model) => model.installed), language)
       .map((m) => ({
         value: m.file,
         label: `${m.family} · ${m.quant}`,

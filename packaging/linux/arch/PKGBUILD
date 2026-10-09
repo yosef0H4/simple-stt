@@ -1,0 +1,17 @@
+pkgname=simple-stt
+pkgver=0.3.0
+pkgrel=3
+pkgdesc='Offline speech-to-text dictation for Linux desktops'
+arch=('x86_64')
+url='https://github.com/yosef0H4/simple-stt'
+license=('GPL-2.0-only' 'MIT' 'OFL-1.1')
+depends=('alsa-lib' 'libx11' 'libxtst' 'pango' 'cairo' 'vulkan-icd-loader' 'gcc-libs' 'glib2' 'at-spi2-core' 'systemd' 'xdg-utils' 'libsecret' 'xclip' 'xdotool' 'wl-clipboard' 'wtype')
+optdepends=('ydotool: cross-desktop key injection fallback')
+options=('!debug')
+source=('simple-stt-stage.tar')
+sha256sums=('SKIP')
+
+package() {
+  install -d "$pkgdir/usr"
+  cp -a "$srcdir/stage/." "$pkgdir/"
+}

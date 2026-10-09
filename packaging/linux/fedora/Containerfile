@@ -1,0 +1,19 @@
+FROM quay.io/fedora/fedora:44
+RUN dnf -y install \
+    alsa-lib-devel cairo-devel curl gcc gcc-c++ git glib2-devel \
+    libX11-devel libXtst-devel make nodejs npm openssl-devel binutils \
+    pango-devel pkgconf-pkg-config python3 rpm-build rustup tar \
+    at-spi2-core-devel vulkan-loader wl-clipboard wtype xdg-utils libsecret \
+    xclip xdotool systemd && dnf clean all
+RUN useradd --create-home --uid 1000 builder && mkdir -p /work && chown builder:builder /work
+ENV HOME=/home/builder RUSTUP_HOME=/home/builder/.rustup CARGO_HOME=/home/builder/.cargo PATH=/home/builder/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+USER builder
+RUN if command -v rustup >/dev/null 2>&1; then rustup --version >/dev/null; else rustup-init -y --no-modify-path --default-toolchain none; fi \
+    && rustup toolchain install 1.99.0 --profile minimal && rustup default 1.99.0
+ENV CARGO_HOME=/work/cargo-cache CARGO_TARGET_DIR=/work/cargo-target npm_config_cache=/work/npm-cache
+COPY packaging/linux/container-build.sh /packaging/linux/container-build.sh
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/bash", "/packaging/linux/container-build.sh", "fedora"]
+USER root
+RUN dnf -y install cairo-gobject-devel && dnf clean all
+USER builder

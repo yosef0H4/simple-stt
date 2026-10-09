@@ -106,8 +106,6 @@ pub struct AppDeliveryOverride {
 #[value(rename_all = "snake_case")]
 pub enum InferenceDevice {
     Cpu,
-    #[serde(alias = "nvidia_gpu")]
-    #[value(alias = "nvidia_gpu")]
     Gpu,
     #[default]
     Auto,
@@ -523,7 +521,11 @@ fn default_parakeet_runtime_dir() -> String {
     }
     #[cfg(target_os = "linux")]
     {
-        "external/parakeet-runtime/parakeet-linux-vulkan".to_owned()
+        if is_linux_installation(&runtime_root()) {
+            "runtime".to_owned()
+        } else {
+            "external/parakeet-runtime/parakeet-linux-vulkan".to_owned()
+        }
     }
     #[cfg(all(not(windows), not(target_os = "linux")))]
     {
@@ -538,7 +540,12 @@ fn default_model_dir() -> String {
     }
     #[cfg(target_os = "linux")]
     {
-        "external/parakeet-runtime/models".to_owned()
+        linux_model_dir(
+            &runtime_root(),
+            &dirs::data_local_dir().unwrap_or_else(|| PathBuf::from(".")),
+        )
+        .to_string_lossy()
+        .into_owned()
     }
     #[cfg(all(not(windows), not(target_os = "linux")))]
     {
@@ -735,58 +742,19 @@ impl AppConfig {
             fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
-        let mut value = Self::normalize_json(&parsed);
-        value.migrate_legacy_runtime(&parsed)?;
+        Self::validate_json_schema(&parsed)?;
+        let value = Self::normalize_json(&parsed);
         value.save_to(path)?;
         Ok(value)
     }
 
-    fn migrate_legacy_runtime(&mut self, input: &serde_json::Value) -> Result<()> {
-        if input["schema_version"].as_u64().unwrap_or(0) >= u64::from(CONFIG_SCHEMA_VERSION) {
-            return Ok(());
+    pub fn validate_json_schema(input: &serde_json::Value) -> Result<()> {
+        if let Some(version) = input.get("schema_version") {
+            anyhow::ensure!(
+                version.as_u64() == Some(u64::from(CONFIG_SCHEMA_VERSION)),
+                "unsupported config schema_version {version}; expected {CONFIG_SCHEMA_VERSION}"
+            );
         }
-        #[cfg(windows)]
-        {
-            let speech = &input["speech"];
-            let old_runtime = r"external\parakeet-runtime\parakeet-windows-cuda";
-            let old_models = r"external\parakeet-runtime\parakeet-windows-cuda\models";
-            if speech["runtime_dir"].as_str() == Some(old_runtime) {
-                self.speech.runtime_dir = default_parakeet_runtime_dir();
-            }
-            if speech["model_dir"].as_str() == Some(old_models) {
-                let source = self.resolve_from_runtime_root(old_models).join(
-                    self.speech
-                        .language_models
-                        .get("en")
-                        .and_then(|name| name.as_deref())
-                        .unwrap_or("tdt_ctc-110m-q8_0.gguf"),
-                );
-                self.speech.model_dir = default_model_dir();
-                let destination = self.model_dir_path().join(
-                    self.speech
-                        .language_models
-                        .get("en")
-                        .and_then(|name| name.as_deref())
-                        .unwrap_or("tdt_ctc-110m-q8_0.gguf"),
-                );
-                if source.is_file() && !destination.exists() {
-                    if let Some(parent) = destination.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::copy(&source, &destination).with_context(|| {
-                        format!("migrating English model from {}", source.display())
-                    })?;
-                }
-            }
-        }
-        #[cfg(target_os = "linux")]
-        if input["speech"]["runtime_dir"].as_str()
-            == Some("external/parakeet-runtime/parakeet-linux")
-        {
-            self.speech.runtime_dir = default_parakeet_runtime_dir();
-        }
-        #[cfg(not(any(windows, target_os = "linux")))]
-        let _ = input;
         Ok(())
     }
 
@@ -824,39 +792,6 @@ impl AppConfig {
                         .insert(language.clone(), Some(filename.to_owned()));
                 }
             }
-        }
-        if input["schema_version"].as_u64().unwrap_or(0) < 9
-            && input["speech"]["selection_mode"].is_null()
-            && input["speech"].is_object()
-        {
-            let speech = &input["speech"];
-            let legacy = |field: &str, default: &str| {
-                Some(speech[field].as_str().unwrap_or(default).to_owned())
-                    .filter(|filename| validate_model_filename(filename).is_ok())
-            };
-            let english_default = speech["selected_model_filename"]
-                .as_str()
-                .unwrap_or("tdt_ctc-110m-q8_0.gguf");
-            let english = legacy("english_model_filename", english_default);
-            let arabic = legacy("arabic_model_filename", "lemura-arabic-asr-lite-q8_0.gguf");
-            normalized
-                .speech
-                .language_models
-                .insert("en".into(), english.clone());
-            normalized
-                .speech
-                .language_models
-                .insert("ar".into(), arabic.clone());
-            normalized.speech.selection_mode = if speech["language_mode"] == "follow_keyboard" {
-                ModelSelectionMode::FollowKeyboard
-            } else {
-                ModelSelectionMode::SingleModel
-            };
-            normalized.speech.single_model_filename = if speech["language_mode"] == "arabic" {
-                arabic
-            } else {
-                english
-            };
         }
         if normalized.general.retry_delivery_hotkey.trim().is_empty() {
             normalized.general.retry_delivery_hotkey = defaults.general.retry_delivery_hotkey;
@@ -1212,8 +1147,31 @@ pub fn runtime_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+#[cfg(target_os = "linux")]
+fn is_linux_installation(root: &Path) -> bool {
+    root.join("linux-installation").is_file()
+}
+
+#[cfg(target_os = "linux")]
+fn linux_model_dir(root: &Path, data_home: &Path) -> PathBuf {
+    if is_linux_installation(root) {
+        data_home.join("simple-stt").join("models")
+    } else {
+        PathBuf::from("external/parakeet-runtime/models")
+    }
+}
+
 pub fn app_instance_id() -> String {
-    let root = runtime_root();
+    instance_id_for_root(&runtime_root())
+}
+
+fn instance_id_for_root(root: &Path) -> String {
+    // Package updates and changes to the library prefix share one user profile.
+    // Checkouts retain their isolated profiles, including explicit runtime roots.
+    #[cfg(target_os = "linux")]
+    if is_linux_installation(root) {
+        return "installed".to_owned();
+    }
     let stem = root
         .file_name()
         .and_then(|value| value.to_str())
@@ -1261,34 +1219,46 @@ fn instance_local_data_dir() -> PathBuf {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "linux")]
     #[test]
-    fn clipboard_and_retry_defaults_upgrade_schema9_without_overwriting_existing_choices() {
-        let old = serde_json::json!({"schema_version":9,"output":{"delivery_mode":"paste_ctrl_v"}});
-        let upgraded = AppConfig::normalize_json(&old);
-        assert!(upgraded.output.preserve_clipboard);
-        assert_eq!(upgraded.output.delivery_mode, TextDeliveryMode::PasteCtrlV);
-        assert!(!upgraded.general.retry_delivery_hotkey.is_empty());
+    fn installed_linux_paths_are_stable_and_models_are_user_owned() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        assert_ne!(
+            instance_id_for_root(first.path()),
+            instance_id_for_root(second.path())
+        );
+        assert_eq!(
+            linux_model_dir(first.path(), data.path()),
+            PathBuf::from("external/parakeet-runtime/models")
+        );
+        for root in [first.path(), second.path()] {
+            fs::write(root.join("linux-installation"), "").unwrap();
+            assert_eq!(instance_id_for_root(root), "installed");
+            assert_eq!(
+                linux_model_dir(root, data.path()),
+                data.path().join("simple-stt/models")
+            );
+        }
+    }
+
+    #[test]
+    fn missing_fields_receive_defaults_without_overwriting_existing_choices() {
+        let partial =
+            serde_json::json!({"schema_version":9,"output":{"delivery_mode":"paste_ctrl_v"}});
+        let normalized = AppConfig::normalize_json(&partial);
+        assert!(normalized.output.preserve_clipboard);
+        assert_eq!(
+            normalized.output.delivery_mode,
+            TextDeliveryMode::PasteCtrlV
+        );
+        assert!(!normalized.general.retry_delivery_hotkey.is_empty());
         let off = AppConfig::normalize_json(
             &serde_json::json!({"output":{"preserve_clipboard":false},"general":{"retry_delivery_hotkey":"None"}}),
         );
         assert!(!off.output.preserve_clipboard);
         assert_eq!(off.general.retry_delivery_hotkey, "None");
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn legacy_linux_runtime_migrates_to_vulkan() {
-        let old = serde_json::json!({"schema_version": 7, "speech": {
-            "runtime_dir": "external/parakeet-runtime/parakeet-linux"
-        }});
-        let mut config = AppConfig::normalize_json(&old);
-        config.migrate_legacy_runtime(&old).unwrap();
-        assert_eq!(config.speech.runtime_dir, default_parakeet_runtime_dir());
-        let custom =
-            serde_json::json!({"schema_version": 7, "speech": {"runtime_dir": "/custom/runtime"}});
-        let mut config = AppConfig::normalize_json(&custom);
-        config.migrate_legacy_runtime(&custom).unwrap();
-        assert_eq!(config.speech.runtime_dir, "/custom/runtime");
     }
 
     #[test]
@@ -1340,7 +1310,7 @@ mod tests {
     }
 
     #[test]
-    fn schema7_round_trip() {
+    fn current_config_round_trip() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
         let mut config = AppConfig::default();
@@ -1507,22 +1477,43 @@ mod tests {
     }
 
     #[test]
-    fn schema_seven_english_model_is_preserved() {
-        let legacy = serde_json::json!({
-            "schema_version": 7,
-            "speech": {"selected_model_filename": "tdt_ctc-110m-f16.gguf", "inference_device": "nvidia_gpu"}
-        });
-        let migrated = AppConfig::normalize_json(&legacy);
-        assert_eq!(
-            migrated.speech.single_model_filename.as_deref(),
-            Some("tdt_ctc-110m-f16.gguf")
-        );
-        assert_eq!(
-            migrated.speech.selection_mode,
-            ModelSelectionMode::SingleModel
-        );
-        assert_eq!(migrated.speech.inference_device, InferenceDevice::Gpu);
-        assert_eq!(migrated.schema_version, CONFIG_SCHEMA_VERSION);
+    fn unsupported_schema_is_rejected_without_rewriting_the_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        for version in [7, 8, 10] {
+            let raw = serde_json::json!({"schema_version": version, "speech": {
+                "single_model_filename": "keep.gguf"
+            }})
+            .to_string();
+            fs::write(&path, &raw).unwrap();
+            assert!(AppConfig::load_from(&path).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), raw);
+        }
+    }
+
+    #[test]
+    fn obsolete_model_fields_do_not_select_or_copy_models() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            serde_json::json!({"schema_version": 9, "speech": {
+                "selected_model_filename": "old.gguf", "english_model_filename": "old-en.gguf",
+                "arabic_model_filename": "old-ar.gguf", "language_mode": "arabic",
+                "inference_device": "nvidia_gpu", "runtime_dir": "/custom/runtime"
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let config = AppConfig::load_from(&path).unwrap();
+        assert!(config.speech.single_model_filename.is_none());
+        assert!(config.speech.language_models.is_empty());
+        assert_eq!(config.speech.inference_device, InferenceDevice::Auto);
+        assert_eq!(config.speech.runtime_dir, "/custom/runtime");
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert!(saved["speech"].get("english_model_filename").is_none());
+        assert!(saved["speech"].get("language_mode").is_none());
     }
 
     #[test]
@@ -1555,37 +1546,6 @@ mod tests {
             .assigned_models()
             .next()
             .is_none());
-    }
-
-    #[test]
-    fn schema_eight_arabic_and_keyboard_migrate() {
-        for mode in ["arabic", "follow_keyboard"] {
-            let config = AppConfig::normalize_json(
-                &serde_json::json!({"schema_version":8,"speech":{
-                    "language_mode":mode,"english_model_filename":"unavailable.gguf","arabic_model_filename":"arabic.gguf"
-                }}),
-            );
-            assert_eq!(
-                config.speech.language_models["en"].as_deref(),
-                Some("unavailable.gguf")
-            );
-            assert_eq!(
-                config.speech.single_model_filename.as_deref(),
-                Some(if mode == "arabic" {
-                    "arabic.gguf"
-                } else {
-                    "unavailable.gguf"
-                })
-            );
-            assert_eq!(
-                config.speech.selection_mode,
-                if mode == "arabic" {
-                    ModelSelectionMode::SingleModel
-                } else {
-                    ModelSelectionMode::FollowKeyboard
-                }
-            );
-        }
     }
 
     #[test]

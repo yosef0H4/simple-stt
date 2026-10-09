@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { ui, platformAction, set } from "../lib/state.svelte";
+  import { ui, platformAction, run, set } from "../lib/state.svelte";
   import { t } from "../lib/i18n";
   import { fields, hotkeys } from "../lib/settings";
   import Group from "../components/Group.svelte";
   import Field from "../components/Field.svelte";
   import Shortcut from "../components/Shortcut.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import Icon from "../components/Icon.svelte";
   const tools = $derived(ui.state?.linux_automation || {});
   const selected = $derived(ui.config?.general.linux_hotkey_backend || "auto");
   const backend = $derived(
@@ -18,6 +19,15 @@
           : "portal"
         : selected,
   );
+  let configuringShortcuts = $state(false);
+  async function configureShortcuts() {
+    configuringShortcuts = true;
+    try {
+      await platformAction("configure_shortcuts");
+    } finally {
+      configuringShortcuts = false;
+    }
+  }
 </script>
 
 <Group
@@ -34,11 +44,14 @@
         icon="refresh"
         label="ui.refresh_or_register_system_shortcuts.5cdfff"
         onclick={() => platformAction("sync_shortcuts")}
-      /><IconButton
-        icon="keyboard"
-        label="ui.configure_system_shortcuts.4c779e"
-        onclick={() => platformAction("configure_shortcuts")}
-      />{/if}{/snippet}
+      /><button
+        class="shortcut-setup quiet"
+        type="button"
+        aria-busy={configuringShortcuts}
+        disabled={configuringShortcuts}
+        onclick={() => run(configureShortcuts)}
+      ><Icon name="keyboard" size={15} /><span>{t("ui.set_up_shortcuts.a104f9")}</span></button
+      >{/if}{/snippet}
   <Field spec={fields.enabled} />
   {#if ui.state?.platform === "linux"}
     <Field spec={fields.shortcutSystem} />
@@ -104,3 +117,28 @@
     spec={fields.startup}
   /><Field spec={fields.theme} />
 </Group>
+
+<style>
+  .shortcut-setup {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .shortcut-setup :global(svg) {
+    flex: 0 0 auto;
+  }
+
+  @media (max-width: 500px) {
+    :global(.group-head:has(.shortcut-setup)) {
+      flex-wrap: wrap;
+    }
+
+    :global(.group-head:has(.shortcut-setup) .group-actions) {
+      margin-inline-start: auto;
+    }
+  }
+</style>

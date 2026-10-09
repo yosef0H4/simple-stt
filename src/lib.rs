@@ -5,4 +5,5 @@ pub mod config;
 pub mod infer;
 pub mod localization;
 pub mod logging;
+pub mod model_setup;
 pub mod models;

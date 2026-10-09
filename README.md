@@ -1,6 +1,6 @@
 # Simple STT
 
-Simple STT is a Windows-only local voice typing app. Press a hotkey, speak, and it types or pastes the transcript into the app you were already using.
+Simple STT is a local voice typing app for Windows and Linux. Press a hotkey, speak, and it types or pastes the transcript into the app you were already using.
 
 ## Showcase
 
@@ -14,7 +14,11 @@ Download the latest version from the releases page:
 
 [Download Simple STT](https://github.com/yosef0H4/simple-stt/releases/latest)
 
-There are two downloads:
+For Fedora and Arch/Omarchy installation and local package builds, see
+[Linux packages](docs/linux-installation.md). The Linux release includes a Fedora
+44 RPM and an Arch Linux package shared by Arch and Omarchy.
+
+For Windows, use the [latest Windows release (v0.2.5)](https://github.com/yosef0H4/simple-stt/releases/tag/v0.2.5):
 
 ```text
 simple-stt-setup.exe      recommended installer
@@ -26,6 +30,12 @@ The setup installer is recommended for most users. It can install the app shortc
 The portable zip does not include a speech model by default. After launching it, open Settings from the tray icon and download a model there.
 
 ## Using the app
+
+On Linux, launch **Simple STT** from your application menu and configure it in
+Settings. Follow the [Linux installation guide](docs/linux-installation.md) for
+models, shortcuts and the desktop service.
+
+On Windows:
 
 1. Install or unzip Simple STT.
 2. Launch `simple-stt.cmd`.

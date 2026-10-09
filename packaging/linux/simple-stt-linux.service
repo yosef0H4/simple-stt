@@ -1,0 +1,15 @@
+[Unit]
+Description=Simple STT Linux capture daemon
+After=graphical-session.target xdg-desktop-portal.service
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/simple-stt daemon
+ExecStop=/usr/bin/simple-stt shutdown
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=15
+
+[Install]
+WantedBy=graphical-session.target

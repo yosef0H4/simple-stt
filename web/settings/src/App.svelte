@@ -5,6 +5,7 @@
   import { pages, searchEntries, fuzzyScore } from "./lib/settings";
   import Icon from "./components/Icon.svelte";
   import IconButton from "./components/IconButton.svelte";
+  import ModelSetup from "./components/ModelSetup.svelte";
   import General from "./pages/General.svelte";
   import Audio from "./pages/Audio.svelte";
   import Models from "./pages/Models.svelte";
@@ -162,6 +163,7 @@
   </aside>
   <main>
     <header class="page-head"><h1>{t(current.name)}</h1></header>
+    {#if ui.ready && ui.state?.model_setup?.show}<ModelSetup />{/if}
     <form
       id="settings"
       onsubmit={(event) => {

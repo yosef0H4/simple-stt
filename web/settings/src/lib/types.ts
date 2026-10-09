@@ -130,6 +130,7 @@ export interface SettingsState {
   };
   service_online: boolean;
   models: Model[];
+  model_setup?: { show: boolean; pending?: boolean; english_file: string; arabic_file: string };
   microphones: { id: string; name: string }[];
   keyboard_languages?: Discovery;
   shortcut_state?: Record<string, string>;

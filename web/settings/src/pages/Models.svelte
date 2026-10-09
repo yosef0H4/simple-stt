@@ -1,16 +1,18 @@
 <script lang="ts">
   import { languageName, t } from "../lib/i18n";
   import { ui, download, action, refreshState } from "../lib/state.svelte";
-  import { usages } from "../lib/models";
+  import { orderModels, usages } from "../lib/models";
   import IconButton from "../components/IconButton.svelte";
   import Icon from "../components/Icon.svelte";
   let query = $state(""),
     limit = $state(8);
   const models = $derived(
-    (ui.state?.models || []).filter((m) =>
-      `${m.family} ${m.file} ${m.quant} ${m.languages.map(languageName).join(" ")} ${m.installed ? `${t("ui.installed.7bb440")} installed downloaded local مثبت` : ""} ${m.recommended ? `${t("ui.recommended.9ef937")} recommended موصى به` : ""}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+    orderModels(
+      (ui.state?.models || []).filter((m) =>
+        `${m.family} ${m.file} ${m.quant} ${m.languages.map(languageName).join(" ")} ${m.installed ? `${t("ui.installed.7bb440")} installed downloaded local مثبت` : ""} ${m.recommended ? `${t("ui.recommended.9ef937")} recommended موصى به` : ""}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+      ),
     ),
   );
 </script>

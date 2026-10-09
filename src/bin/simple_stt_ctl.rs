@@ -444,36 +444,15 @@ fn config_show() -> Result<ShellResponse> {
         "model_dir_resolved".into(),
         config.model_dir_path().display().to_string(),
     );
-    for (key, filename) in [
-        (
-            "selected_model_filename",
-            config.speech.single_model_filename.as_deref(),
-        ),
-        (
-            "single_model_filename",
-            config.speech.single_model_filename.as_deref(),
-        ),
-        (
-            "english_model_filename",
-            config
-                .speech
-                .language_models
-                .get("en")
-                .and_then(|name| name.as_deref()),
-        ),
-        (
-            "arabic_model_filename",
-            config
-                .speech
-                .language_models
-                .get("ar")
-                .and_then(|name| name.as_deref()),
-        ),
-    ] {
-        response
-            .values
-            .insert(key.into(), filename.unwrap_or("").into());
-    }
+    response.values.insert(
+        "single_model_filename".into(),
+        config
+            .speech
+            .single_model_filename
+            .as_deref()
+            .unwrap_or("")
+            .into(),
+    );
     response.values.insert(
         "selection_mode".into(),
         config.speech.selection_mode.as_str().into(),
@@ -481,15 +460,6 @@ fn config_show() -> Result<ShellResponse> {
     response.values.insert(
         "language_models".into(),
         serde_json::to_string(&config.speech.language_models)?,
-    );
-    response.values.insert(
-        "language_mode".into(),
-        if config.speech.selection_mode == simple_stt::config::ModelSelectionMode::FollowKeyboard {
-            "follow_keyboard"
-        } else {
-            "english"
-        }
-        .into(),
     );
     response.values.insert(
         "config_path".into(),
@@ -584,27 +554,13 @@ fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
 }
 
 fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
-    if matches!(
-        key,
-        "selected_model_filename"
-            | "single_model_filename"
-            | "english_model_filename"
-            | "arabic_model_filename"
-    ) {
+    if key == "single_model_filename" {
         let filename = if value.is_empty() || value == "None" {
             None
         } else {
             Some(value.to_owned())
         };
-        match key {
-            "english_model_filename" => {
-                config.speech.language_models.insert("en".into(), filename);
-            }
-            "arabic_model_filename" => {
-                config.speech.language_models.insert("ar".into(), filename);
-            }
-            _ => config.speech.single_model_filename = filename,
-        }
+        config.speech.single_model_filename = filename;
         return true;
     }
     let target = match key {
@@ -646,18 +602,6 @@ fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
                 "single_model" => simple_stt::config::ModelSelectionMode::SingleModel,
                 "follow_keyboard" => simple_stt::config::ModelSelectionMode::FollowKeyboard,
                 _ => anyhow::bail!("invalid selection_mode: {value}"),
-            };
-        }
-        "language_mode" => {
-            config.speech.selection_mode = match value {
-                "follow_keyboard" => simple_stt::config::ModelSelectionMode::FollowKeyboard,
-                "english" | "arabic" => {
-                    let id = if value == "arabic" { "ar" } else { "en" };
-                    config.speech.single_model_filename =
-                        config.speech.language_models.get(id).cloned().flatten();
-                    simple_stt::config::ModelSelectionMode::SingleModel
-                }
-                _ => anyhow::bail!("invalid language_mode: {value}"),
             };
         }
         "ui_theme" => config.general.ui_theme = parse_ui_theme(value)?,
@@ -723,7 +667,7 @@ fn parse_log_level(value: &str) -> Result<LogLevel> {
 fn parse_inference_device(value: &str) -> Result<InferenceDevice> {
     match value {
         "cpu" => Ok(InferenceDevice::Cpu),
-        "gpu" | "nvidia_gpu" => Ok(InferenceDevice::Gpu),
+        "gpu" => Ok(InferenceDevice::Gpu),
         "auto" => Ok(InferenceDevice::Auto),
         _ => anyhow::bail!("invalid inference_device: {value}"),
     }
@@ -831,7 +775,7 @@ mod tests {
         let mut config = AppConfig::default();
         apply_config_text(
             &mut config,
-            "hotkey_enabled\t0\nrecord_hotkey\tCapsLock+Q\ncancel_hotkey\tCapsLock+A\naudio_gain\t2.5\ntext_delivery_mode\tpaste_ctrl_shift_v\ninference_device\tnvidia_gpu\n",
+            "hotkey_enabled\t0\nrecord_hotkey\tCapsLock+Q\ncancel_hotkey\tCapsLock+A\naudio_gain\t2.5\ntext_delivery_mode\tpaste_ctrl_shift_v\ninference_device\tgpu\n",
         )
         .unwrap();
 
@@ -874,6 +818,30 @@ mod tests {
         let mut config = AppConfig::default();
         let error = apply_config_text(&mut config, "stale_setting\ttrue").unwrap_err();
         assert!(format!("{error:#}").contains("unknown config key: stale_setting"));
+    }
+
+    #[test]
+    fn apply_config_text_rejects_retired_compatibility_aliases() {
+        for line in [
+            "selected_model_filename\tmodel.gguf",
+            "english_model_filename\tmodel.gguf",
+            "arabic_model_filename\tmodel.gguf",
+            "language_mode\tfollow_keyboard",
+        ] {
+            let mut config = AppConfig::default();
+            let error = apply_config_text(&mut config, line).unwrap_err();
+            assert!(
+                format!("{error:#}").contains(&format!(
+                    "unknown config key: {}",
+                    line.split('\t').next().unwrap()
+                )),
+                "unexpected error for {line}: {error:#}"
+            );
+        }
+
+        let mut config = AppConfig::default();
+        let error = apply_config_text(&mut config, "inference_device\tnvidia_gpu").unwrap_err();
+        assert!(format!("{error:#}").contains("invalid inference_device: nvidia_gpu"));
     }
 
     #[test]

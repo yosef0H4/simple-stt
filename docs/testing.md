@@ -20,7 +20,11 @@ python tools/ipc-poc/test_poc.py
 
 Build the Settings frontend before any Cargo build. Release packaging and the
 full-suite scripts run this automatically. Linux uses `scripts/test-full.sh`
-(with Playwright available) and `scripts/build-linux-release.sh`. During targeted
+(with Playwright available). Desktop builds use
+`scripts/package-linux-release.sh fedora` or `arch`; the legacy
+`scripts/build-linux-release.sh` now forwards to that packaging workflow.
+Install with DNF/Pacman before any real desktop run or app restart. Checkout
+binaries are allowed only in isolated tests. During targeted
 development, run `cd web/settings && npm ci && npm run build`. The build writes
 `dist/index.html`, `dist/app.js`, `dist/styles.css`, and a deterministic
 `dist/manifest.json`. `python scripts/verify-settings-frontend.py` checks source
@@ -190,6 +194,19 @@ state-file reconnect after simulated service restart
 
 ## Browser Settings coverage
 
+`node scripts/test-settings-model-setup.cjs` checks the first-run English/Arabic
+checkboxes, explicit selected-only downloads, Skip/reopen persistence, failure
+retention, offline behavior, and localized layout screenshots. The selection API
+checks the curated recommendations and authenticated on-disk dismissal marker.
+
+`node scripts/test-settings-shortcut-portal.cjs` checks the visible English and
+Arabic shortcut setup action, pending/error behavior, and 360/1280px screenshots
+in both themes using an isolated HTTP fixture. Installed-package smoke also
+checks the portal desktop identity and real Settings-to-shell request/result
+transport with a fake responder and an unavailable session bus. Native portal
+dialog appearance remains a manual installed-app check.
+
+
 `python scripts/test-settings-single-instance.py` launches the real Settings
 binary concurrently and checks one shared server, authenticated Close from a
 reopened session, immediate reopen during shutdown, crash/stale-session recovery,
@@ -332,7 +349,7 @@ For memory-specific measurements, see `docs/memory-cleanup-validation.md`.
 
 Linux desktop regression: `python scripts/test-linux-language.py --switch-layouts` briefly switches configured KDE English/Arabic layouts, verifies recording-start selection through authenticated capture IPC, tests both real models, unloads the worker, and restores the layout. For NVIDIA verification use `python scripts/test-inference-devices.py --mode both --language both --expect-gpu "NVIDIA GeForce RTX 3050 Ti"`; it requires the native selected-device log and an exact worker PID with NVIDIA VRAM allocation.
 
-Model selection regressions: `python scripts/test-settings-selection-api.py` exercises the real Settings HTTP server's schema migration, nullable selections, authenticated read-only discovery, unavailable Wayland, Save, and draft-only reset/import. Build the debug Settings binary first with `cargo build --bin simple-stt-settings`. `node scripts/test-settings-model-selection.cjs` exercises the browser UI using Playwright; install Playwright or set `NODE_PATH` to the bundled Node packages. It tests searchable mouse/keyboard selection, deterministic matches, preserved None, unavailable files, saved removal guards, download events, Save/Reset/import, and narrow layouts.
+Model selection regressions: `python scripts/test-settings-selection-api.py` exercises the real Settings HTTP server's current-format normalization, nullable selections, authenticated read-only discovery, unavailable Wayland, Save, and draft-only reset/import. Build the debug Settings binary first with `cargo build --bin simple-stt-settings`. `node scripts/test-settings-model-selection.cjs` exercises the browser UI using Playwright; install Playwright or set `NODE_PATH` to the bundled Node packages. It tests searchable mouse/keyboard selection, deterministic matches, preserved None, unavailable files, saved removal guards, download events, Save/Reset/import, and narrow layouts.
 
 The Linux language regression also checks silent skipped starts, real shell toggle/stop state and clipboard preservation, and worker PID reuse when English and Arabic share a model. The Windows full smoke checks skipped starts and explicitly selects its installed fixture models; run `scripts\test-full.cmd` when validating on Windows. Windows cross-compilation verifies build compatibility but does not replace native keyboard, AHK, or Vulkan desktop tests; report those checks as unvalidated when no Windows host is available.
 

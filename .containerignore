@@ -1,0 +1,6 @@
+.git
+target
+external
+artifacts
+web/settings/node_modules
+resources/bin

@@ -328,6 +328,24 @@ def clipboard_transaction_paste(env, text, output_file, expected_text, snapshot,
         raise
 
 
+def clipboard_empty_selection_paste(env, text, output_file, expected_text):
+    subprocess.run(["wl-copy", "--clear"], env=env, check=True, timeout=8)
+    wait_for(
+        lambda: subprocess.run(["wl-paste", "--no-newline"], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3).returncode != 0,
+        "empty private clipboard before backup",
+    )
+    owner = clipboard_transaction_paste(env, text, output_file, expected_text, {})
+    try:
+        owner.wait(timeout=3)
+        result = subprocess.run(["wl-paste", "--no-newline"], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+        if result.returncode == 0 and result.stdout:
+            raise RuntimeError("Empty clipboard was not restored after the paste transaction")
+    finally:
+        stop_process(owner)
+
+
 def clipboard_newer_copy_race(env, text):
     owner = subprocess.Popen([str(SHELL), "clipboard-transaction"], env=env,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
@@ -630,8 +648,11 @@ def run_private_session(root):
         clipboard_delayed_read(env, "delayed paste 🌙", clipboard_snapshot)
         clipboard_newer_copy_race(env, "stale transaction text")
         clipboard_after_read_copy_race(env, "settling race transcript")
+        empty_clipboard_payload = "paste with initially empty clipboard Ω"
+        clipboard_empty_selection_paste(env, empty_clipboard_payload, result_file,
+            result_file.read_text(encoding="utf-8") + empty_clipboard_payload)
         print("PASS: GTK multiline, Shift+Insert, Rust retry, and Kitty mixed-Unicode paste passed; clipboard formats "
-              "were restored, delayed reads waited, no-read abort stayed unread, and newer copies were preserved" + kitty_result)
+              "were restored, delayed reads waited, no-read abort stayed unread, newer copies were preserved, and an empty clipboard was restored" + kitty_result)
     finally:
         stop_process(target)
         stop_process(portal)

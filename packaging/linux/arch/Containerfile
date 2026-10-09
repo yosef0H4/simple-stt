@@ -1,0 +1,15 @@
+FROM docker.io/library/archlinux:base
+RUN pacman -Syu --noconfirm && pacman -S --noconfirm \
+    alsa-lib at-spi2-core base-devel cairo curl gcc git glib2 libx11 \
+    libxtst nodejs npm pango pkgconf python rustup binutils vulkan-headers \
+    vulkan-icd-loader wl-clipboard wtype wayland-protocols xdg-utils libsecret \
+    xclip xdotool systemd && pacman -Scc --noconfirm
+RUN useradd --create-home --uid 1000 builder && mkdir -p /work && chown builder:builder /work
+ENV HOME=/home/builder RUSTUP_HOME=/home/builder/.rustup CARGO_HOME=/home/builder/.cargo PATH=/home/builder/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+USER builder
+RUN if command -v rustup >/dev/null 2>&1; then rustup --version >/dev/null; else rustup-init -y --no-modify-path --default-toolchain none; fi \
+    && rustup toolchain install 1.99.0 --profile minimal && rustup default 1.99.0
+ENV CARGO_HOME=/work/cargo-cache CARGO_TARGET_DIR=/work/cargo-target npm_config_cache=/work/npm-cache
+COPY packaging/linux/container-build.sh /packaging/linux/container-build.sh
+WORKDIR /work
+ENTRYPOINT ["/usr/bin/bash", "/packaging/linux/container-build.sh", "arch"]

@@ -1,5 +1,19 @@
 # Agent notes
 
+## Installed Linux desktop workflow
+
+For this user's desktop, always build a native package and install it through
+the distribution's package manager before testing or restarting the app.
+On Fedora, use `scripts/package-linux-release.sh fedora` and install the RPM
+with DNF. On Arch/Omarchy, build the Arch package and install it with Pacman.
+Launch the installed `simple-stt` command or packaged user service. Do not
+register services, launchers, or desktop shortcuts pointing at `target/`,
+`dist/`, or another checkout build directory.
+
+Build outputs may still be used for isolated Rust, API, Playwright, offscreen,
+and private-desktop tests. Preserve user settings and models during package
+upgrades. Building a package does not authorize publishing a GitHub release.
+
 Read these files before editing:
 
 ```text

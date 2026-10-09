@@ -328,7 +328,7 @@ const f = require("./settings-fixture.cjs");
   await page.reload();
   await page.locator('[data-setting-path="general.enabled"] input').waitFor();
   await page
-    .getByRole("button", { name: "Configure system shortcuts" })
+    .getByRole("button", { name: "Set up shortcuts", exact: true })
     .click();
   await go("output");
   await page

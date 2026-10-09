@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Simple STT Settings
+Name[ar]=إعدادات Simple STT
+Comment=Configure speech-to-text dictation
+Comment[ar]=إعدادات الإملاء الصوتي
+TryExec=simple-stt
+Exec=simple-stt settings
+Icon=simple-stt
+Terminal=false
+Categories=Settings;Utility;AudioVideo;
+StartupNotify=false

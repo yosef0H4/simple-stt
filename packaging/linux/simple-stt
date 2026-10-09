@@ -1,0 +1,5 @@
+#!/bin/sh
+if [ "$#" -eq 0 ]; then
+  set -- launch
+fi
+exec /usr/lib/simple-stt/simple-stt-linux "$@"

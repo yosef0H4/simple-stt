@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Simple STT
+Name[ar]=Simple STT
+Comment=Offline speech-to-text dictation
+Comment[ar]=إملاء محلي
+TryExec=simple-stt
+Exec=simple-stt launch
+Icon=simple-stt
+Terminal=false
+Categories=Utility;AudioVideo;
+StartupNotify=false

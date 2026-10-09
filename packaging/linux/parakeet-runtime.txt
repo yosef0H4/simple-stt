@@ -1,0 +1,12 @@
+Parakeet runtime binary provenance and license
+
+Project: mudler/parakeet.cpp
+Release: v0.5.0, Linux Vulkan x86_64 shared library archive
+Source: https://github.com/mudler/parakeet.cpp/releases/tag/v0.5.0
+Archive: https://github.com/mudler/parakeet.cpp/releases/download/v0.5.0/parakeet-v0.5.0-lib-linux-vulkan-x64.tar.gz
+Archive SHA-256: a8e7a5af6ef82088a71b0e34708c31bf6ab9f69624bcd2cff2ad7e8c11e7e494
+Bundled file: libparakeet.so
+License: MIT License, reproduced in the adjacent parakeet-MIT file from the
+upstream release archive.
+
+No GGUF model files are included in this package.

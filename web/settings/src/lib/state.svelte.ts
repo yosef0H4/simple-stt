@@ -100,12 +100,13 @@ export function changedPaths(
 export async function refreshState(reloaded = false, signal?: AbortSignal) {
   const next = await api<SettingsState>("/api/state", undefined, signal);
   if (next.config) assertConfig(next.config);
+  const setupCompleted = ui.state?.model_setup?.pending && !next.model_setup?.pending;
   const discovery = ui.state?.keyboard_languages;
   ui.state = {
     ...next,
     keyboard_languages: discovery || next.keyboard_languages,
   };
-  if (reloaded && next.config) {
+  if ((reloaded || setupCompleted) && next.config) {
     if (!ui.dirty) {
       ui.config = clone(next.config);
       ui.baseline = clone(next.config);
@@ -117,6 +118,14 @@ export async function refreshState(reloaded = false, signal?: AbortSignal) {
         "cleanup.enabled",
         "output.linux_automation_backend",
       ]);
+      const routing = ["selection_mode", "single_model_filename", "language_models"] as const;
+      if (!ui.jsonInvalid && routing.every((key) => JSON.stringify(ui.config?.speech[key]) === JSON.stringify(ui.baseline?.speech[key]))) {
+        for (const key of routing) {
+          const prefix = `speech.${key}`;
+          for (const path of changedPaths(ui.baseline, next.config))
+            if (path === prefix || path.startsWith(`${prefix}.`)) allowed.add(path);
+        }
+      }
       const changed = changedPaths(ui.baseline, next.config);
       if (changed.every((p) => allowed.has(p))) {
         for (const p of changed)

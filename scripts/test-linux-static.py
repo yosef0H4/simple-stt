@@ -5,6 +5,7 @@ These checks intentionally avoid Rust toolchain requirements so they can run in
 minimal CI containers. They do not replace `cargo test --all-targets`.
 """
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -75,7 +76,7 @@ if "fn read_clipboard(" in linux_shell or "from_millis(80)" in linux_shell or 'O
     errors.append("Linux paste must verify publication and must not restore previous text on a timer")
 need("scripts/test-linux-paste.py", "-displayfd", "SIMPLE_STT_PASTE_X11_E2E", '"WAYLAND_DISPLAY", "WAYLAND_SOCKET", "AT_SPI_BUS_ADDRESS"', 'XDG_RUNTIME_DIR=str(runtime)', 'DBUS_SESSION_BUS_ADDRESS=', "x11_delayed_paste_end_to_end")
 need("src/bin/simple_stt_linux.rs", "RetryShortcutGate", "wait_retry_modifiers", "notice.retryRelease", "notice.retryEmpty", "notice.retryFailed", "DETECTABLE_AUTO_REPEAT")
-need("docs/linux-wayland.md", 'Shared shortcut fields remain in JSON', 'Same Parakeet backend model', 'simple-stt-linux configure-shortcuts')
+need("docs/linux-wayland.md", 'Shared shortcut fields remain in JSON', 'Same Parakeet backend model', 'simple-stt configure-shortcuts')
 
 need("src/common/clipboard.rs", 'publish_private', '--sensitive')
 need("src/common/private_clipboard.rs", 'x-kde-passwordManagerHint', 'INCR', 'MAX_PAYLOAD')
@@ -85,6 +86,24 @@ need("scripts/test-linux-clean-clipboard.py", 'test_retry', 'application/x-simpl
 need("src/common/wayland_clipboard.rs", 'x-kde-passwordManagerHint', 'read_finished', 'state.cancelled[0]', 'MAX_TOTAL', 'clipboard changed during backup')
 need("src/bin/simple_stt_linux.rs", 'preserving_wayland_paste', 'ClipboardTransaction', 'notice.clipboardPreserveUnavailable', 'clipboard_free_input_never_falls_back_after_submission')
 need("scripts/test-linux-unicode-input.py", '--virtual', 'DBUS_SESSION_BUS_ADDRESS', 'application/x-simple-stt-e2e', 'image/png')
+
+# Host Registry requires a desktop entry matching the registered app ID.
+portal_app_id = re.search(r'const PORTAL_APP_ID: &str = "([^"]+)";', linux_shell)
+if not portal_app_id:
+    errors.append("Linux portal app ID is missing")
+else:
+    desktop = f"packaging/linux/{portal_app_id[1]}.desktop"
+    need(desktop, 'Exec=simple-stt launch')
+    need("packaging/linux/container-build.sh", desktop)
+    need("packaging/linux/fedora/simple-stt.spec", f"/usr/share/applications/{portal_app_id[1]}.desktop")
+
+# Installed packages must keep mutable data outside their read-only runtime.
+need("src/config.rs", 'root.join("linux-installation").is_file()', 'return "installed".to_owned()', 'data_home.join("simple-stt").join("models")')
+need("packaging/linux/simple-stt-linux.service", 'ExecStart=/usr/bin/simple-stt daemon', 'WantedBy=graphical-session.target')
+package_build = need("packaging/linux/container-build.sh", '--locked', 'linux-installation', 'runtime/bin', 'sha256sum -c', 'atspi_', 'g_dbus_', 'XTestFakeKeyEvent')
+if '--bins' in package_build or 'simple_stt_mock_infer' in package_build:
+    errors.append("Linux packages must explicitly select production binaries")
+need("scripts/test-linux-package.py", 'parakeet_capi_abi_version', 'instances/installed/config.json', 'data/simple-stt/models', '--no-browser')
 
 if errors:
     for error in errors:

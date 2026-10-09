@@ -1,10 +1,13 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const { chromium } = require("playwright");
 const f = require("./settings-fixture.cjs");
 const { server, token, models, actions, keyboardDiscovery, makeConfig } = f;
 (async () => {
   let browser;
   try {
+    models.find((model) => model.file === "english-q4.gguf").recommended = true;
     await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
     browser = await chromium.launch({ headless: true });
@@ -48,6 +51,89 @@ const { server, token, models, actions, keyboardDiscovery, makeConfig } = f;
     );
 
     await mode.selectOption("follow_keyboard");
+    const { modelItems, orderModels, recommendedModel } =
+      await import("../web/settings/src/lib/models.ts");
+    const rankingModels = [
+      {
+        file: "z-compatible-recommended.gguf",
+        quant: "Q4",
+        recommended: true,
+        size_mb: 300,
+        installed: true,
+        languages: ["English (en)"],
+      },
+      {
+        file: "a-unrelated-recommended.gguf",
+        quant: "Q8",
+        recommended: true,
+        size_mb: 50,
+        installed: true,
+        languages: ["Arabic (ar)"],
+      },
+      {
+        file: "b-compatible-standard.gguf",
+        quant: "Q8",
+        recommended: false,
+        size_mb: 50,
+        installed: true,
+        languages: ["English (en)"],
+      },
+    ];
+    assert.deepEqual(
+      orderModels(rankingModels, { id: "en", name: "English" }).map(
+        (model) => model.file,
+      ),
+      [
+        "z-compatible-recommended.gguf",
+        "a-unrelated-recommended.gguf",
+        "b-compatible-standard.gguf",
+      ],
+      "recommendation ranks first and language relevance breaks ties within each group",
+    );
+    assert.deepEqual(
+      modelItems(rankingModels, { id: "en", name: "English" }).map(
+        (item) => item.value,
+      ),
+      [
+        "",
+        "z-compatible-recommended.gguf",
+        "a-unrelated-recommended.gguf",
+        "b-compatible-standard.gguf",
+      ],
+      "None stays first while the selector preserves recommendation-first order",
+    );
+    assert.equal(
+      recommendedModel(rankingModels, { id: "en", name: "English" })?.file,
+      "z-compatible-recommended.gguf",
+    );
+
+    if (process.env.SETTINGS_MODEL_ORDER_SCREENSHOTS) {
+      const directory = path.resolve("artifacts/model-recommendation");
+      fs.mkdirSync(directory, { recursive: true });
+      await page.setViewportSize({ width: 1280, height: 900 });
+      for (const [language, recommended] of [
+        ["en", "English Q4"],
+        ["ar", "Arabic Q8"],
+      ]) {
+        const input = page.locator(
+          `[data-setting-path="speech.language_models.${language}"] .combo-input`,
+        );
+        await input.click();
+        const list = page.locator(
+          `[data-combo-list="speech.language_models.${language}"]`,
+        );
+        const options = list.getByRole("option");
+        await options.first().waitFor();
+        const labels = await options.allTextContents();
+        assert.match(labels[0], /^None/);
+        assert.match(labels[1], new RegExp(recommended));
+        await list.screenshot({
+          path: path.join(directory, `${language}-recommended-first.png`),
+        });
+        await input.press("Escape");
+      }
+    }
+
     const draft = async () => {
       const active = await page
         .locator('nav button[aria-current="page"]')
@@ -95,8 +181,6 @@ const { server, token, models, actions, keyboardDiscovery, makeConfig } = f;
       "discovery refresh should preserve explicit None",
     );
 
-    const { recommendedModel } =
-      await import("../web/settings/src/lib/models.ts");
     const tieWinner = recommendedModel(
       [
         {
@@ -235,6 +319,12 @@ const { server, token, models, actions, keyboardDiscovery, makeConfig } = f;
 
     await page.locator('nav button[data-page="models"]').click();
     const catalogSearch = page.locator("#model-search");
+
+    await catalogSearch.fill("Spanish");
+    const spanishResults = page.locator("#model-results .model-result .model-copy strong");
+    assert.equal(await spanishResults.first().innerText(), "Spanish Q4");
+    assert.equal(await spanishResults.nth(1).innerText(), "Spanish Q8");
+    await catalogSearch.fill("");
 
     await page.getByRole("button", { name: "Refresh model catalog" }).click();
     await page.locator("#model-results .model-result").first().waitFor();

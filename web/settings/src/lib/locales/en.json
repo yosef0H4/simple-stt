@@ -31,6 +31,7 @@
   "ui.shortcuts.90c935": "Shortcuts",
   "ui.refresh_or_register_system_shortcuts.5cdfff": "Refresh or register system shortcuts",
   "ui.configure_system_shortcuts.4c779e": "Configure system shortcuts",
+  "ui.set_up_shortcuts.a104f9": "Set up shortcuts",
   "ui.shortcut_system.7d97bc": "Shortcut system",
   "ui.desktop_portal_shortcuts_are_assigned.48b1ea": "Desktop portal shortcuts are assigned in your desktop’s system dialog. X11 chords are saved here. Desktop commands are bound in your compositor.",
   "ui.linux_support_is_experimental_kde.199d9c": "Linux support is experimental; KDE Plasma Wayland is tested on real hardware.",
@@ -237,5 +238,9 @@
   "ui.spanish_language.368635": "Spanish",
   "ui.italian_language.9e6234": "Italian",
   "ui.language_name.43ea60": "Language {name}",
-  "ui.download_model.16005c": "Download {model}"
+  "ui.download_model.16005c": "Download {model}",
+  "ui.downloadRecommendedPrompt": "Download recommended models?",
+  "ui.downloadSelected": "Download",
+  "ui.skipModelSetup": "Skip",
+  "ui.startAppDownload": "Start the app to download models."
 }

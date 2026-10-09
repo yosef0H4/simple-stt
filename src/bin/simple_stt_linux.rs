@@ -974,7 +974,11 @@ fn configure_shortcuts() -> Result<()> {
         || std::env::var_os("WAYLAND_DISPLAY").is_some();
     let uses_portal = config.general.linux_hotkey_backend == LinuxHotkeyBackend::Portal
         || (config.general.linux_hotkey_backend == LinuxHotkeyBackend::Auto && wayland);
-    if uses_portal && pid_file().exists() {
+    if uses_portal {
+        anyhow::ensure!(
+            pid_file().exists(),
+            "Simple STT is not running; start the app before setting up shortcuts"
+        );
         let request = shortcut_request_file();
         let result = shortcut_result_file();
         let _ = fs::remove_file(&result);
@@ -985,14 +989,20 @@ fn configure_shortcuts() -> Result<()> {
             if let Ok(message) = fs::read_to_string(&result) {
                 let _ = fs::remove_file(&result);
                 if let Some(error) = message.strip_prefix("error:") {
-                    eprintln!("[{APP}] portal configuration unavailable: {}", error.trim());
-                    break;
+                    bail!("Portal shortcut configuration failed: {}", error.trim());
                 }
                 println!("[{APP}] {}", message.trim());
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        let _ = fs::remove_file(&request);
+        let detail = fs::read_to_string(hotkey_backend_state_file())
+            .ok()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+            .and_then(|state| state["error"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "the shortcut portal has not become ready; finish any pending permission dialog and try again".to_owned());
+        bail!("Portal shortcut configuration did not respond: {detail}");
     }
     for (program, argument) in [
         ("kcmshell6", "kcm_keys"),
@@ -1004,6 +1014,8 @@ fn configure_shortcuts() -> Result<()> {
         if command_exists(program) {
             ProcessCommand::new(program)
                 .arg(argument)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
                 .spawn()
                 .with_context(|| format!("opening {program}"))?;
             println!("[{APP}] opened desktop shortcut settings with {program}");
@@ -1977,6 +1989,7 @@ struct ClipboardTransaction {
     child: Option<std::process::Child>,
     input: std::process::ChildStdin,
     replies: std::sync::mpsc::Receiver<String>,
+    stderr: std::sync::mpsc::Receiver<String>,
     finished: bool,
 }
 impl ClipboardTransaction {
@@ -1986,16 +1999,24 @@ impl ClipboardTransaction {
         if primary {
             command.arg("--primary");
         }
+        Self::start_process(text, command)
+    }
+
+    fn start_process(text: &str, mut command: ProcessCommand) -> Result<Self> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()?;
         let input = child.stdin.take().context("clipboard transaction input")?;
         let output = child
             .stdout
             .take()
             .context("clipboard transaction output")?;
+        let error_output = child
+            .stderr
+            .take()
+            .context("clipboard transaction error output")?;
         let (sender, replies) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
             use std::io::BufRead;
@@ -2009,19 +2030,52 @@ impl ClipboardTransaction {
                 }
             }
         });
+        let (stderr_sender, stderr) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            const MAX_DIAGNOSTIC_BYTES: usize = 8 * 1024;
+            let mut reader = std::io::BufReader::new(error_output);
+            let mut captured = Vec::new();
+            let mut chunk = [0u8; 1024];
+            loop {
+                match reader.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(count) => {
+                        let remaining = MAX_DIAGNOSTIC_BYTES.saturating_sub(captured.len());
+                        captured.extend_from_slice(&chunk[..count.min(remaining)]);
+                    }
+                }
+            }
+            let _ = stderr_sender.send(String::from_utf8_lossy(&captured).trim().to_owned());
+        });
         let mut transaction = Self {
             child: Some(child),
             input,
             replies,
+            stderr,
             finished: false,
         };
         writeln!(transaction.input, "{}", serde_json::to_string(text)?)?;
-        if transaction
-            .replies
-            .recv_timeout(Duration::from_secs(6))
-            .context("clipboard backup unavailable")?
-            != "ready"
-        {
+        let ready = match transaction.replies.recv_timeout(Duration::from_secs(6)) {
+            Ok(reply) => reply,
+            Err(error) => {
+                let status = transaction
+                    .child
+                    .as_mut()
+                    .and_then(|child| child.try_wait().ok().flatten())
+                    .map(|status| status.to_string())
+                    .unwrap_or_else(|| "still running".to_owned());
+                let stderr = transaction
+                    .stderr
+                    .recv_timeout(Duration::from_millis(250))
+                    .ok()
+                    .filter(|stderr| !stderr.is_empty())
+                    .map(|stderr| format!("; child stderr: {stderr}"))
+                    .unwrap_or_default();
+                bail!("clipboard backup unavailable: {error}; child exit status: {status}{stderr}");
+            }
+        };
+        if ready != "ready" {
             bail!("clipboard transaction could not back up the original selection");
         }
         Ok(transaction)
@@ -2861,7 +2915,6 @@ fn shortcut_state_file() -> PathBuf {
     data_dir().join("linux-shortcuts.json")
 }
 
-#[cfg(target_os = "linux")]
 fn hotkey_backend_state_file() -> PathBuf {
     data_dir().join("linux-hotkey-backend.json")
 }
@@ -2869,6 +2922,28 @@ fn hotkey_backend_state_file() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn clipboard_startup_failure_includes_child_status_and_stderr() {
+        let mut command = ProcessCommand::new("/bin/sh");
+        command.args([
+            "-c",
+            "IFS= read -r line; printf 'private Wayland socket unavailable\\n' >&2; exit 23",
+        ]);
+        let error = match ClipboardTransaction::start_process("fixture text", command) {
+            Ok(_) => panic!("failed clipboard child unexpectedly became ready"),
+            Err(error) => format!("{error:#}"),
+        };
+        assert!(
+            error.contains("child exit status: exit status: 23"),
+            "{error}"
+        );
+        assert!(
+            error.contains("child stderr: private Wayland socket unavailable"),
+            "{error}"
+        );
+    }
 
     /// Run only on a disposable X server via scripts/test-linux-paste.py.
     #[cfg(target_os = "linux")]
