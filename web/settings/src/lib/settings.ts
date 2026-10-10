@@ -222,6 +222,12 @@ export const fields: Record<string, FieldSpec> = {
     type: "checkbox",
     help: "ui.off_by_default_enable_temporarily.abcc6f",
   },
+  clipboardBufferNotices: {
+    path: "diagnostics.clipboard_buffer_notices",
+    label: "ui.clipboard_buffer_notices.8f597b",
+    type: "checkbox",
+    help: "ui.clipboard_buffer_notices_help.edca6b",
+  },
 };
 export const hotkeys = [
   ["general.record_hotkey", "ui.record.1c5413"],

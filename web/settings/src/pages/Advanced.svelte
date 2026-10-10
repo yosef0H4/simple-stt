@@ -39,8 +39,13 @@
     "diagnostics.log_level",
     "diagnostics.diagnostic_overlay",
     "diagnostics.log_transcripts",
+    ...(ui.state?.platform === "linux"
+      ? ["diagnostics.clipboard_buffer_notices"]
+      : []),
   ]}
   >{#each ["logs", "overlay", "transcripts"] as key}<Field
       spec={fields[key]}
-    />{/each}</Group
+    />{/each}{#if ui.state?.platform === "linux"}<Field
+      spec={fields.clipboardBufferNotices}
+    />{/if}</Group
 >

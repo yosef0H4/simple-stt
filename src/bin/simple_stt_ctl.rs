@@ -405,6 +405,10 @@ fn config_show() -> Result<ShellResponse> {
         config.diagnostics.diagnostic_overlay.to_string(),
     );
     response.values.insert(
+        "clipboard_buffer_notices".into(),
+        config.diagnostics.clipboard_buffer_notices.to_string(),
+    );
+    response.values.insert(
         "log_transcripts".into(),
         config.diagnostics.log_transcripts.to_string(),
     );
@@ -547,6 +551,7 @@ fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
         "start_with_windows" => &mut config.general.start_at_login,
         "diagnostic_overlay" => &mut config.diagnostics.diagnostic_overlay,
         "log_transcripts" => &mut config.diagnostics.log_transcripts,
+        "clipboard_buffer_notices" => &mut config.diagnostics.clipboard_buffer_notices,
         _ => return Ok(false),
     };
     *target = parse_bool(value)?;

@@ -74,6 +74,7 @@ export interface Config {
     log_level: "minimal" | "normal" | "debug" | "extreme";
     diagnostic_overlay: boolean;
     log_transcripts: boolean;
+    clipboard_buffer_notices: boolean;
   };
 }
 export interface Language {
@@ -243,7 +244,12 @@ export function assertConfig(value: unknown): asserts value is Config {
       "chatgpt",
       "screenshot",
     ],
-    diagnostics: ["log_level", "diagnostic_overlay", "log_transcripts"],
+    diagnostics: [
+      "log_level",
+      "diagnostic_overlay",
+      "log_transcripts",
+      "clipboard_buffer_notices",
+    ],
   };
   for (const [section, keys] of Object.entries(shape)) {
     const part = c[section];
@@ -273,6 +279,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "cleanup.screenshot.enabled",
       "diagnostics.diagnostic_overlay",
       "diagnostics.log_transcripts",
+      "diagnostics.clipboard_buffer_notices",
     ],
     number: [
       "audio.gain",

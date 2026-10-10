@@ -394,3 +394,37 @@ python scripts/test-linux-unicode-input.py
 ```
 
 The harness creates a private D-Bus session, XDG home/runtime and virtual KWin compositor. It never sends input or clipboard requests to the user's desktop. It exercises the production clipboard transaction and paste helper against real GTK and Kitty targets, compares original text, custom binary and PNG formats after restoration, and covers Retry routing and selection replacement. The earlier rejected native keysym experiment's Kitty wire-order evidence is retained under ignored `artifacts/linux-unicode-failure/`.
+
+The Wayland harness also offers 37 image MIME types and three serialized slow
+image conversions. It verifies paste completion and byte-exact restoration of
+every format, plus failure before selection replacement for a stalled source.
+For an isolated old/new regression comparison, supply the previous installed
+Linux binary via `SIMPLE_STT_OLD_SHELL=/usr/lib/simple-stt/simple-stt-linux`;
+that binary is launched only inside the private compositor.
+
+### Resident current clipboard buffer
+
+Run `python scripts/test-linux-unicode-input.py --cache-only` after building
+`simple-stt-linux` and the production paste helper. It starts the resident
+buffer on a private KWin compositor, warms a slow multi-format image once, and
+requires paste readiness within 1.5 seconds without rereading the original
+image provider. It checks repeated warm reuse, exact full-format restoration,
+cancellation of a stalled backup by newer text copies, replacement by a new
+image with different bytes, sharing a transfer already in progress, rejection
+of incomplete backups, copy races during paste, and an empty clipboard.
+Disabling prefetch must retain the currently restored selection until the next
+external copy, then exit without leaving its socket behind.
+The fixture records MIME request names only, so a warm hit can be distinguished
+from another full backup. The original cold-owner suite remains separate.
+
+The GTK fixtures in the Wayland clipboard suite disable their own AT-SPI bridge:
+Fedora GTK3 can crash in its key-snooper callback list with the private registry,
+and the deliberately stalled image provider must not block unrelated foreground
+accessibility queries. The real paste helper stays unchanged. Accessible-text
+insertion is tested separately by the private X11 `test-linux-paste.py` suite.
+
+## Clipboard buffer diagnostics
+
+Run `node scripts/test-settings-clipboard-notices.cjs` with Playwright available. It checks the default-off flag, Linux visibility, Windows hiding, English/Arabic search, and Save/reopen persistence. Screenshots are retained under `artifacts/linux-release/clipboard-buffer-notices/`.
+
+The private Wayland cache suite also checks ordered buffering/ready phase events; Rust tests check bounded event retention and fast-transcript delivery waiting for shortcut release. `overlay-e2e --offscreen` renders the buffer notices in English and Arabic without opening a host window.

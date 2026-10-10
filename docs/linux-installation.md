@@ -2,8 +2,8 @@
 
 The Linux release builds produce two x86_64 packages:
 
-- Fedora 44: `simple-stt-0.3.0-3.fc44.x86_64.rpm`
-- Arch Linux / Omarchy: `simple-stt-0.3.0-3-x86_64.pkg.tar.zst`
+- Fedora 44: `simple-stt-0.3.1-1.fc44.x86_64.rpm`
+- Arch Linux / Omarchy: `simple-stt-0.3.1-1-x86_64.pkg.tar.zst`
 
 These packages include the app, Settings, paste helper, Arabic fonts and the
 Parakeet Vulkan runtime. Speech models are downloaded separately in Settings.
@@ -17,11 +17,11 @@ From the directory containing your downloaded package:
 
 ```sh
 # Fedora 44
-sudo dnf install ./simple-stt-0.3.0-3.fc44.x86_64.rpm
+sudo dnf install ./simple-stt-0.3.1-1.fc44.x86_64.rpm
 
 # Arch / Omarchy (update the system first, as usual for Arch packages)
 sudo pacman -Syu
-sudo pacman -U ./simple-stt-0.3.0-3-x86_64.pkg.tar.zst
+sudo pacman -U ./simple-stt-0.3.1-1-x86_64.pkg.tar.zst
 ```
 
 Launch **Simple STT** from the application menu, or run:
@@ -122,3 +122,7 @@ smoke tests do not replace a real desktop dictation test on each distribution.
 
 Fedora 44 packages are for Fedora 44; Arch packages are for a current Arch-based
 system. They are not universal Linux binaries. Windows packaging remains separate.
+
+## Inspect clipboard buffering
+
+Enable Settings → Advanced → Diagnostics → **Clipboard buffer notices**, then Save. This developer option is off by default. Each current copy shows a buffering notice followed by ready or failed in the existing overlay. New copies replace unfinished buffers. For metadata-only troubleshooting logs, run `journalctl --user -u simple-stt-linux.service --since "5 minutes ago"`; copied content is never included in buffer logs.

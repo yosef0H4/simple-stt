@@ -31,6 +31,21 @@ static void changed(GtkTextBuffer *buffer, gpointer user_data) {
     if (f) { fwrite(text, 1, strlen(text), f); fclose(f); }
     g_free(text);
 }
+static GtkWidget *target_window, *target_view;
+static gchar *focus_path;
+static gboolean focus_requested(gpointer data) {
+    (void)data;
+    if (g_file_test(focus_path, G_FILE_TEST_EXISTS)) {
+        gtk_window_present(GTK_WINDOW(target_window));
+        gtk_widget_grab_focus(target_view);
+        GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(target_view));
+        GtkTextIter end;
+        gtk_text_buffer_get_end_iter(buffer, &end);
+        gtk_text_buffer_place_cursor(buffer, &end);
+        remove(focus_path);
+    }
+    return G_SOURCE_CONTINUE;
+}
 int main(int argc, char **argv) {
     if (argc != 3) return 2;
     const char *ready_path = argv[1];
@@ -40,6 +55,10 @@ int main(int argc, char **argv) {
     gtk_window_set_title(GTK_WINDOW(window), "Simple STT Unicode E2E");
     gtk_window_set_default_size(GTK_WINDOW(window), 640, 160);
     GtkWidget *view = gtk_text_view_new();
+    target_window = window;
+    target_view = view;
+    focus_path = g_strconcat(ready_path, ".focus", NULL);
+    g_timeout_add(20, focus_requested, NULL);
     GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(view));
     gtk_text_buffer_set_text(buffer, "before\n", -1);
     GtkWidget *scroll = gtk_scrolled_window_new(NULL, NULL);
@@ -54,6 +73,8 @@ int main(int argc, char **argv) {
     };
     GtkClipboard *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
     if (!gtk_clipboard_set_with_data(clipboard, targets, G_N_ELEMENTS(targets), get_data, clear_data, NULL)) return 3;
+    /* Private desktop: keep the editor under the harness focus coordinate. */
+    gtk_window_fullscreen(GTK_WINDOW(window));
     gtk_widget_show_all(window);
     gtk_window_present(GTK_WINDOW(window));
     gtk_widget_grab_focus(view);

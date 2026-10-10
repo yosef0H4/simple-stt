@@ -89,6 +89,7 @@ const makeConfig = () => ({
     log_level: "normal",
     diagnostic_overlay: false,
     log_transcripts: false,
+    clipboard_buffer_notices: false,
   },
 });
 const initialConfig = makeConfig();

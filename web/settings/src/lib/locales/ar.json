@@ -192,6 +192,8 @@
   "ui.release_builds_always_use_minimal.0620a8": "تستخدم إصدارات النشر الوضع المختصر دائمًا.",
   "ui.diagnostic_overlay.29d752": "طبقة التشخيص",
   "ui.log_transcripts.4072a1": "تسجيل نصوص الإملاء",
+  "ui.clipboard_buffer_notices.8f597b": "إشعارات الحافظة",
+  "ui.clipboard_buffer_notices_help.edca6b": "يعرض التنبيه الحالي عند اكتشاف النسخ وأثناء تجهيز مخزن الحافظة وعند جاهزيته أو تعذّر التجهيز.",
   "ui.off_by_default_enable_temporarily.abcc6f": "متوقف افتراضيًا. فعّله مؤقتًا عند استكشاف الأخطاء فقط.",
   "ui.import_previewed_save_to_write.1403f7": "تمت معاينة الاستيراد. احفظ لكتابة الملف.",
   "ui.open_file.f11b87": "فتح الملف",

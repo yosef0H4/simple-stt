@@ -14,6 +14,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -59,6 +61,10 @@ enum LinuxCommand {
         #[arg(long)]
         primary: bool,
     },
+    #[command(hide = true)]
+    ClipboardCacheDaemon,
+    #[command(hide = true)]
+    ClipboardCacheStatus,
     Cancel,
     UnloadModel,
     Shutdown,
@@ -152,6 +158,8 @@ fn main() -> Result<()> {
         LinuxCommand::RetryDelivery => retry_delivery(),
         LinuxCommand::ClipboardOwner { primary } => private_clipboard_owner(primary),
         LinuxCommand::ClipboardTransaction { primary } => clipboard_transaction_owner(primary),
+        LinuxCommand::ClipboardCacheDaemon => clipboard_cache_daemon(),
+        LinuxCommand::ClipboardCacheStatus => clipboard_cache_status(),
         LinuxCommand::Cancel => cancel(),
         LinuxCommand::UnloadModel => unload_model(),
         LinuxCommand::Shutdown => shutdown(),
@@ -164,6 +172,43 @@ fn main() -> Result<()> {
         LinuxCommand::PrintShortcutCommands => print_shortcut_commands(),
         LinuxCommand::InstallUserService => install_user_service(),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_cache_socket() -> PathBuf {
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(data_dir);
+    runtime_dir.join("simple-stt").join("clipboard-cache.sock")
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_cache_daemon() -> Result<()> {
+    let socket_path = clipboard_cache_socket();
+    let cleanup_path = socket_path.clone();
+    ctrlc::set_handler(move || {
+        let _ = fs::remove_file(&cleanup_path);
+        std::process::exit(0);
+    })?;
+    simple_stt::common::wayland_clipboard::serve_cache_daemon(&socket_path)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn clipboard_cache_daemon() -> Result<()> {
+    bail!("clipboard cache daemon is Linux-only")
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_cache_status() -> Result<()> {
+    let status =
+        simple_stt::common::wayland_clipboard::query_cache_status(&clipboard_cache_socket())?;
+    println!("{}", serde_json::to_string(&status)?);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn clipboard_cache_status() -> Result<()> {
+    bail!("clipboard cache status is Linux-only")
 }
 
 fn daemon(config: Option<PathBuf>) -> Result<()> {
@@ -200,13 +245,27 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
     println!("[{APP}] capture service pid={child_pid}");
 
     #[cfg(target_os = "linux")]
+    let cache_supervisor_stop =
+        start_clipboard_cache_supervisor(config.clone().unwrap_or_else(AppConfig::config_path));
+
+    #[cfg(target_os = "linux")]
     let _tray_handle = start_linux_tray();
 
     #[cfg(target_os = "linux")]
     start_linux_hotkeys()?;
 
     let shutdown_child = Arc::clone(&child);
+    #[cfg(target_os = "linux")]
+    let shutdown_cache = Arc::clone(&cache_supervisor_stop);
     ctrlc::set_handler(move || {
+        #[cfg(target_os = "linux")]
+        {
+            shutdown_cache.store(true, Ordering::SeqCst);
+            let _ = simple_stt::common::wayland_clipboard::set_cache_enabled(
+                &clipboard_cache_socket(),
+                false,
+            );
+        }
         let _ = run_ctl(["shutdown"], Duration::from_secs(5), false);
         if let Some(mut child) = shutdown_child.lock().unwrap().take() {
             let _ = child.kill();
@@ -224,11 +283,170 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
         .context("capture child missing")?
         .wait()
         .context("waiting for capture service")?;
+    #[cfg(target_os = "linux")]
+    {
+        cache_supervisor_stop.store(true, Ordering::SeqCst);
+        let _ = simple_stt::common::wayland_clipboard::set_cache_enabled(
+            &clipboard_cache_socket(),
+            false,
+        );
+    }
     if status.success() {
         Ok(())
     } else {
         bail!("capture service exited with {status}")
     }
+}
+
+#[cfg(target_os = "linux")]
+fn start_clipboard_cache_supervisor(config_path: PathBuf) -> Arc<AtomicBool> {
+    start_clipboard_notice_observer(config_path.clone());
+    let stop = Arc::new(AtomicBool::new(false));
+    let child = Arc::new(Mutex::new(None::<std::process::Child>));
+    let thread_stop = Arc::clone(&stop);
+    let thread_child = Arc::clone(&child);
+    std::thread::spawn(move || {
+        let mut restart_delay = Duration::from_secs(1);
+        let mut next_start = Instant::now();
+        let mut healthy = false;
+        loop {
+            if thread_stop.load(Ordering::SeqCst) {
+                let _ = simple_stt::common::wayland_clipboard::set_cache_enabled(
+                    &clipboard_cache_socket(),
+                    false,
+                );
+                break;
+            }
+            let enabled = std::env::var_os("WAYLAND_DISPLAY").is_some()
+                && AppConfig::load_from(&config_path)
+                    .is_ok_and(|config| config.output.preserve_clipboard);
+            let mut child_guard = thread_child.lock().unwrap();
+            if child_guard
+                .as_mut()
+                .is_some_and(|process| process.try_wait().ok().flatten().is_some())
+            {
+                child_guard.take();
+                if healthy {
+                    restart_delay = Duration::from_secs(1);
+                }
+                healthy = false;
+                next_start = Instant::now() + restart_delay;
+                restart_delay = grow_clipboard_cache_backoff(restart_delay);
+            }
+            if enabled {
+                if child_guard.is_none() && Instant::now() >= next_start {
+                    let spawn = std::env::current_exe().and_then(|exe| {
+                        ProcessCommand::new(exe)
+                            .arg("clipboard-cache-daemon")
+                            .stdin(Stdio::null())
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::inherit())
+                            .spawn()
+                    });
+                    match spawn {
+                        Ok(process) => *child_guard = Some(process),
+                        Err(_) => {
+                            next_start = Instant::now() + restart_delay;
+                            restart_delay = grow_clipboard_cache_backoff(restart_delay);
+                        }
+                    }
+                } else if child_guard.is_some() {
+                    let _ = simple_stt::common::wayland_clipboard::set_cache_enabled(
+                        &clipboard_cache_socket(),
+                        true,
+                    );
+                    if simple_stt::common::wayland_clipboard::query_cache_status(
+                        &clipboard_cache_socket(),
+                    )
+                    .is_ok()
+                    {
+                        healthy = true;
+                        restart_delay = Duration::from_secs(1);
+                    }
+                }
+            } else {
+                healthy = false;
+                restart_delay = Duration::from_secs(1);
+                next_start = Instant::now();
+                if child_guard.is_some() {
+                    let _ = simple_stt::common::wayland_clipboard::set_cache_enabled(
+                        &clipboard_cache_socket(),
+                        false,
+                    );
+                }
+            }
+            drop(child_guard);
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+    stop
+}
+
+// Observation never runs on the Wayland receive loop. Only bounded phase
+// metadata crosses the socket; notices cannot delay or expose copied content.
+#[cfg(target_os = "linux")]
+fn start_clipboard_notice_observer(config_path: PathBuf) {
+    use simple_stt::common::wayland_clipboard::{query_cache_status, CachePhase};
+    std::thread::spawn(move || {
+        let mut seen = 0;
+        let mut instance = 0;
+        let mut pending = None;
+        loop {
+            if let Ok(status) = query_cache_status(&clipboard_cache_socket()) {
+                let latest = status.events.last().map_or(0, |event| event.sequence);
+                if status.instance != instance || latest < seen {
+                    instance = status.instance;
+                    seen = 0;
+                    pending = None;
+                }
+                let enabled = AppConfig::load_from(&config_path)
+                    .is_ok_and(|config| config.diagnostics.clipboard_buffer_notices);
+                if !enabled {
+                    seen = latest;
+                    pending = None;
+                } else {
+                    for event in status.events.iter().filter(|event| event.sequence > seen) {
+                        if event.generation != status.generation {
+                            continue;
+                        }
+                        if event.phase == CachePhase::Buffering {
+                            shell_notice("notice.clipboardBuffering", false);
+                            pending = Some((event.generation, None, Instant::now()));
+                        } else {
+                            let since = pending
+                                .as_ref()
+                                .map_or(Instant::now(), |(_, _, since)| *since);
+                            pending = Some((event.generation, Some(event.phase), since));
+                        }
+                    }
+                    seen = latest;
+                    if let Some((generation, Some(phase), since)) = pending {
+                        if generation != status.generation {
+                            pending = None;
+                        } else if since.elapsed() >= Duration::from_millis(500) {
+                            let (id, warning) = match phase {
+                                CachePhase::Ready => ("notice.clipboardReady", false),
+                                CachePhase::Cancelled => ("notice.clipboardCancelled", false),
+                                CachePhase::Failed => ("notice.clipboardFailed", true),
+                                CachePhase::Buffering => unreachable!(),
+                            };
+                            shell_notice(id, warning);
+                            pending = None;
+                        }
+                    }
+                }
+            } else {
+                seen = 0;
+                pending = None;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn grow_clipboard_cache_backoff(delay: Duration) -> Duration {
+    (delay * 2).min(Duration::from_secs(30))
 }
 
 #[cfg(target_os = "linux")]
@@ -1424,6 +1642,10 @@ fn portal_activation_allowed(id: &str) -> bool {
 
 #[cfg(target_os = "linux")]
 fn dispatch_shortcut_activation(id: String) {
+    if id == "record" {
+        let (state, _) = record_release_gate();
+        state.lock().unwrap().pressed = true;
+    }
     if id == "retry" {
         let Some(released) = retry_shortcut_gate()
             .lock()
@@ -1451,6 +1673,14 @@ fn dispatch_shortcut_activation(id: String) {
 
 #[cfg(target_os = "linux")]
 fn dispatch_shortcut_deactivation(id: String) {
+    eprintln!("[{APP}] shortcut deactivated id={id}");
+    if id == "record" {
+        let (state, changed) = record_release_gate();
+        let mut state = state.lock().unwrap();
+        state.pressed = false;
+        state.released_at = Some(Instant::now());
+        changed.notify_all();
+    }
     if id == "retry" {
         retry_shortcut_gate()
             .lock()
@@ -1483,6 +1713,72 @@ fn handle_portal_activation(id: &str) -> Result<()> {
         "cleanup" => toggle_linux_cleanup(),
         _ => Ok(()),
     }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct RecordReleaseState {
+    pressed: bool,
+    released_at: Option<Instant>,
+}
+
+#[cfg(target_os = "linux")]
+fn record_release_gate() -> &'static (Mutex<RecordReleaseState>, std::sync::Condvar) {
+    static GATE: std::sync::OnceLock<(Mutex<RecordReleaseState>, std::sync::Condvar)> =
+        std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        (
+            Mutex::new(RecordReleaseState::default()),
+            std::sync::Condvar::new(),
+        )
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn wait_record_release(is_current: &impl Fn() -> bool) -> Result<()> {
+    let gate = record_release_gate();
+    if gate.0.lock().unwrap().pressed {
+        shell_notice("notice.recordRelease", false);
+    }
+    wait_record_release_on(gate, is_current)
+}
+
+#[cfg(target_os = "linux")]
+fn wait_record_release_on(
+    gate: &(Mutex<RecordReleaseState>, std::sync::Condvar),
+    is_current: &impl Fn() -> bool,
+) -> Result<()> {
+    let (state, changed) = gate;
+    let mut state = state.lock().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    if state.pressed {
+        eprintln!("[{APP}] delivery waiting for recording shortcut release");
+    }
+    while state.pressed {
+        anyhow::ensure!(
+            is_current(),
+            "dictation superseded while waiting for shortcut release"
+        );
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "release the recording shortcut before delivery; dictation kept for Retry"
+        );
+        state = changed
+            .wait_timeout(state, Duration::from_millis(50))
+            .unwrap()
+            .0;
+    }
+    // Portal deactivation can precede the remaining modifier releases. Apply
+    // the same settling window as Retry, only after a real recording release.
+    let settle = state
+        .released_at
+        .map(|released| Duration::from_millis(150).saturating_sub(released.elapsed()));
+    drop(state);
+    if let Some(settle) = settle {
+        std::thread::sleep(settle);
+    }
+    anyhow::ensure!(is_current(), "dictation superseded before delivery");
+    Ok(())
 }
 
 // Arm synchronously before spawning work so a quick release cannot race the
@@ -1828,6 +2124,10 @@ fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result
         return Ok("empty transcript skipped");
     }
     let config = AppConfig::load()?;
+    #[cfg(target_os = "linux")]
+    wait_record_release(&|| {
+        read_session().is_ok_and(|state| delivery_session_is_current(&state, session_id))
+    })?;
     let identity = focused_app_identity();
     let mode = effective_delivery_mode(
         config.output.delivery_mode,
@@ -1978,6 +2278,12 @@ fn run_clipboard_free_input(
 
 #[cfg(target_os = "linux")]
 fn clipboard_transaction_owner(primary: bool) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    if !primary
+        && simple_stt::common::wayland_clipboard::proxy_stdio(primary, &clipboard_cache_socket())?
+    {
+        return Ok(());
+    }
     simple_stt::common::wayland_clipboard::serve(primary)
 }
 #[cfg(not(target_os = "linux"))]
@@ -2056,7 +2362,12 @@ impl ClipboardTransaction {
             finished: false,
         };
         writeln!(transaction.input, "{}", serde_json::to_string(text)?)?;
-        let ready = match transaction.replies.recv_timeout(Duration::from_secs(6)) {
+        #[cfg(target_os = "linux")]
+        let startup_limit =
+            simple_stt::common::wayland_clipboard::BACKUP_LIMIT + Duration::from_secs(5);
+        #[cfg(not(target_os = "linux"))]
+        let startup_limit = Duration::from_secs(50);
+        let ready = match transaction.replies.recv_timeout(startup_limit) {
             Ok(reply) => reply,
             Err(error) => {
                 let status = transaction
@@ -2119,7 +2430,13 @@ fn preserving_wayland_paste(
     backend: LinuxAutomationBackend,
     is_current: &impl Fn() -> bool,
 ) -> Result<&'static str> {
+    let preparation = Instant::now();
+    eprintln!("[{APP}] paste stage=clipboard-preparation");
     let mut transactions = vec![ClipboardTransaction::start(text, false)?];
+    eprintln!(
+        "[{APP}] paste stage=clipboard-ready elapsed_ms={}",
+        preparation.elapsed().as_millis()
+    );
     if key == PasteKey::ShiftInsert {
         transactions.push(ClipboardTransaction::start(text, true)?);
     }
@@ -2129,6 +2446,7 @@ fn preserving_wayland_paste(
     for transaction in &mut transactions {
         transaction.arm()?;
     }
+    eprintln!("[{APP}] paste stage=shortcut-send key={key:?}");
     if !is_current() || !send_paste_key(key, backend)? {
         bail!(
             "paste shortcut unavailable; original clipboard restored and dictation kept for Retry"
@@ -2137,6 +2455,7 @@ fn preserving_wayland_paste(
     for transaction in &mut transactions {
         writeln!(transaction.input, "sent")?;
     }
+    eprintln!("[{APP}] paste stage=waiting-for-read");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         for transaction in &mut transactions {
@@ -2456,12 +2775,18 @@ fn run_native_paste(helper: &Path, key: PasteKey) -> bool {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null());
+        .stderr(Stdio::inherit());
+    let started = Instant::now();
     let Ok(output) =
         simple_stt::common::clipboard::output_bounded(&mut command, Duration::from_secs(12))
     else {
         return false;
     };
+    eprintln!(
+        "[{APP}] paste native portal={portal} status={} elapsed_ms={}",
+        output.status,
+        started.elapsed().as_millis()
+    );
     if !output.status.success() {
         return false;
     }
@@ -2921,6 +3246,55 @@ fn hotkey_backend_state_file() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn immediate_transcript_delivery_waits_for_record_release() {
+        let gate = std::sync::Arc::new((
+            std::sync::Mutex::new(super::RecordReleaseState {
+                pressed: true,
+                released_at: None,
+            }),
+            std::sync::Condvar::new(),
+        ));
+        let waiter_gate = std::sync::Arc::clone(&gate);
+        let (sent, received) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            super::wait_record_release_on(&waiter_gate, &|| true).unwrap();
+            sent.send(()).unwrap();
+        });
+        assert!(received
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_err());
+        let released = std::time::Instant::now();
+        {
+            let mut state = gate.0.lock().unwrap();
+            state.pressed = false;
+            state.released_at = Some(released);
+            gate.1.notify_all();
+        }
+        received
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(released.elapsed() >= std::time::Duration::from_millis(150));
+        waiter.join().unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn superseded_dictation_does_not_wait_for_record_release() {
+        let gate = (
+            std::sync::Mutex::new(super::RecordReleaseState {
+                pressed: true,
+                released_at: None,
+            }),
+            std::sync::Condvar::new(),
+        );
+        assert!(super::wait_record_release_on(&gate, &|| false)
+            .unwrap_err()
+            .to_string()
+            .contains("superseded"));
+    }
+
     use super::*;
 
     #[cfg(target_os = "linux")]
@@ -3334,5 +3708,15 @@ root.after(150,ready);root.mainloop()
             ),
             TextDeliveryMode::Type
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn clipboard_cache_restart_backoff_is_bounded() {
+        let mut delay = Duration::from_secs(1);
+        for expected in [2, 4, 8, 16, 30, 30] {
+            delay = grow_clipboard_cache_backoff(delay);
+            assert_eq!(delay, Duration::from_secs(expected));
+        }
     }
 }

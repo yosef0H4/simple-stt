@@ -21,6 +21,11 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "scripts/fixtures/linux-unicode"
 HELPER = ROOT / "resources/bin/linux-fast-paste"
 SHELL = Path(os.environ.get("SIMPLE_STT_TEST_SHELL", ROOT / "target/debug/simple-stt-linux")).resolve()
+OLD_SHELL = os.environ.get("SIMPLE_STT_OLD_SHELL")
+IMAGE_FORMAT_COUNT = 37
+SLOW_FORMATS = tuple(
+    f"application/postscript;profile=eps-alias-{index}" for index in range(3)
+)
 
 
 def require_commands(names):
@@ -77,6 +82,318 @@ def compile_target(build_dir):
     checked([shutil.which("cc") or "cc", "-O2", "-Wall", "-Wextra", "-Werror",
              str(FIXTURES / "target.c"), "-o", str(binary), *flags])
     return binary
+
+
+def compile_slow_clipboard_provider(build_dir):
+    if subprocess.run(["pkg-config", "--exists", "gtk+-3.0"]).returncode != 0:
+        raise RuntimeError("Missing GTK 3 development files (pkg-config gtk+-3.0)")
+    binary = build_dir / "slow-clipboard-provider"
+    flags = subprocess.check_output(["pkg-config", "--cflags", "--libs", "gtk+-3.0"], text=True).split()
+    checked([shutil.which("cc") or "cc", "-O2", "-Wall", "-Wextra", "-Werror",
+             str(FIXTURES / "slow_clipboard_provider.c"), "-o", str(binary), *flags])
+    return binary
+
+
+def stress_clipboard_snapshot(seed=0):
+    mimes = [f"image/x-simple-stt-e2e-{index:02d}" for index in range(IMAGE_FORMAT_COUNT)]
+    mimes.extend(SLOW_FORMATS)
+    snapshot = {}
+    for info, mime in enumerate(mimes):
+        snapshot[mime] = bytes((info * 29 + offset * 17 + 3 + seed) & 0xff for offset in range(96))
+    snapshot["application/x-simple-stt-e2e"] = bytes((0, 1, *b"Simple-STT clipboard fixture", 255))
+    snapshot["image/png"] = bytes.fromhex(
+        "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+        "0000000b49444154789c636000020000050001a5f645400000000049454e44ae426082")
+    snapshot["text/plain;charset=utf-8"] = "original clipboard Ω".encode("utf-8")
+    return snapshot
+
+
+def publish_provider(proc, ready, env, injector):
+    wait_for(lambda: Path(str(ready) + ".window").exists() or proc.poll() is not None,
+             "clipboard fixture mapped", timeout=8)
+    if proc.poll() is not None:
+        raise RuntimeError("Clipboard fixture exited before mapping")
+    checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+    wait_for(lambda: ready.exists() or proc.poll() is not None,
+             "clipboard fixture published after controlled input", timeout=8)
+
+
+def clipboard_slow_offer_regression(env, root, output_file, initial_text,
+                                    provider_binary, clipboard_snapshot, injector):
+    stalled_ready = root / "stalled-clipboard-provider.ready"
+    stalled_provider = subprocess.Popen([str(provider_binary), str(stalled_ready), "stall"], env=env,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        start_new_session=True)
+    stalled = None
+    try:
+        publish_provider(stalled_provider, stalled_ready, env, injector)
+        format_result = {}
+        def offered_types_visible():
+            result = subprocess.run(["wl-paste", "--list-types"], env=env,
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=3)
+            if result.returncode == 0:
+                format_result["types"] = result.stdout
+                return True
+            return False
+        wait_for(offered_types_visible, "stalled clipboard MIME offer to become visible", timeout=5)
+        formats_before = format_result["types"]
+        if b"image/x-simple-stt-e2e-00" not in formats_before:
+            raise RuntimeError(f"Stalled clipboard offer omitted the expected first image MIME: {formats_before!r}")
+        stalled = subprocess.Popen([str(SHELL), "clipboard-transaction"], env=env,
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+        stalled.stdin.write(json.dumps("stalled offer must not replace selection") + "\n")
+        stalled.stdin.flush()
+        readable, _, _ = __import__("select").select([stalled.stdout], [], [], 12)
+        if readable and stalled.stdout.readline().strip() == "ready":
+            raise RuntimeError("Clipboard transaction became ready while an offered MIME read was stalled")
+        try:
+            stalled.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("Clipboard transaction did not fail within the stalled-offer bound")
+        error = stalled.stderr.read() if stalled.stderr else ""
+        if "clipboard backup" not in error.lower() or "stalled" not in error.lower() or "image/x-simple-stt-e2e" not in error:
+            raise RuntimeError(f"Stalled clipboard failure did not identify timeout and pending format: {error!r}")
+        formats_after = subprocess.check_output(["wl-paste", "--list-types"], env=env, timeout=5)
+        if formats_after != formats_before:
+            raise RuntimeError("Clipboard transaction changed the offered selection before all backup reads completed")
+    finally:
+        stop_process(stalled)
+        stop_process(stalled_provider)
+
+    provider_ready = root / "slow-clipboard-provider.ready"
+    provider = subprocess.Popen([str(provider_binary), str(provider_ready)], env=env,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        start_new_session=True)
+    try:
+        publish_provider(provider, provider_ready, env, injector)
+        if provider.poll() is not None:
+            detail = provider.stderr.read().decode("utf-8", "replace") if provider.stderr else ""
+            raise RuntimeError(f"Stress clipboard owner exited before publishing: {detail}")
+        for mime, payload in clipboard_snapshot.items():
+            if mime in SLOW_FORMATS:
+                continue
+            if clipboard_data(env, mime) != payload:
+                raise RuntimeError(f"Stress clipboard provider published wrong fixture payload for {mime}")
+
+        if OLD_SHELL:
+            old_shell = Path(OLD_SHELL).resolve()
+            if not old_shell.is_file():
+                raise RuntimeError(f"SIMPLE_STT_OLD_SHELL does not exist: {old_shell}")
+            old = subprocess.Popen([str(old_shell), "clipboard-transaction"], env=env,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
+            old.stdin.write(json.dumps("old binary must time out") + "\n")
+            old.stdin.flush()
+            try:
+                readable, _, _ = __import__("select").select([old.stdout], [], [], 30)
+                first_line = old.stdout.readline().strip() if readable else ""
+                if first_line == "ready":
+                    raise RuntimeError("Old clipboard binary became ready despite three serialized slow formats")
+                if first_line:
+                    raise RuntimeError(f"Old clipboard binary emitted unexpected pre-ready output: {first_line!r}")
+                try:
+                    old.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    raise RuntimeError("Old clipboard binary neither became ready nor failed within its 30s bound")
+                error = old.stderr.read().strip() if old.stderr else ""
+                if "reading complete clipboard backup" not in error.lower() and "clipboard backup timed out" not in error.lower():
+                    raise RuntimeError(f"Old clipboard binary did not fail in the complete-backup path: {error!r}")
+            finally:
+                stop_process(old)
+
+        expected = initial_text + "slow clipboard regression paste Ω"
+        checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+        owner = clipboard_transaction_paste(env, "slow clipboard regression paste Ω", output_file,
+            expected, clipboard_snapshot)
+        try:
+            for mime, payload in clipboard_snapshot.items():
+                if clipboard_data(env, mime) != payload:
+                    raise RuntimeError(f"Slow-offer transaction did not restore exact original bytes for {mime}")
+        except Exception:
+            stop_process(owner)
+            raise
+
+        return owner
+    finally:
+        stop_process(provider)
+
+
+def clipboard_cache_regression(env, root, output_file, provider_binary, injector):
+    """Exercise the resident current-only buffer entirely on the private display."""
+    log = (root / "clipboard-cache.log").open("wb")
+    watcher = subprocess.Popen([str(SHELL), "clipboard-cache-daemon"], env=env,
+        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+        start_new_session=True)
+    providers, owners = [], []
+
+    def status():
+        try:
+            result = subprocess.run([str(SHELL), "clipboard-cache-status"], env=env,
+                capture_output=True, text=True, timeout=3)
+            return json.loads(result.stdout) if result.returncode == 0 else {}
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            return {}
+
+    def wait_ready(label, newer_than=None, min_formats=0, timeout=25):
+        found = {}
+        def ready():
+            value = status()
+            if (value.get("ready") and value.get("formats", 0) >= min_formats
+                    and (newer_than is None or value.get("generation", 0) > newer_than)):
+                found.update(value)
+                return True
+            if watcher.poll() is not None:
+                raise RuntimeError(f"Clipboard cache exited; see {root / 'clipboard-cache.log'}")
+            return False
+        wait_for(ready, label, timeout=timeout)
+        return found
+
+    def provider(name, stalled=False, alternate=False):
+        ready = root / f"cache-{name}.ready"
+        args = [str(provider_binary), str(ready)] + (
+            ["stall"] if stalled else ["alternate"] if alternate else [])
+        provider_env = dict(env, NO_AT_BRIDGE="1")
+        proc = subprocess.Popen(args, env=provider_env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=log, start_new_session=True)
+        providers.append(proc)
+        publish_provider(proc, ready, env, injector)
+        if proc.poll() is not None:
+            raise RuntimeError(f"{name} clipboard provider exited")
+        return Path(str(ready) + ".requests")
+
+    try:
+        baseline = wait_ready("initial background clipboard buffer")
+        requests = provider("slow-image")
+        snapshot = stress_clipboard_snapshot()
+        warm = wait_ready("complete slow image background backup",
+                          newer_than=baseline["generation"], min_formats=len(snapshot))
+        phases = [event["phase"] for event in warm.get("events", [])
+                  if event["generation"] == warm["generation"]]
+        if phases != ["buffering", "ready"]:
+            raise RuntimeError(f"Missing ordered clipboard buffer diagnostics: {phases!r}")
+        before = requests.read_text().splitlines()
+        for mime in SLOW_FORMATS:
+            if before.count(mime) != 1:
+                raise RuntimeError(f"Expected one prefetch for {mime}; requests={before!r}")
+        payload = "warm image buffer paste مرحبا"
+        checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+        owners.append(clipboard_transaction_paste(env, payload, output_file,
+            output_file.read_text() + payload, snapshot, ready_latency_limit=1.5))
+        if requests.read_text().splitlines() != before:
+            raise RuntimeError("Warm paste reread the original image source instead of using its buffer")
+        wait_ready("original image buffer retained after restoration", min_formats=len(snapshot))
+        payload = "second warm buffer paste Ω"
+        checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+        owners.append(clipboard_transaction_paste(env, payload, output_file,
+            output_file.read_text() + payload, snapshot, ready_latency_limit=1.5))
+
+        # Cancel an actively stalled multi-format read with two newer copies.
+        previous = status()["generation"]
+        stalled_requests = provider("stalled", stalled=True)
+        wait_for(lambda: stalled_requests.exists() and bool(stalled_requests.read_text()),
+                 "stalled source read to start", timeout=8)
+        checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+        newest = "newest clipboard عربي".encode()
+        payload = "newest buffer paste Ω"
+        submitted = threading.Event()
+        pending, pending_errors = [], []
+        def pending_paste():
+            try:
+                pending.append(clipboard_transaction_paste(env, payload, output_file,
+                    output_file.read_text() + payload, {"text/plain": newest},
+                    request_sent=submitted))
+            except Exception as exc:
+                pending_errors.append(exc)
+        paste_thread = threading.Thread(target=pending_paste)
+        paste_thread.start()
+        if not submitted.wait(timeout=5):
+            raise RuntimeError("Paste request did not start while the old image was transferring")
+        started = time.monotonic()
+        for value in [b"superseded text buffer", "newest clipboard عربي".encode()]:
+            subprocess.run(["wl-copy", "--type", "text/plain"], input=value,
+                           env=env, check=True, timeout=5)
+        latest = wait_ready("newest copy replaces stalled backup", newer_than=previous, timeout=4)
+        elapsed = time.monotonic() - started
+        if elapsed > 3:
+            raise RuntimeError(f"Superseded stalled backup delayed the newest copy by {elapsed:.3f}s")
+        if latest["formats"] >= len(snapshot):
+            raise RuntimeError("Stale image formats survived the newest text copy")
+        paste_thread.join(timeout=15)
+        if paste_thread.is_alive():
+            raise RuntimeError("Paste still waited for the obsolete image after a new copy")
+        if pending_errors:
+            raise pending_errors[0]
+        owners.extend(pending)
+        # A new image with different bytes must replace the text buffer too.
+        requests = provider("replacement-image", alternate=True)
+        replacement = stress_clipboard_snapshot(seed=11)
+        wait_for(lambda: requests.exists() and SLOW_FORMATS[0] in requests.read_text().splitlines(),
+                 "replacement image transfer already in progress", timeout=8)
+        payload = "replacement image paste Ω"
+        checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+        owners.append(clipboard_transaction_paste(env, payload, output_file,
+            output_file.read_text() + payload, replacement, ready_latency_limit=7.5))
+        for mime in SLOW_FORMATS:
+            if requests.read_text().splitlines().count(mime) != 1:
+                raise RuntimeError("Paste duplicated the image transfer that was already warming")
+
+        # A failed background backup is never a valid empty clipboard backup.
+        previous = status()["generation"]
+        failed_requests = provider("failed-backup", stalled=True)
+        wait_for(lambda: failed_requests.exists(), "failed backup read started", timeout=8)
+        def backup_failed():
+            value = status()
+            return (value.get("generation", 0) > previous and not value.get("ready", True)
+                    and not value.get("warming", True))
+        wait_for(backup_failed, "stalled background backup rejected", timeout=12)
+        before = subprocess.check_output(["wl-paste", "--list-types"], env=env, timeout=3)
+        rejected = subprocess.run([str(SHELL), "clipboard-transaction"], env=env,
+            input=json.dumps("failed cache must not replace clipboard") + "\n",
+            capture_output=True, text=True, timeout=12)
+        if "ready" in rejected.stdout.splitlines():
+            raise RuntimeError("An incomplete background backup was used as a complete empty cache")
+        after = subprocess.check_output(["wl-paste", "--list-types"], env=env, timeout=3)
+        if after != before:
+            raise RuntimeError("Failed cached backup replaced the original image selection")
+        subprocess.run(["wl-copy", "--type", "text/plain"], input=b"copy race baseline",
+                       env=env, check=True, timeout=5)
+        wait_ready("valid buffer after failed backup", timeout=5)
+        clipboard_newer_copy_race(env, "cached stale transaction")
+        clipboard_after_read_copy_race(env, "cached settling race")
+        checked([str(injector), "--click", "450", "300"], env=env, timeout=8)
+        clipboard_empty_selection_paste(env, "cached empty clipboard Ω", output_file,
+            output_file.read_text() + "cached empty clipboard Ω")
+
+        # Disabling prefetch keeps a currently restored selection alive, then
+        # releases the service when the user makes another copy.
+        original = b"disable keeps original clipboard"
+        subprocess.run(["wl-copy", "--type", "text/plain"], input=original,
+                       env=env, check=True, timeout=5)
+        wait_ready("shutdown fixture warmed", timeout=5)
+        payload = "last warm paste Ω"
+        owners.append(clipboard_transaction_paste(env, payload, output_file,
+            output_file.read_text() + payload, {"text/plain": original}, ready_latency_limit=1.5))
+        cache_socket = Path(env["XDG_RUNTIME_DIR"]) / "simple-stt/clipboard-cache.sock"
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as control:
+            control.connect(str(cache_socket))
+            control.sendall(b"disable\n")
+        wait_for(lambda: not status().get("ready", True), "prefetch disabled", timeout=5)
+        if clipboard_data(env, "text/plain") != original:
+            raise RuntimeError("Disabling the buffer discarded the currently restored clipboard")
+        subprocess.run(["wl-copy", "--type", "text/plain"], input=b"copy after disabled buffer",
+                       env=env, check=True, timeout=5)
+        watcher.wait(timeout=5)
+        if cache_socket.exists():
+            raise RuntimeError("Disabled clipboard buffer left its service socket behind")
+        print("PASS: resident clipboard buffer warmed slow image formats once, reused them before paste, "
+              "restored every byte, cancelled superseded stalled reads, kept only newest text, "
+              "shared in-progress transfers with pending paste, rejected incomplete backups, "
+              "respected newer copies during paste, preserved an empty clipboard, "
+              "and disabled prefetch without clearing a restored selection")
+    finally:
+        for proc in owners + providers:
+            stop_process(proc)
+        stop_process(watcher)
+        log.close()
 
 
 def isolated_env(root, clear_bus=True):
@@ -276,20 +593,31 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
 
 
 def clipboard_transaction_paste(env, text, output_file, expected_text, snapshot, terminal=False,
-                               dispatch_delay=0.0):
+                               dispatch_delay=0.0, ready_latency_limit=None, request_sent=None):
     owner = subprocess.Popen([str(SHELL), "clipboard-transaction"], env=env,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     try:
+        ready_started = time.monotonic()
         owner.stdin.write(json.dumps(text, ensure_ascii=False) + "\n")
         owner.stdin.flush()
-        if read_child_line(owner, "ready") != "ready":
+        if request_sent is not None:
+            request_sent.set()
+        if read_child_line(owner, "ready", timeout=25) != "ready":
             raise RuntimeError("Clipboard transaction did not become ready")
+        ready_elapsed = time.monotonic() - ready_started
+        if ready_latency_limit is not None and ready_elapsed > ready_latency_limit:
+            raise RuntimeError(f"Warm clipboard ready took {ready_elapsed:.3f}s; limit {ready_latency_limit}s")
         owner.stdin.write("arm\n")
         owner.stdin.flush()
         if read_child_line(owner, "armed") != "armed":
             raise RuntimeError("Clipboard transaction did not arm before shortcut dispatch")
         if dispatch_delay:
             time.sleep(dispatch_delay)
+        if not terminal:
+            focus_request = output_file.parent / "target.ready.focus"
+            focus_request.touch()
+            wait_for(lambda: not focus_request.exists(), "private editor focus acknowledged", timeout=3)
+            time.sleep(0.2)
         command = [str(HELPER), "--portal", "--restore-token", "private-e2e-token"]
         if terminal:
             command.append("--terminal")
@@ -304,6 +632,7 @@ def clipboard_transaction_paste(env, text, output_file, expected_text, snapshot,
         owner.stdin.flush()
         status = read_child_line(owner, "transfer completion/restoration", timeout=12)
         if status != "restored":
+            subprocess.run(["spectacle", "--background", "--nonotify", "--fullscreen", "--output", str(output_file.parent / "failed-paste.png")], env=env, capture_output=True, timeout=10)
             raise RuntimeError(f"Clipboard transaction ended as {status!r}")
         try:
             wait_for(lambda: output_file.exists() and output_file.read_text(encoding="utf-8") == expected_text,
@@ -507,7 +836,7 @@ def authorize_private_kwin_client(env, binary, desktop_name):
     )
 
 
-def run_private_session(root):
+def run_private_session(root, cache_only=False):
     require_commands(("kwin_wayland", "wayland-scanner", "pkg-config", "cc", "dbus-run-session", "wl-paste"))
     if not HELPER.is_file() or not os.access(HELPER, os.X_OK):
         raise RuntimeError(f"Build the production helper first: missing executable {HELPER}")
@@ -515,6 +844,7 @@ def run_private_session(root):
     build_dir.mkdir()
     injector = compile_injector(build_dir)
     target_binary = compile_target(build_dir)
+    slow_provider_binary = compile_slow_clipboard_provider(build_dir)
     env = isolated_env(root, clear_bus=False)
     runtime = Path(env["XDG_RUNTIME_DIR"])
     authorize_private_kwin_client(env, injector, "simple-stt-unicode-test-injector")
@@ -527,7 +857,7 @@ def run_private_session(root):
     kwin_log = (logs / "kwin.log").open("wb")
     portal_log = (logs / "portal.log").open("wb")
     target_log = (logs / "target.log").open("wb")
-    kwin = portal = target = None
+    kwin = portal = target = stress_owner = None
     atspi_launcher = atspi_registry = None
     try:
         kwin_env = env.copy()
@@ -563,7 +893,13 @@ def run_private_session(root):
 
         ready = root / "target.ready"
         result_file = root / "target.txt"
-        target = subprocess.Popen([str(target_binary), str(ready), str(result_file)], env=env,
+        target_env = env.copy()
+        # These cases test portal input and clipboard bytes. Fedora GTK3 can
+        # crash in its accessibility key-snooper list with the private registry.
+        # Accessibility insertion has its own suite; disable only this fixture
+        # bridge, never the real helper or the user desktop.
+        target_env["NO_AT_BRIDGE"] = "1"
+        target = subprocess.Popen([str(target_binary), str(ready), str(result_file)], env=target_env,
             stdin=subprocess.DEVNULL, stdout=target_log, stderr=subprocess.STDOUT,
             start_new_session=True)
         wait_for(lambda: ready.exists() or target.poll() is not None, "real GTK editable window")
@@ -601,6 +937,15 @@ def run_private_session(root):
             raise RuntimeError("Initial clipboard text was not the fixture value")
 
         clipboard_snapshot = {**mime_payloads, "text/plain;charset=utf-8": original_text}
+        if cache_only:
+            clipboard_cache_regression(env, root, result_file, slow_provider_binary, injector)
+            return
+        initial_text = result_file.read_text(encoding="utf-8")
+        stress_snapshot = stress_clipboard_snapshot()
+        stress_owner = clipboard_slow_offer_regression(
+            env, root, result_file, initial_text, slow_provider_binary, stress_snapshot, injector)
+        clipboard_snapshot = stress_snapshot
+        initial_text = result_file.read_text(encoding="utf-8")
         run_retry_cli(env, root, result_file, initial_text, clipboard_snapshot, injector)
         retry_expected = initial_text + "retry\nمرحبا 🙂"
         gtk_payload = "GTK paste café\nمرحبا 🙂\nline two"
@@ -651,10 +996,13 @@ def run_private_session(root):
         empty_clipboard_payload = "paste with initially empty clipboard Ω"
         clipboard_empty_selection_paste(env, empty_clipboard_payload, result_file,
             result_file.read_text(encoding="utf-8") + empty_clipboard_payload)
+
+        slow_clipboard_result = "; slow clipboard regression passed (37 image formats, 3 serialized 2s EPS aliases, exact restore, stalled-format timeout before selection change)"
         print("PASS: GTK multiline, Shift+Insert, Rust retry, and Kitty mixed-Unicode paste passed; clipboard formats "
-              "were restored, delayed reads waited, no-read abort stayed unread, newer copies were preserved, and an empty clipboard was restored" + kitty_result)
+              "were restored, delayed reads waited, no-read abort stayed unread, newer copies were preserved, and an empty clipboard was restored" + kitty_result + slow_clipboard_result)
     finally:
         stop_process(target)
+        stop_process(stress_owner)
         stop_process(portal)
         stop_process(atspi_registry)
         stop_process(atspi_launcher)
@@ -667,24 +1015,31 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inside-session", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--root", help=argparse.SUPPRESS)
+    parser.add_argument("--cache-only", action="store_true",
+                        help="Test the resident current-clipboard buffer on a private compositor")
     args = parser.parse_args()
     if args.inside_session:
-        run_private_session(Path(args.root))
+        run_private_session(Path(args.root), cache_only=args.cache_only)
         return
     require_commands(("dbus-run-session",))
     root = Path(tempfile.mkdtemp(prefix="simple-stt-unicode-e2e-"))
     env = isolated_env(root)
     # Strip all host display, bus and clipboard-adjacent session variables
     # before dbus-run-session creates a completely private session bus.
+    session_log = root / "session.log"
+    log_stream = session_log.open("w", encoding="utf-8")
     session = subprocess.run(["dbus-run-session", "--", sys.executable,
-        str(Path(__file__).resolve()), "--inside-session", "--root", str(root)],
-        env=env, timeout=90, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        str(Path(__file__).resolve()), "--inside-session", "--root", str(root),
+        *(["--cache-only"] if args.cache_only else [])],
+        env=env, timeout=180, stdout=log_stream, stderr=subprocess.STDOUT, text=True)
+    log_stream.close()
+    session_output = session_log.read_text(encoding="utf-8")
     if session.returncode != 0:
-        if session.stdout:
-            print(session.stdout, file=sys.stderr, end="" if session.stdout.endswith("\n") else "\n")
+        if session_output:
+            print(session_output, file=sys.stderr, end="" if session_output.endswith("\n") else "\n")
         print(f"Private session evidence retained at {root}", file=sys.stderr)
-        raise subprocess.CalledProcessError(session.returncode, session.args, session.stdout)
-    for line in session.stdout.splitlines():
+        raise subprocess.CalledProcessError(session.returncode, session.args, session_output)
+    for line in session_output.splitlines():
         if line.startswith("PASS:"):
             print(line)
     shutil.rmtree(root)

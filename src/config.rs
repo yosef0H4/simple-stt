@@ -357,6 +357,7 @@ pub struct DiagnosticsConfig {
     pub log_level: LogLevel,
     pub diagnostic_overlay: bool,
     pub log_transcripts: bool,
+    pub clipboard_buffer_notices: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -509,6 +510,7 @@ impl Default for AppConfig {
                 log_level: LogLevel::Normal,
                 diagnostic_overlay: false,
                 log_transcripts: false,
+                clipboard_buffer_notices: false,
             },
         }
     }
@@ -1304,6 +1306,7 @@ mod tests {
         assert!(!config.output.lowercase);
         assert_eq!(config.speech.inference_device, InferenceDevice::Auto);
         assert!(!config.diagnostics.log_transcripts);
+        assert!(!config.diagnostics.clipboard_buffer_notices);
         assert!(LogLevel::Minimal
             .tracing_filter()
             .contains("simple_stt_privacy=info"));
@@ -1315,6 +1318,7 @@ mod tests {
         let path = temp.path().join("config.json");
         let mut config = AppConfig::default();
         config.output.typing_speed_wpm = 72;
+        config.diagnostics.clipboard_buffer_notices = true;
         config.save_to(&path).unwrap();
         assert_eq!(AppConfig::load_from(&path).unwrap(), config);
     }

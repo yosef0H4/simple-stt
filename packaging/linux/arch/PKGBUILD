@@ -1,6 +1,6 @@
 pkgname=simple-stt
-pkgver=0.3.0
-pkgrel=3
+pkgver=0.3.1
+pkgrel=1
 pkgdesc='Offline speech-to-text dictation for Linux desktops'
 arch=('x86_64')
 url='https://github.com/yosef0H4/simple-stt'

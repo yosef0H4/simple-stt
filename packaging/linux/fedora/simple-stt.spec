@@ -1,6 +1,6 @@
 Name:           simple-stt
-Version:        0.3.0
-Release:        3%{?dist}
+Version:        0.3.1
+Release:        1%{?dist}
 %global __provides_exclude_from ^/usr/lib/simple-stt/.*\.so.*$
 Summary:        Offline speech-to-text dictation for Linux desktops
 License:        GPL-2.0-only AND MIT AND OFL-1.1
@@ -64,5 +64,8 @@ cp -a %{_sourcedir}/stage/. %{buildroot}/
 %license /usr/share/licenses/simple-stt/parakeet-runtime.txt
 
 %changelog
+* Sat Oct 10 2026 Simple STT contributors - 0.3.1-1
+- Prefetch and preserve the current clipboard, cancel obsolete transfers, add buffer notices, and wait for recording shortcut release before delivery.
+
 * Fri Oct 09 2026 Simple STT contributors - 0.3.0-1
 - Initial Fedora package

@@ -148,6 +148,10 @@ fn render_offscreen() {
     std::fs::create_dir_all(&directory).expect("create screenshot directory");
     for locale in [Locale::En, Locale::Ar] {
         let cases = [
+            ("clipboard-buffering", OverlayPrimary::Hidden, translate(locale, "notice.clipboardBuffering", &[])),
+            ("clipboard-ready", OverlayPrimary::Hidden, translate(locale, "notice.clipboardReady", &[])),
+            ("clipboard-failed", OverlayPrimary::Hidden, translate(locale, "notice.clipboardFailed", &[])),
+            ("record-release", OverlayPrimary::Hidden, translate(locale, "notice.recordRelease", &[])),
             ("retry-release", OverlayPrimary::Hidden, translate(locale, "notice.retryRelease", &[])),
             ("retrying", OverlayPrimary::Hidden, translate(locale, "notice.retrying", &[])),
             ("retry-sent", OverlayPrimary::Hidden, translate(locale, "notice.retrySent", &[])),

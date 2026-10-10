@@ -20,6 +20,11 @@
   const results = $derived(
     query.trim()
       ? searchEntries
+          .filter(
+            (e) =>
+              ui.state?.platform === "linux" ||
+              e.path !== "diagnostics.clipboard_buffer_notices",
+          )
           .map((e) => ({
             ...e,
             score: fuzzyScore(query, `${t(e.label)} ${tEnglish(e.label)} ${e.path}`),

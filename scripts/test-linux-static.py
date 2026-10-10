@@ -83,9 +83,12 @@ need("src/common/private_clipboard.rs", 'x-kde-passwordManagerHint', 'INCR', 'MA
 need("src/bin/simple_stt_linux.rs", 'RetryDelivery', 'NewShortcut::new("retry"', 'insert_text_without_clipboard', 'memory_delivery_command')
 need("resources/linux-fast-paste.c", '--insert-text', 'ATSPI_ROLE_PASSWORD_TEXT', 'g_dbus_connection_call_sync', 'attempt\\n')
 need("scripts/test-linux-clean-clipboard.py", 'test_retry', 'application/x-simple-stt-test', 'UTF8_STRING', 'empty retry cancelled work')
-need("src/common/wayland_clipboard.rs", 'x-kde-passwordManagerHint', 'read_finished', 'state.cancelled[0]', 'MAX_TOTAL', 'clipboard changed during backup')
-need("src/bin/simple_stt_linux.rs", 'preserving_wayland_paste', 'ClipboardTransaction', 'notice.clipboardPreserveUnavailable', 'clipboard_free_input_never_falls_back_after_submission')
-need("scripts/test-linux-unicode-input.py", '--virtual', 'DBUS_SESSION_BUS_ADDRESS', 'application/x-simple-stt-e2e', 'image/png')
+need("src/common/wayland_clipboard.rs", 'x-kde-passwordManagerHint', 'read_finished', 'state.cancelled.contains(&(epoch, true))', 'MAX_TOTAL', 'clipboard changed during backup', 'read_backups', 'BACKUP_LIMIT', 'BACKUP_STALL_LIMIT', 'pending formats:', 'serve_cache_daemon', 'proxy_stdio', 'read_bounded_line', 'SO_PEERCRED', 'cached_offer')
+need("src/bin/simple_stt_linux.rs", 'preserving_wayland_paste', 'ClipboardTransaction', 'notice.clipboardPreserveUnavailable', 'clipboard_free_input_never_falls_back_after_submission', 'wayland_clipboard::BACKUP_LIMIT')
+need("src/bin/simple_stt_linux.rs", "wait_record_release", "record_release_gate", "start_clipboard_notice_observer", "clipboard_buffer_notices", "paste stage=waiting-for-read")
+need("src/common/wayland_clipboard.rs", "CachePhase", "publish_event", "status.events.len() == 32", "next.events = std::mem::take", "instance: std::process::id()")
+need("scripts/test-settings-clipboard-notices.cjs", "clipboard_buffer_notices")
+need("scripts/test-linux-unicode-input.py", '--virtual', 'DBUS_SESSION_BUS_ADDRESS', 'application/x-simple-stt-e2e', 'image/png', 'clipboard_cache_regression', '--cache-only', 'ready_latency_limit')
 
 # Host Registry requires a desktop entry matching the registered app ID.
 portal_app_id = re.search(r'const PORTAL_APP_ID: &str = "([^"]+)";', linux_shell)
