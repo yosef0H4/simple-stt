@@ -29,7 +29,8 @@ source_date_epoch="${SOURCE_DATE_EPOCH:-$(git -C "$root" log -1 --format=%ct 2>/
 tar -C "$root" --sort=name --mtime="@$source_date_epoch" \
   --owner=0 --group=0 --numeric-owner \
   --exclude='./.git' --exclude='./target' --exclude='./external' \
-  --exclude='./.codex' --exclude='./.agents' --exclude='./.vscode' --exclude='./.idea' \
+  --exclude='./.codex' --exclude='./.agents' --exclude='./.claude' \
+  --exclude='./.vscode' --exclude='./.idea' --exclude='./lcov.info' \
   --exclude='__pycache__' --exclude='*.pyc' \
   --exclude='./artifacts' --exclude='./web/settings/node_modules' \
   --exclude='./resources/bin' -czf "$source_archive_tmp" .

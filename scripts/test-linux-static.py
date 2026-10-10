@@ -108,6 +108,9 @@ if '--bins' in package_build or 'simple_stt_mock_infer' in package_build:
     errors.append("Linux packages must explicitly select production binaries")
 need("scripts/test-linux-package.py", 'parakeet_capi_abi_version', 'instances/installed/config.json', 'data/simple-stt/models', '--no-browser')
 
+# Public source snapshots must exclude local agent permissions and coverage data.
+need("scripts/package-linux-release.sh", "--exclude='./.claude'", "--exclude='./lcov.info'")
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}")
