@@ -122,5 +122,10 @@
   "notice.clipboardReady": "Clipboard buffer ready",
   "notice.clipboardCancelled": "Copy changed · restarting",
   "notice.clipboardFailed": "Clipboard buffer failed",
-  "notice.recordRelease": "Release the record shortcut to paste"
+  "notice.recordRelease": "Release the record shortcut to paste",
+  "overlay.cleaning": "Cleaning up",
+  "overlay.preparingClipboard": "Preparing clipboard",
+  "overlay.pasting": "Pasting",
+  "overlay.waitingForPaste": "Waiting for paste",
+  "overlay.waitingForKeys": "Release shortcut"
 }

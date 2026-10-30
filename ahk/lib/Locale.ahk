@@ -1,5 +1,5 @@
 ; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
-; catalog-sha256: 8d26a02ffc0c46d8394ce4a2180ac1577fa7945e62d3109d16d54fcbaffb5b99
+; catalog-sha256: deb7787fecf7299b83c2d899b3e567c0e1469479312533fc56f6e91f96e203db
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
     if language = "auto"
@@ -132,7 +132,12 @@ UiText(id, args := unset) {
         "notice.clipboardReady", "Clipboard buffer ready",
         "notice.clipboardCancelled", "Copy changed · restarting",
         "notice.clipboardFailed", "Clipboard buffer failed",
-        "notice.recordRelease", "Release the record shortcut to paste"
+        "notice.recordRelease", "Release the record shortcut to paste",
+        "overlay.cleaning", "Cleaning up",
+        "overlay.preparingClipboard", "Preparing clipboard",
+        "overlay.pasting", "Pasting",
+        "overlay.waitingForPaste", "Waiting for paste",
+        "overlay.waitingForKeys", "Release shortcut"
     )
     static arabic := Map(
         "overlay.transcribing", "🎙 جارٍ التفريغ…",
@@ -258,7 +263,12 @@ UiText(id, args := unset) {
         "notice.clipboardReady", "الحافظة جاهزة",
         "notice.clipboardCancelled", "تغيّر النسخ · إعادة الحفظ",
         "notice.clipboardFailed", "تعذّر حفظ الحافظة",
-        "notice.recordRelease", "أفلت اختصار التسجيل للصق"
+        "notice.recordRelease", "أفلت اختصار التسجيل للصق",
+        "overlay.cleaning", "تنقيح",
+        "overlay.preparingClipboard", "تجهيز الحافظة",
+        "overlay.pasting", "لصق",
+        "overlay.waitingForPaste", "انتظار اللصق",
+        "overlay.waitingForKeys", "أفلت الاختصار"
     )
     if !IsSet(SimpleSttUiLocale)
         UiSetLanguage()

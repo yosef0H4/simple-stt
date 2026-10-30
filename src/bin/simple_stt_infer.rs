@@ -74,7 +74,9 @@ fn main() -> Result<()> {
                     );
                     ensure_engine(&mut engine, &args)?;
                     tracing::info!(session_id, samples = samples.len(), "inference begin");
+                    let started = std::time::Instant::now();
                     let transcript = engine.as_ref().unwrap().transcribe_pcm16_16k(&samples)?;
+                    tracing::info!(target: "simple_stt_privacy", session_id, audio_ms = samples.len() / 16, elapsed_ms = started.elapsed().as_millis(), "inference timing");
                     tracing::info!(
                         session_id,
                         transcript_chars = transcript.chars().count(),

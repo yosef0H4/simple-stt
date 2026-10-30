@@ -33,10 +33,7 @@ impl ParakeetNative {
     }
 
     pub fn transcribe_pcm16_16k(&self, samples: &[i16]) -> Result<String> {
-        let pcm: Vec<f32> = samples
-            .iter()
-            .map(|sample| *sample as f32 / 32768.0)
-            .collect();
+        let pcm = pcm_with_end_context(samples);
         let ptr = unsafe {
             (self.api.transcribe_pcm)(self.ctx, pcm.as_ptr(), pcm.len() as c_int, 16_000, 0)
         };
@@ -58,6 +55,35 @@ impl ParakeetNative {
             .into_owned();
         unsafe { (self.api.free_string)(ptr) };
         Ok(text.trim().to_owned())
+    }
+}
+
+// Offline decoding still needs right context at a recording boundary. In
+// particular, realtime EOU RNNT can truncate its final token without it. This
+// is synthetic silence, not another 200 ms of microphone capture or a sleep.
+fn pcm_with_end_context(samples: &[i16]) -> Vec<f32> {
+    const END_CONTEXT_SAMPLES: usize = 16_000 / 5;
+    let mut pcm = Vec::with_capacity(samples.len() + END_CONTEXT_SAMPLES);
+    pcm.extend(samples.iter().map(|sample| *sample as f32 / 32768.0));
+    if !samples.is_empty() {
+        pcm.resize(pcm.len() + END_CONTEXT_SAMPLES, 0.0);
+    }
+    pcm
+}
+
+#[cfg(test)]
+mod end_context_tests {
+    use super::pcm_with_end_context;
+    #[test]
+    fn end_context_keeps_the_complete_original_audio_and_empty_input_empty() {
+        let input = [i16::MIN, 0, i16::MAX, 1234];
+        let pcm = pcm_with_end_context(&input);
+        assert_eq!(pcm.len(), input.len() + 3200);
+        for (actual, expected) in pcm.iter().zip(input) {
+            assert_eq!(*actual, expected as f32 / 32768.0);
+        }
+        assert!(pcm[input.len()..].iter().all(|value| *value == 0.0));
+        assert!(pcm_with_end_context(&[]).is_empty());
     }
 }
 

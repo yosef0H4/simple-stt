@@ -924,14 +924,21 @@ fn signal_delivery_complete(session_id: u64) -> Result<()> {
 fn memory_delivery_command(
     command: simple_stt::common::shell_protocol::ShellCommand,
 ) -> Result<simple_stt::common::shell_protocol::ShellResponse> {
+    memory_delivery_command_with_timeout(command, Duration::from_secs(5))
+}
+
+fn memory_delivery_command_with_timeout(
+    command: simple_stt::common::shell_protocol::ShellCommand,
+    timeout: Duration,
+) -> Result<simple_stt::common::shell_protocol::ShellResponse> {
     use simple_stt::common::shell_protocol::{
         ClientMessage, ServerMessage, SHELL_PROTOCOL_VERSION,
     };
     use std::io::{BufRead, BufReader};
     let service = simple_stt::capture::state::ServiceState::load(&state_file())?;
     let mut stream = std::net::TcpStream::connect(&service.address)?;
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+    stream.set_read_timeout(Some(timeout))?;
+    stream.set_write_timeout(Some(timeout))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut read = || -> Result<ServerMessage> {
         let mut line = String::new();
@@ -2119,20 +2126,42 @@ fn transform_text(text: &str) -> Result<String> {
     Ok(text)
 }
 
+fn delivery_progress(session_id: u64, phase: simple_stt::common::shell_protocol::DeliveryPhase) {
+    let _ = memory_delivery_command_with_timeout(
+        simple_stt::common::shell_protocol::ShellCommand::DeliveryProgress { session_id, phase },
+        Duration::from_millis(150),
+    );
+}
+
 fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result<&'static str> {
     if text.is_empty() {
         return Ok("empty transcript skipped");
     }
+    let started = Instant::now();
+    use simple_stt::common::shell_protocol::DeliveryPhase;
+    delivery_progress(session_id, DeliveryPhase::WaitingForKeys);
     let config = AppConfig::load()?;
     #[cfg(target_os = "linux")]
     wait_record_release(&|| {
         read_session().is_ok_and(|state| delivery_session_is_current(&state, session_id))
     })?;
     let identity = focused_app_identity();
+    eprintln!(
+        "[{APP}] delivery stage=target-ready elapsed_ms={}",
+        started.elapsed().as_millis()
+    );
     let mode = effective_delivery_mode(
         config.output.delivery_mode,
         identity.as_deref(),
         &config.output.app_overrides,
+    );
+    delivery_progress(
+        session_id,
+        if mode == TextDeliveryMode::Type {
+            DeliveryPhase::Typing
+        } else {
+            DeliveryPhase::Pasting
+        },
     );
     let is_current = || read_session().is_ok_and(|s| delivery_session_is_current(&s, session_id));
     // The shell also has one-shot CLI processes: a process-local mutex cannot
@@ -2167,6 +2196,7 @@ fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result
         return Ok("copied");
     }
     if config.output.preserve_clipboard
+        && !identity.as_deref().is_some_and(is_terminal_identity)
         && is_current()
         && insert_text_without_clipboard(text, &is_current)?
     {
@@ -2174,12 +2204,11 @@ fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result
     }
     paste_text(
         text,
-        force_shift_insert,
+        paste_key_for_mode(mode, force_shift_insert, identity.as_deref()),
         config.output.linux_automation_backend,
-        mode,
-        identity.as_deref(),
         &is_current,
         config.output.preserve_clipboard,
+        session_id,
     )
 }
 
@@ -2429,8 +2458,13 @@ fn preserving_wayland_paste(
     key: PasteKey,
     backend: LinuxAutomationBackend,
     is_current: &impl Fn() -> bool,
+    session_id: u64,
 ) -> Result<&'static str> {
     let preparation = Instant::now();
+    delivery_progress(
+        session_id,
+        simple_stt::common::shell_protocol::DeliveryPhase::PreparingClipboard,
+    );
     eprintln!("[{APP}] paste stage=clipboard-preparation");
     let mut transactions = vec![ClipboardTransaction::start(text, false)?];
     eprintln!(
@@ -2446,6 +2480,10 @@ fn preserving_wayland_paste(
     for transaction in &mut transactions {
         transaction.arm()?;
     }
+    delivery_progress(
+        session_id,
+        simple_stt::common::shell_protocol::DeliveryPhase::Pasting,
+    );
     eprintln!("[{APP}] paste stage=shortcut-send key={key:?}");
     if !is_current() || !send_paste_key(key, backend)? {
         bail!(
@@ -2455,6 +2493,10 @@ fn preserving_wayland_paste(
     for transaction in &mut transactions {
         writeln!(transaction.input, "sent")?;
     }
+    delivery_progress(
+        session_id,
+        simple_stt::common::shell_protocol::DeliveryPhase::WaitingForPaste,
+    );
     eprintln!("[{APP}] paste stage=waiting-for-read");
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
@@ -2549,16 +2591,14 @@ fn publish_clipboard(
 
 fn paste_text(
     text: &str,
-    force_shift_insert: bool,
+    key: PasteKey,
     backend: LinuxAutomationBackend,
-    mode: TextDeliveryMode,
-    identity: Option<&str>,
     is_current: &impl Fn() -> bool,
     preserve_clipboard: bool,
+    session_id: u64,
 ) -> Result<&'static str> {
-    let key = paste_key_for_mode(mode, force_shift_insert, identity);
     if preserve_clipboard && std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        return preserving_wayland_paste(text, key, backend, is_current)
+        return preserving_wayland_paste(text, key, backend, is_current, session_id)
             .inspect_err(|_| shell_notice("notice.clipboardPreserveUnavailable", true));
     }
     if preserve_clipboard {
@@ -2643,7 +2683,9 @@ fn smart_paste_key(terminal: bool) -> PasteKey {
     if terminal {
         PasteKey::CtrlShiftV
     } else {
-        PasteKey::ShiftInsert
+        // Ctrl+V uses CLIPBOARD only. Shift+Insert can use PRIMARY, requiring
+        // a second cold backup of the selected text and its rich formats.
+        PasteKey::CtrlV
     }
 }
 
@@ -3365,12 +3407,11 @@ root.after(150,ready);root.mainloop()
             let text = "hello world مرحبا 🙂";
             let outcome = paste_text(
                 text,
-                false,
+                PasteKey::CtrlV,
                 LinuxAutomationBackend::Xdotool,
-                TextDeliveryMode::PasteCtrlV,
-                Some("test-editor"),
                 &|| true,
                 false,
+                0,
             );
             let deadline = Instant::now() + Duration::from_secs(5);
             while !result.exists() && Instant::now() < deadline {
@@ -3692,7 +3733,7 @@ root.after(150,ready);root.mainloop()
 
     #[test]
     fn smart_paste_uses_terminal_shortcut_only_for_terminals() {
-        assert_eq!(smart_paste_key(false), PasteKey::ShiftInsert);
+        assert_eq!(smart_paste_key(false), PasteKey::CtrlV);
         assert_eq!(smart_paste_key(true), PasteKey::CtrlShiftV);
         assert!(is_terminal_identity("kitty"));
         assert!(!is_terminal_identity("Zen Browser"));

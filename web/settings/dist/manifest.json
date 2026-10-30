@@ -18,8 +18,8 @@
     "src/lib/i18n.ts": "4b379ce6125cd8643cc6a6dac245f07b8bfd142c8b2490de15225b1fd9de23e6",
     "src/lib/locales/aliases.ts": "da253a3a2df3d2a1f6cb2082f6477083e9439de88a7a93fd63ba297a52ef8283",
     "src/lib/locales/ar.json": "dfd5870a30e6d882e2de1196aba8e287e4629ffa48c69a2d37f656d7355c2e9d",
-    "src/lib/locales/desktop.ar.json": "a8ed28c278a253008b65485e2c68836e0fc87bde7277a2ebbef73e1da994abcb",
-    "src/lib/locales/desktop.en.json": "c85d7dcfe15a5149f2478d16cc04800bdba895b573fd1d20f9fbf5584f1b6b6d",
+    "src/lib/locales/desktop.ar.json": "1199618ce3def8d1dfd356cf8ecc357a2575a108cc3c9f9d45cad99693908280",
+    "src/lib/locales/desktop.en.json": "4ad90b9d3f5a8d034231377b5ca8953ec7c30a81a3c7f3ce50d005e37f7f3f50",
     "src/lib/locales/en.json": "c0c20ba97a7f6d053353ce6f8ba5629ba2514ecaf780c94c4835d739c26b467e",
     "src/lib/models.ts": "3c3fcc8ba2f34690ef9e7321448780b74449ebd8838ecbbfe9a65ea888d49ea3",
     "src/lib/settings.ts": "00fe17718bd60eb3aa34c636db4c5af632ea167800929fcc89641e3679054981",
@@ -47,7 +47,7 @@
   },
   "assets": {
     "index.html": "c1cb80d915ac14dbe87ebe81fa0c70bbd3ce5f8925297be26005c14f8c46f50a",
-    "app.js": "75d91d9ae6d8752ea107ffc94e55620a0f55c6a3538a186aa6b8c98744b45616",
+    "app.js": "ae8b8327c43ed9b58aab0bce93a92557b008d95d8b426a7bb90682f4c95560f2",
     "styles.css": "cc945d6445788854664127a625385864c9def6eddda5b65f4bc86b05c97f6d94",
     "arabic.woff2": "7b79019a185367820b223310289b92cb5baa1b6d23deeb81e6bcc2784ede569a"
   }

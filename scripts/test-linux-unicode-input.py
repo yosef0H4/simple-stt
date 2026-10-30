@@ -508,7 +508,7 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
         "schema_version": 9,
         "general": {"enabled": True, "ui_language": "en"},
         "output": {
-            "delivery_mode": "paste_ctrl_v",
+            "delivery_mode": "smart_paste",
             "linux_automation_backend": "native",
             "preserve_clipboard": True,
             "lowercase": False,
@@ -552,7 +552,7 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
                                     "values": {}, "events": []}
                         if name == "last_delivery":
                             response["values"]["text"] = "retry\nمرحبا 🙂"
-                        elif name not in ("cancel", "show_notice"):
+                        elif name not in ("cancel", "show_notice", "delivery_progress"):
                             raise AssertionError(f"unexpected retry fixture command: {name}")
                         stream.write(json.dumps({"type": "response", "request_id": request["request_id"],
                                                  "response": response}).encode() + b"\n")
@@ -946,7 +946,20 @@ def run_private_session(root, cache_only=False):
             env, root, result_file, initial_text, slow_provider_binary, stress_snapshot, injector)
         clipboard_snapshot = stress_snapshot
         initial_text = result_file.read_text(encoding="utf-8")
-        run_retry_cli(env, root, result_file, initial_text, clipboard_snapshot, injector)
+        primary_ready = root / "slow-primary.ready"
+        primary_provider = subprocess.Popen([str(slow_provider_binary), str(primary_ready)],
+            env=dict(env, SIMPLE_STT_TEST_PRIMARY="1"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            publish_provider(primary_provider, primary_ready, env, injector)
+            started = time.monotonic()
+            run_retry_cli(env, root, result_file, initial_text, clipboard_snapshot, injector)
+            elapsed = time.monotonic() - started
+            requests = Path(str(primary_ready) + ".requests")
+            assert not requests.exists() or not requests.read_text(), "Smart Paste unnecessarily read PRIMARY formats"
+            assert primary_provider.poll() is None, "Smart Paste displaced original PRIMARY owner"
+            print(f"PASS: Smart Paste with slow rich PRIMARY: {elapsed:.3f}s, zero PRIMARY transfers", flush=True)
+        finally:
+            stop_process(primary_provider)
         retry_expected = initial_text + "retry\nمرحبا 🙂"
         gtk_payload = "GTK paste café\nمرحبا 🙂\nline two"
         gtk_expected = retry_expected + gtk_payload

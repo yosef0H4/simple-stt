@@ -33,6 +33,16 @@ pub enum ServerMessage {
     },
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveryPhase {
+    Typing,
+    WaitingForKeys,
+    PreparingClipboard,
+    Pasting,
+    WaitingForPaste,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "name", rename_all = "snake_case")]
 pub enum ShellCommand {
@@ -44,6 +54,10 @@ pub enum ShellCommand {
     },
     StopRecording {
         session_id: u64,
+    },
+    DeliveryProgress {
+        session_id: u64,
+        phase: DeliveryPhase,
     },
     DeliveryComplete {
         session_id: u64,

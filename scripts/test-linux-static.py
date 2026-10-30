@@ -111,6 +111,15 @@ need("scripts/test-linux-package.py", 'parakeet_capi_abi_version', 'instances/in
 # Public source snapshots must exclude local agent permissions and coverage data.
 need("scripts/package-linux-release.sh", "--exclude='./.claude'", "--exclude='./lcov.info'")
 
+
+need("src/common/shell_protocol.rs", 'DeliveryProgress', 'PreparingClipboard', 'WaitingForPaste')
+need("src/bin/simple_stt_linux.rs", 'memory_delivery_command_with_timeout', 'SmartPaste => smart_paste_key', 'assert_eq!(smart_paste_key(false), PasteKey::CtrlV)')
+need("scripts/test-linux-unicode-input.py", 'zero PRIMARY transfers', 'Smart Paste displaced original PRIMARY owner')
+
+need("src/infer/parakeet_native.rs", 'pcm_with_end_context', 'END_CONTEXT_SAMPLES', 'end_context_keeps_the_complete_original_audio')
+need("src/bin/simple_stt_linux.rs", 'DeliveryPhase::Typing')
+need("scripts/test-inference-end-context.py", 'expected_last_word', 'struct.pack')
+
 if errors:
     for error in errors:
         print(f"FAIL: {error}")

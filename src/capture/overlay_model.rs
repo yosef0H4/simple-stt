@@ -8,6 +8,11 @@ pub enum OverlayPrimary {
     Recording,
     Transcribing,
     Typing,
+    Cleaning,
+    PreparingClipboard,
+    Pasting,
+    WaitingForPaste,
+    WaitingForKeys,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -104,6 +109,31 @@ pub fn render_overlay_text_with_locale(
             "overlay.transcribing",
             &[],
         )),
+        OverlayPrimary::Cleaning => Some(crate::localization::translate(
+            locale,
+            "overlay.cleaning",
+            &[],
+        )),
+        OverlayPrimary::PreparingClipboard => Some(crate::localization::translate(
+            locale,
+            "overlay.preparingClipboard",
+            &[],
+        )),
+        OverlayPrimary::Pasting => Some(crate::localization::translate(
+            locale,
+            "overlay.pasting",
+            &[],
+        )),
+        OverlayPrimary::WaitingForPaste => Some(crate::localization::translate(
+            locale,
+            "overlay.waitingForPaste",
+            &[],
+        )),
+        OverlayPrimary::WaitingForKeys => Some(crate::localization::translate(
+            locale,
+            "overlay.waitingForKeys",
+            &[],
+        )),
         OverlayPrimary::Typing => Some(crate::localization::translate(
             locale,
             "overlay.typing",
@@ -137,6 +167,19 @@ pub fn linux_overlay_lines(
                 crate::localization::Locale::En,
                 "overlay.transcribing",
                 &[],
+            )));
+        }
+        OverlayPrimary::Cleaning
+        | OverlayPrimary::PreparingClipboard
+        | OverlayPrimary::Pasting
+        | OverlayPrimary::WaitingForPaste
+        | OverlayPrimary::WaitingForKeys => {
+            lines.push(Cow::Owned(render_overlay_text_with_locale(
+                primary,
+                None,
+                visualizer,
+                indicators,
+                crate::localization::Locale::En,
             )));
         }
         OverlayPrimary::Typing => {

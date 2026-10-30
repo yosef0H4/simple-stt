@@ -87,6 +87,15 @@ GLib.timeout_add(1000,ready);Gtk.main()
             assert actual == sentinel, "direct insertion changed non-text clipboard"
             print("PASS direct Unicode insertion leaves binary clipboard untouched")
             test_retry(folder, output, "before " + payload)
+            transcript_file = os.environ.get("SIMPLE_STT_TEST_TRANSCRIPT_FILE")
+            if transcript_file:
+                transcript = " ".join(Path(transcript_file).read_text(encoding="utf-8").splitlines())
+                for mode in ("paste_ctrl_v", "type"):
+                    case = folder / mode
+                    case.mkdir()
+                    test_retry(case, output, output.read_text(), mode=mode, payload=transcript)
+                    assert output.read_text().endswith(transcript), "ASR final word lost in delivery"
+                    print(f"PASS complete generated-audio transcript delivered through {mode}")
         finally:
             app.terminate(); app.communicate(timeout=5)
             old.terminate(); old.wait(timeout=5)
@@ -109,14 +118,14 @@ GLib.timeout_add(1000,ready);Gtk.main()
             if owner.stderr: owner.stderr.close()
 
 
-def test_retry(folder, output, initial):
+def test_retry(folder, output, initial, mode="paste_ctrl_v", payload="Retry EXACT! مرحبا 🙂 "):
     """Execute the real CLI against an authenticated fixture, never infer or record."""
     runtime = folder / "runtime"
     runtime.mkdir()
     data = folder / "data"
     config = folder / "config.json"
     config.write_text(json.dumps({"schema_version": 9, "general": {"ui_language": "en"}, "output": {
-        "delivery_mode": "paste_ctrl_v", "linux_automation_backend": "xdotool",
+        "delivery_mode": mode, "linux_automation_backend": "xdotool", "paced_typing_enabled": False,
         "preserve_clipboard": False, "lowercase": True, "remove_punctuation": True, "trailing_space": True}}))
     hashed = 0xcbf29ce484222325
     for byte in str(runtime).encode(): hashed = ((hashed ^ byte) * 0x100000001b3) & ((1 << 64) - 1)
@@ -127,8 +136,7 @@ def test_retry(folder, output, initial):
     session_file = state_root / "linux-recording-session.json"
     original_session = {"recording": True, "session_id": 42, "updated_at": 1}
     session_file.write_text(json.dumps(original_session))
-    commands, errors, notices = [], [], []
-    payload = "Retry EXACT! مرحبا 🙂 "
+    commands, errors, notices, phases = [], [], [], []
     cached = [payload]
     cache_failure = [False]
     listener = socket.socket()
@@ -147,8 +155,9 @@ def test_retry(folder, output, initial):
                     stream.write(json.dumps({"type": "hello_ack", "protocol": 3, "service_pid": os.getpid()}).encode() + b"\n"); stream.flush()
                     while line := stream.readline():
                         request = json.loads(line); name = request["command"]["name"]; commands.append(name)
-                        assert name in ["last_delivery", "cancel", "show_notice"], f"retry launched work: {name}"
+                        assert name in ["last_delivery", "cancel", "show_notice", "delivery_progress"], f"retry launched work: {name}"
                         if name == "show_notice": notices.append(request["command"]["text"])
+                        if name == "delivery_progress": phases.append(request["command"]["phase"])
                         response = {"ok": True, "message": "fixture", "events": [], "values": {}}
                         if name == "last_delivery" and cache_failure[0]: response["ok"] = False
                         if name == "last_delivery" and cached[0] is not None: response["values"]["text"] = cached[0]
@@ -174,10 +183,13 @@ def test_retry(folder, output, initial):
             subprocess.run(["xdotool", "keyup", "Super_L", "Control_L"], check=True)
             if retry.poll() is None: retry.kill(); retry.communicate()
         wait_for(lambda: output.read_text() == initial + payload, "retry did not use exact cached text/current target")
-        assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], timeout=3) == payload.encode(), "option-off did not leave an ordinary copy"
+        if mode != "type":
+            assert subprocess.check_output(["xclip", "-selection", "clipboard", "-out"], timeout=3) == payload.encode(), "option-off did not leave an ordinary copy"
+        else:
+            assert "typing" in phases and "pasting" not in phases, phases
         offered = subprocess.check_output(["xclip", "-selection", "clipboard", "-out", "-target", "TARGETS"], timeout=3)
         assert b"x-kde-passwordManagerHint" not in offered, "option-off retained history exclusion"
-        assert [command for command in commands if command != "show_notice"] == ["last_delivery", "cancel"], commands
+        assert [command for command in commands if command not in ("show_notice", "delivery_progress")] == ["last_delivery", "cancel"], commands
         assert notices == ["Retrying…", "Retry sent"], notices
         cached[0] = None; commands.clear(); notices.clear(); session_file.write_text(json.dumps(original_session))
         result = subprocess.run([str(binary), "retry-delivery"], env=env, capture_output=True, timeout=15)

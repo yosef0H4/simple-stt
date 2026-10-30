@@ -187,6 +187,7 @@ struct BackgroundContext<'a> {
     events: &'a mut EventBuffer,
     log_transcripts: bool,
     cleanup_config: &'a CleanupConfig,
+    delivery_mode: simple_stt::config::TextDeliveryMode,
     background_tx: &'a Sender<BackgroundResult>,
     active_recording: bool,
     transcribing: &'a mut HashSet<u64>,
@@ -322,6 +323,7 @@ fn main() -> Result<()> {
                     events: &mut events,
                     log_transcripts: config.diagnostics.log_transcripts,
                     cleanup_config: &config.cleanup,
+                    delivery_mode: config.output.delivery_mode,
                     background_tx: &background_tx,
                     active_recording: active.is_some(),
                     transcribing: &mut transcribing,
@@ -902,6 +904,24 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             response
         }
+        ShellCommand::DeliveryProgress { session_id, phase } => {
+            // A late delivery must never replace a newer recording's waveform.
+            if delivering.contains(&session_id)
+                && active.is_none()
+                && transcribing.is_empty()
+                && cleaning.is_empty()
+            {
+                use simple_stt::common::shell_protocol::DeliveryPhase;
+                // Keep each delivery mode stable; waiting for the trigger to be
+                // released must not change a typing label into a pasting label.
+                match phase {
+                    DeliveryPhase::WaitingForKeys => {}
+                    DeliveryPhase::Typing => overlay.set_primary(OverlayPrimary::Typing),
+                    _ => overlay.set_primary(OverlayPrimary::Pasting),
+                }
+            }
+            ShellResponse::ok("delivery progress")
+        }
         ShellCommand::DeliveryComplete { session_id } => {
             let removed = delivering.remove(&session_id);
             let pending =
@@ -1229,6 +1249,9 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     }
                     if context.cleanup_config.enabled {
                         context.cleaning.insert(session_id);
+                        if !context.active_recording {
+                            context.overlay.set_primary(OverlayPrimary::Cleaning);
+                        }
                         let heard = truncate_notice(&text, 72);
                         context.overlay.notify_info(
                             simple_stt::localization::format("notice.heard", &[("text", &heard)]),
@@ -1257,6 +1280,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                             context.overlay,
                             context.active_recording,
                             true,
+                            context.delivery_mode,
                         );
                         push_transcript_event(context.events, session_id, text);
                     }
@@ -1307,7 +1331,12 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     });
                     trim_cleanup_history(context.cleanup_history);
                     context.delivering.insert(session_id);
-                    restore_overlay_after_success(context.overlay, context.active_recording, true);
+                    restore_overlay_after_success(
+                        context.overlay,
+                        context.active_recording,
+                        true,
+                        context.delivery_mode,
+                    );
                     push_transcript_event(context.events, session_id, cleaned.text);
                 }
                 Err(error) => {
@@ -1564,11 +1593,18 @@ fn restore_overlay_after_success(
     overlay: &OverlayHandle,
     active_recording: bool,
     has_pending_transcript: bool,
+    delivery_mode: simple_stt::config::TextDeliveryMode,
 ) {
     if active_recording {
         overlay.set_primary(OverlayPrimary::Recording);
     } else if has_pending_transcript {
-        overlay.set_primary(OverlayPrimary::Transcribing);
+        overlay.set_primary(
+            if delivery_mode == simple_stt::config::TextDeliveryMode::Type {
+                OverlayPrimary::Typing
+            } else {
+                OverlayPrimary::Pasting
+            },
+        );
     } else {
         overlay.hide();
     }

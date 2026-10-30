@@ -122,5 +122,10 @@
   "notice.clipboardReady": "الحافظة جاهزة",
   "notice.clipboardCancelled": "تغيّر النسخ · إعادة الحفظ",
   "notice.clipboardFailed": "تعذّر حفظ الحافظة",
-  "notice.recordRelease": "أفلت اختصار التسجيل للصق"
+  "notice.recordRelease": "أفلت اختصار التسجيل للصق",
+  "overlay.cleaning": "تنقيح",
+  "overlay.preparingClipboard": "تجهيز الحافظة",
+  "overlay.pasting": "لصق",
+  "overlay.waitingForPaste": "انتظار اللصق",
+  "overlay.waitingForKeys": "أفلت الاختصار"
 }

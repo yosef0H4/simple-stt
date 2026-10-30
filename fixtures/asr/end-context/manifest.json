@@ -1,0 +1,17 @@
+[
+  {
+    "file": "umbrella.wav",
+    "expected_last_word": "umbrella",
+    "source": "Generated offline with Simple TTS, Kokoro af_heart; trimmed trailing silence at amplitude 250/32768."
+  },
+  {
+    "file": "watermelon.wav",
+    "expected_last_word": "watermelon",
+    "source": "Generated offline with Simple TTS, Kokoro af_heart; trimmed trailing silence at amplitude 250/32768."
+  },
+  {
+    "file": "chocolate.wav",
+    "expected_last_word": "chocolate",
+    "source": "Generated offline with Simple TTS, Kokoro af_heart; trimmed trailing silence at amplitude 250/32768."
+  }
+]

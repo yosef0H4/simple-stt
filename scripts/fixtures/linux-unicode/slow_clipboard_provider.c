@@ -67,7 +67,7 @@ static void clear_data(GtkClipboard *clipboard, gpointer user_data) {
 static void publish(GtkButton *button, gpointer user_data) {
     (void)button;
     (void)user_data;
-    GtkClipboard *clipboard = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+    GtkClipboard *clipboard = gtk_clipboard_get(g_getenv("SIMPLE_STT_TEST_PRIMARY") ? GDK_SELECTION_PRIMARY : GDK_SELECTION_CLIPBOARD);
     if (!gtk_clipboard_set_with_data(clipboard, targets, TOTAL_FORMATS,
                                      provide_data, clear_data, NULL)) exit(3);
     FILE *ready = fopen(ready_path, "w");
