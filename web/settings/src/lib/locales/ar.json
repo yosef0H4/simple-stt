@@ -423,7 +423,8 @@
   "settings.model_downloads": "تنزيل النماذج",
   "settings.runtime_help": "بيئات التشغيل تشغّل النماذج المحلية. ثبّت بيئة متوافقة أولاً.",
   "settings.model_help": "النماذج تحتوي على الأوزان المدرّبة التي تستخدمها بيئة التشغيل.",
-  "settings.fetch_provider": "جلب النماذج والأصوات",
-  "settings.provider_manual": "اختر اقتراحاً أو أدخل المعرّف الدقيق.",
-  "settings.provider_empty": "لا توجد اقتراحات. يمكنك إدخال المعرّف الدقيق."
+  "settings.provider_empty": "لا توجد اقتراحات. يمكنك إدخال المعرّف الدقيق.",
+  "settings.save_connection": "حفظ الاتصال",
+  "settings.refresh_models": "تحديث النماذج",
+  "settings.refresh_voices": "تحديث الأصوات"
 }

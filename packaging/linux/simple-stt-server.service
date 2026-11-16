@@ -1,0 +1,15 @@
+[Unit]
+Description=Simple STT headless speech and OCR API
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/simple-stt/server.env
+ExecStart=/usr/lib/simple-stt/simple-stt-ctl serve
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+UMask=0077
+
+[Install]
+WantedBy=default.target

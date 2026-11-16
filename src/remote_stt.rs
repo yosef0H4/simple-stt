@@ -196,6 +196,7 @@ fn transcribe_once(
         }
     })?;
     let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(connect_timeout)
         .timeout(timeout)
         .build()
@@ -244,39 +245,13 @@ fn transcribe_once(
 }
 
 fn endpoint(base_url: &str) -> Result<url::Url> {
-    let mut base =
-        url::Url::parse(base_url.trim()).context("remote STT base_url must be an absolute URL")?;
-    anyhow::ensure!(
-        matches!(base.scheme(), "http" | "https") && base.host_str().is_some(),
-        "remote STT base_url must be an HTTP(S) URL with a host"
-    );
-    if base.scheme() == "http" {
-        anyhow::ensure!(
-            matches!(
-                base.host_str(),
-                Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
-            ),
-            "unencrypted remote STT endpoints are allowed only on this computer"
-        );
+    let mut base = reader_core::provider_url::parse(base_url)?;
+    reader_core::provider_url::validate_stt_transport(&base)?;
+    // Preserve the established STT shorthand for an origin without a path.
+    if base.path().is_empty() || base.path() == "/" {
+        base.set_path("/v1");
     }
-    anyhow::ensure!(
-        base.username().is_empty()
-            && base.password().is_none()
-            && base.query().is_none()
-            && base.fragment().is_none(),
-        "remote STT base_url must not contain credentials, query, or fragment"
-    );
-    let path = base.path().trim_end_matches('/');
-    let path =
-        if path.ends_with("/v1/audio/transcriptions") || path.ends_with("/audio/transcriptions") {
-            path.to_owned()
-        } else if path.ends_with("/v1") {
-            format!("{path}/audio/transcriptions")
-        } else {
-            format!("{path}/v1/audio/transcriptions")
-        };
-    base.set_path(&path);
-    Ok(base)
+    reader_core::provider_url::operation(base.as_str(), "audio/transcriptions")
 }
 
 fn multipart_body(
@@ -397,6 +372,18 @@ mod tests {
         );
         assert!(endpoint("http://api.example.test/v1").is_err());
         assert!(endpoint("https://user:pass@api.example.test/v1").is_err());
+    }
+
+    #[test]
+    fn private_server_and_custom_prefix_are_usable() {
+        assert_eq!(
+            endpoint("http://100.85.156.101:8765/v1").unwrap().path(),
+            "/v1/audio/transcriptions"
+        );
+        assert_eq!(
+            endpoint("https://host.test/proxy/api").unwrap().path(),
+            "/proxy/api/audio/transcriptions"
+        );
     }
 
     #[test]

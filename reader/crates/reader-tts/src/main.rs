@@ -577,7 +577,7 @@ fn remote_stream(
         .as_deref()
         .context("remote speech needs --model")?;
     let key = std::env::var("SIMPLE_TTS_SPEECH_API_KEY").unwrap_or_default();
-    let mut request=client.post(format!("{}/audio/speech",base.trim_end_matches('/'))).json(&serde_json::json!({"model":model,"input":text,"voice":args.remote_voice.as_deref().unwrap_or(voice),"response_format":args.format,"speed":speed}));
+    let mut request=client.post(reader_core::provider_url::operation(base,"audio/speech")?).json(&serde_json::json!({"model":model,"input":text,"voice":args.remote_voice.as_deref().unwrap_or(voice),"response_format":args.format,"speed":speed}));
     if !key.is_empty() {
         request = request.bearer_auth(key)
     }
@@ -1385,6 +1385,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let budgets = request_budgets(&args);
     let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(budgets.connect)
         .build()?;
     let mut state = EngineState::default();
@@ -1478,6 +1479,7 @@ mod tests {
 
     fn remote_failure(args: &Args) -> anyhow::Result<()> {
         let client = reqwest::blocking::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(request_budgets(args).connect)
             .build()?;
         remote_stream_with_retry(

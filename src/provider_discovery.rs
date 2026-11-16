@@ -77,19 +77,7 @@ pub fn discover(request: &DiscoveryRequest, saved_key: Option<String>) -> Result
 }
 
 fn validate_base(value: &str) -> Result<url::Url> {
-    let url = url::Url::parse(value.trim()).context("provider base URL is invalid")?;
-    anyhow::ensure!(
-        matches!(url.scheme(), "http" | "https") && url.host_str().is_some(),
-        "provider base URL must be HTTP(S)"
-    );
-    anyhow::ensure!(
-        url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "provider base URL must not contain credentials, query, or fragment"
-    );
-    Ok(url)
+    reader_core::provider_url::discovery_base(value)
 }
 fn endpoint(base: &url::Url, suffix: &str) -> Result<url::Url> {
     let mut url = base.clone();
@@ -107,7 +95,7 @@ fn send(client: &Client, url: url::Url, key: Option<&str>) -> Result<Response> {
         .context("provider discovery request failed")?;
     anyhow::ensure!(
         response.status().is_success(),
-        "provider discovery returned HTTP {}",
+        "provider discovery returned HTTP {}; model discovery may be unavailable: enter a model ID manually, or check the URL and this feature’s key",
         response.status()
     );
     if let Some(length) = response.content_length() {

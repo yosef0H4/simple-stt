@@ -423,7 +423,8 @@
   "settings.model_downloads": "Model downloads",
   "settings.runtime_help": "Runtimes run local models. Install a compatible runtime first.",
   "settings.model_help": "Models contain the trained weights used by a runtime.",
-  "settings.fetch_provider": "Fetch models and voices",
-  "settings.provider_manual": "Choose a suggestion or enter an exact ID.",
-  "settings.provider_empty": "No suggestions available. You can still enter an exact ID."
+  "settings.provider_empty": "No suggestions available. You can still enter an exact ID.",
+  "settings.save_connection": "Save connection",
+  "settings.refresh_models": "Refresh models",
+  "settings.refresh_voices": "Refresh voices"
 }

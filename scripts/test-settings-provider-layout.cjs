@@ -13,7 +13,7 @@ require('node:fs').mkdirSync('artifacts/model-pages',{recursive:true});
  await page.reload();await go('models');await page.locator('#runtime-search').waitFor();
  await page.locator('[data-download-kind=model]').click();assert.equal(await page.locator('.selection-section').count(),1);
  await page.locator('[data-catalog-feature=tts]').click();const input=page.locator('[data-setting-path=reading-provider] .combo-input');await input.click();await input.fill('OpenAI');await page.getByRole('option',{name:'OpenAI-compatible',exact:true}).click();
- await page.locator('#speech-base_url').fill('http://localhost:8080/v1');await page.getByRole('button',{name:'Fetch models and voices',exact:true}).click();
+ await page.locator('#speech-base_url').fill('http://localhost:8080/v1');await page.getByRole('button',{name:'Refresh models',exact:true}).click();
  const choose=async(path,query,label)=>{const i=page.locator(`[data-setting-path="${path}"] .combo-input`);await i.click();await i.fill(query);await page.locator(`[data-combo-list="${path}"]`).getByRole('option',{name:label,exact:true}).click();};
  await choose('tts-remote-model','Server','Server model');await choose('tts-remote-voice','Bella','Bella');
  const custom=page.locator('[data-setting-path=tts-remote-model] .combo-input');await custom.fill('custom-model');await page.keyboard.press('Tab');assert.equal(await custom.inputValue(),'custom-model');

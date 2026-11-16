@@ -1,3 +1,4 @@
+import {mergeSavedFields} from "./draft";
 import { reading, readingDirty, saveReading } from "./reading-state.svelte";
 import type { ReaderConfig } from './reader';
 import { api, events, ApiError } from "./api";
@@ -143,17 +144,7 @@ export async function refreshState(reloaded = false, signal?: AbortSignal) {
 function readPath(value: unknown, path: string): unknown {
   return path.split('.').reduce<unknown>((node,key)=>node&&typeof node==='object'?(node as Record<string,unknown>)[key]:undefined,value);
 }
-function mergeSavedFields(draft: Record<string,unknown>, baseline: Record<string,unknown>, saved: Record<string,unknown>, prefix='') {
-  for(const key of new Set([...Object.keys(baseline),...Object.keys(saved)])){
-    const current=draft[key],before=baseline[key],next=saved[key];
-    const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
-    const path=prefix?`${prefix}.${key}`:key;
-    if(object(current)&&object(next))mergeSavedFields(current,object(before)?before:{},next,path);
-    else if(path==='revision'||JSON.stringify(current??null)===JSON.stringify(before??null)){
-      if(next===undefined)delete draft[key];else draft[key]=clone(next);
-    }
-  }
-}
+
 export async function refreshAutomaticSelections():Promise<boolean> {
   if(!ui.ready)return false;
   await refreshState(true);
@@ -394,5 +385,21 @@ export function editJson(text: string) {
   } catch {
     ui.jsonInvalid = true;
   }
+  markDirty();
+}
+
+export async function saveSttProvider(key: string) {
+  if (!ui.config || !ui.baseline) return;
+  const latest = await api<SettingsState>("/api/state");
+  assertConfig(latest.config);
+  const config = clone(latest.config);
+  config.speech.provider = ui.config.speech.provider;
+  config.speech.remote_openai_compatible = clone(ui.config.speech.remote_openai_compatible);
+  const result = await api<SaveResult>("/api/save", {config, expected_hash:latest.config_hash});
+  mergeSavedFields(ui.config as unknown as Record<string,unknown>,ui.baseline as unknown as Record<string,unknown>,result.config as unknown as Record<string,unknown>);
+  ui.config.speech.provider=result.config.speech.provider;
+  ui.config.speech.remote_openai_compatible=clone(result.config.speech.remote_openai_compatible);
+  ui.baseline=clone(result.config); ui.hash=result.config_hash;
+  if(key.trim()) await api("/api/reader-secrets",{stt:key});
   markDirty();
 }

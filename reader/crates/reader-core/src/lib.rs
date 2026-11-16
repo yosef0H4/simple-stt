@@ -5,6 +5,7 @@ pub mod generation;
 pub mod language;
 pub mod native_paths;
 pub mod paddle;
+pub mod provider_url;
 pub mod request_budget;
 pub mod residency;
 pub mod secrets;

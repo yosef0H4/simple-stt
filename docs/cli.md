@@ -74,6 +74,7 @@ explicitly; installation does not change settings:
 ```text
 simple-stt-ctl assets list
 simple-stt-ctl assets install kokoro
+simple-stt-ctl assets install tdt_ctc-110m-q8_0.gguf
 simple-stt-ctl assets select tts --model kokoro --runtime sherpa-cpu
 simple-stt-ctl assets remove kokoro
 ```
@@ -104,6 +105,22 @@ budgets: `request_budgets.connect_timeout_secs=3`,
 `request_budgets.total_timeout_secs=300`. The complete JSON values are
 available through `config --scope reader show` and `config --scope reader
 defaults`.
+
+Settings also keeps STT, TTS, and OCR client connections independent. Each has
+its own **Save connection** and **Clear key** controls. Saving one connection
+preserves other unsaved settings; clearing its key leaves the URL and the other
+features' keys intact. A blank key field retains an existing saved key until
+Clear key is pressed.
+
+Model and voice suggestions refresh after a 600 ms pause in URL/key edits.
+Refresh icons beside their fields retry discovery. Discovery uses GET requests,
+never inference; a missing model catalog does not prevent entering a model ID.
+The usual base URL is `http://100.85.156.101:8765/v1`; a matching full endpoint
+such as `/v1/audio/speech` is also accepted without duplicating its path. Custom
+prefixes and query parameters are preserved. STT permits HTTP for private IP
+networks, including Tailscale, and requires HTTPS for public hosts.
+See [provider client settings research](research/provider-client-settings.md)
+for the source-backed URL and discovery contract.
 
 `simple-stt-ctl serve` starts the installed headless reader API controller in the
 foreground. It does not require the capture service or a desktop session.

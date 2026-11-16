@@ -1116,28 +1116,8 @@ fn validate_cleanup_base_url(value: &str) -> Result<()> {
 }
 
 fn validate_remote_stt_base_url(value: &str) -> Result<()> {
-    let url = url::Url::parse(value).context("remote STT base_url must be an absolute URL")?;
-    anyhow::ensure!(
-        matches!(url.scheme(), "http" | "https"),
-        "remote STT base_url must use HTTP or HTTPS"
-    );
-    let host = url
-        .host_str()
-        .context("remote STT base_url must include a host")?;
-    if url.scheme() == "http" {
-        anyhow::ensure!(
-            matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]"),
-            "unencrypted remote STT endpoints are allowed only on this computer"
-        );
-    }
-    anyhow::ensure!(
-        url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "remote STT base_url must not contain credentials, query, or fragment"
-    );
-    Ok(())
+    let url = reader_core::provider_url::operation(value, "audio/transcriptions")?;
+    reader_core::provider_url::validate_stt_transport(&url)
 }
 
 pub fn valid_language_id(id: &str) -> bool {

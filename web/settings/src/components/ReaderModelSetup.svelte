@@ -1,19 +1,22 @@
 <script lang="ts">
 import {onMount} from "svelte";
 import {api} from "../lib/api";
-import {reading,loadReading} from "../lib/reading-state.svelte";
+import {reading,loadReading,saveReadingProvider,clearReaderKey} from "../lib/reading-state.svelte";
 import {ui,notice,markDirty} from "../lib/state.svelte";
 import {t} from "../lib/i18n";
 import Group from "../components/Group.svelte";
 import Combo from "./Combo.svelte";
+import ProviderCredentials from "./ProviderCredentials.svelte";
 import ProviderModels from "./ProviderModels.svelte";
 import ModuleSelection from "../components/ModuleSelection.svelte";
 let {feature}:{feature:"tts"|"ocr"}=$props();
-let speechKeySaved=$state(false), ocrKeySaved=$state(false);
+let busy=$state(false);
 let status=$state<Record<string,unknown>|null>(null);
 $effect(()=>{markDirty();});
-function refresh(){return loadReading().then(state=>{status=state.status;speechKeySaved=state.speech_key_saved;ocrKeySaved=state.ocr_key_saved;});}
-async function clearKey(kind:"speech"|"ocr"){try{await api("/api/reader-secrets",{[`clear_${kind}`]:true});await refresh();}catch(error){notice(t("reading.failed"),"error",String(error));}}
+function refresh(){return loadReading().then(state=>{status=state.status;});}
+async function clearKey(kind:"speech"|"ocr"){busy=true;try{await clearReaderKey(kind);markDirty();}catch(error){notice(t("reading.failed"),"error",String(error));}finally{busy=false;}}
+async function saveConnection(kind:"speech"|"ocr"){busy=true;try{await saveReadingProvider(kind);markDirty();notice(t("ui.saved_and_applied.cc3757"),"success");}catch(error){notice(t("reading.failed"),"error",String(error));}finally{busy=false;}}
+
 function route(section:"speech"|"ocr",value:string){
  if(!reading.config)return;
  if(section==="speech")reading.config.speech.provider=value==="local_kokoro"?{kind:"local_kokoro"}:{kind:"open_ai_compatible",base_url:"https://",model:"tts-1",voice:"alloy",format:"wav"};
@@ -29,7 +32,7 @@ onMount(()=>{void refresh().catch(error=>notice(t("reading.failed"),"error",Stri
       <ModuleSelection feature="tts" showDownloads={false} />
     {:else}
       <div class="field"><label for="speech-base_url">{t('reading.base_url')}</label><div class="control"><input id="speech-base_url" dir="ltr" bind:value={reading.config.speech.provider.base_url}/></div></div>
-      <div class="field"><label for="speech-key">{t("reading.api_key")}{speechKeySaved ? " ✓" : ""}</label><div class="control"><input id="speech-key" type="password" autocomplete="new-password" bind:value={reading.speechKey} /><button type="button" disabled={!speechKeySaved} onclick={()=>clearKey("speech")}>{t("reading.clear_key")}</button></div></div>
+      <ProviderCredentials id="speech-key" bind:value={reading.speechKey} saved={reading.speechKeySaved} {busy} onsave={()=>saveConnection("speech")} onclear={()=>clearKey("speech")}/>
       <ProviderModels feature="tts" baseUrl={reading.config.speech.provider.base_url} apiKey={reading.speechKey} model={reading.config.speech.provider.model} voice={reading.config.speech.provider.voice} onmodel={v=>{if(reading.config?.speech.provider.kind==='open_ai_compatible')reading.config.speech.provider.model=v;}} onvoice={v=>{if(reading.config?.speech.provider.kind==='open_ai_compatible')reading.config.speech.provider.voice=v;}}/>
       <div class="field"><label for="speech-format">{t('reading.format')}</label><div class="control"><input id="speech-format" bind:value={reading.config.speech.provider.format}/></div></div>
       <div class="field"><label for="speech-fallback">{t("reading.fallback_to_local")}</label><div class="control"><input id="speech-fallback" type="checkbox" role="switch" bind:checked={reading.config.speech.fallback_to_local} /></div></div>
@@ -44,7 +47,7 @@ onMount(()=>{void refresh().catch(error=>notice(t("reading.failed"),"error",Stri
       <ModuleSelection feature="ocr" showDownloads={false} />
     {:else}
       <div class="field"><label for="ocr-base_url">{t('reading.base_url')}</label><div class="control"><input id="ocr-base_url" dir="ltr" bind:value={reading.config.ocr.provider.base_url}/></div></div>
-      <div class="field"><label for="ocr-key">{t("reading.api_key")}{ocrKeySaved ? " ✓" : ""}</label><div class="control"><input id="ocr-key" type="password" autocomplete="new-password" bind:value={reading.ocrKey} /><button type="button" disabled={!ocrKeySaved} onclick={()=>clearKey("ocr")}>{t("reading.clear_key")}</button></div></div>
+      <ProviderCredentials id="ocr-key" bind:value={reading.ocrKey} saved={reading.ocrKeySaved} {busy} onsave={()=>saveConnection("ocr")} onclear={()=>clearKey("ocr")}/>
       <ProviderModels feature="ocr" baseUrl={reading.config.ocr.provider.base_url} apiKey={reading.ocrKey} model={reading.config.ocr.provider.model} onmodel={v=>{if(reading.config?.ocr.provider.kind==='open_ai_compatible')reading.config.ocr.provider.model=v;}}/>
       <div class="field"><label for="ocr-api">{t('reading.api')}</label><div class="control"><select id="ocr-api" bind:value={reading.config.ocr.provider.api}><option value="chat_completions">Chat Completions</option><option value="responses">Responses</option></select></div></div>
       <div class="field"><label for="ocr-fallback">{t("reading.fallback_to_local")}</label><div class="control"><input id="ocr-fallback" type="checkbox" role="switch" bind:checked={reading.config.ocr.fallback_to_local} /></div></div>

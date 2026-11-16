@@ -22,8 +22,10 @@ import cairo
 from openai import OpenAI, AuthenticationError, BadRequestError, APITimeoutError
 
 ROOT = Path(__file__).resolve().parents[1]
-BINS = ROOT / 'target/debug'
+BINS = Path(os.environ.get('SIMPLE_STT_TEST_BIN_DIR', str(ROOT / 'target/debug')))
 INSTALLED = Path.home() / '.local/share/simple-stt/instances/installed'
+VOICE_RUNTIME = os.environ.get('SIMPLE_STT_TEST_VOICE_RUNTIME', 'sherpa-cuda')
+STT_RUNTIME = os.environ.get('SIMPLE_STT_TEST_STT_RUNTIME', 'parakeet-cuda')
 folder = Path(tempfile.mkdtemp(prefix='simple-stt-openai-e2e-'))
 folder.chmod(0o700)
 token = secrets.token_urlsafe(32)
@@ -162,7 +164,7 @@ def main():
     app = json.loads((Path.home() / '.config/simple-stt/instances/installed/config.json').read_text())
     # Select known installed local engines, independent of desktop UI choices.
     reader['speech']['provider'] = {'kind': 'local_kokoro'}
-    reader['speech']['selection'] = {'mode': 'single_model', 'single': {'device': 'cpu', 'runtime': 'sherpa-cuda', 'model': 'kokoro'}, 'languages': {}}
+    reader['speech']['selection'] = {'mode': 'single_model', 'single': {'device': 'cpu', 'runtime': VOICE_RUNTIME, 'model': 'kokoro'}, 'languages': {}}
     reader['ocr']['provider'] = {'kind': 'local_paddle'}
     reader['ocr']['selection']['single']['device'] = 'cpu'
     reader['playback']['keep_warm_seconds'] = 2
@@ -172,7 +174,7 @@ def main():
     reader.setdefault('privacy', {})['log_content'] = False
     app['speech'].update(provider='local', selection_mode='single_model',
         single_model_filename=app['speech']['language_models']['en'], inference_device='cpu',
-        runtime_dir=str(INSTALLED / 'assets/parakeet-cuda'), idle_worker_timeout_secs=2)
+        runtime_dir=str(INSTALLED / 'assets' / STT_RUNTIME), idle_worker_timeout_secs=2)
     app['cleanup']['enabled'] = False
     port = free_port()
     url = f'http://127.0.0.1:{port}/v1'

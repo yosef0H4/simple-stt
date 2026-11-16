@@ -482,6 +482,20 @@ fn assets(command: AssetCommand) -> Result<()> {
             }))
         }
         AssetCommand::Install { id } => {
+            if id.ends_with(".gguf") {
+                let cancellation = Arc::new(crate::models::DownloadCancellation::default());
+                let signal = cancellation.clone();
+                ctrlc::set_handler(move || {
+                    signal.cancel();
+                })?;
+                let path = crate::models::download_model_cancellable(
+                    &load_app_config()?,
+                    &id,
+                    &cancellation,
+                    |_, _| {},
+                )?;
+                return print(&json!({"installed": id, "path": path}));
+            }
             let manager = crate::assets::Manager::default();
             let stopped = Arc::new(AtomicBool::new(false));
             let signal = stopped.clone();
@@ -492,11 +506,7 @@ fn assets(command: AssetCommand) -> Result<()> {
                 if stopped.load(Ordering::Acquire) {
                     manager.cancel(&id);
                 }
-                let progress = manager
-                    .jobs()
-                    .into_iter()
-                    .find(|job| job.id == id)
-                    .context("download job disappeared")?;
+                let progress = install_job(manager.jobs(), &id)?;
                 if progress.phase != phase {
                     eprintln!("{}: {}", id, progress.phase);
                     phase.clone_from(&progress.phase);
@@ -532,6 +542,12 @@ fn assets(command: AssetCommand) -> Result<()> {
             language,
         } => select(feature, &model, &runtime, language.as_deref()),
     }
+}
+
+fn install_job(jobs: Vec<crate::assets::Progress>, id: &str) -> Result<crate::assets::Progress> {
+    jobs.into_iter()
+        .find(|job| job.job_id == id)
+        .context("download job disappeared")
 }
 
 fn is_assigned_or_dependency(
@@ -666,6 +682,20 @@ fn ensure_installed(id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installation_tracks_parent_job_while_a_dependency_is_downloading() {
+        let progress = crate::assets::Progress {
+            id: "paddle-det".into(),
+            job_id: "paddle-ar-en".into(),
+            phase: "downloading".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            install_job(vec![progress], "paddle-ar-en").unwrap().id,
+            "paddle-det"
+        );
+    }
 
     #[test]
     fn generating_a_token_preserves_existing_clients_unless_rotation_requested() {

@@ -436,12 +436,23 @@ impl AppConfig {
             base_url, model, ..
         } = &self.speech.provider
         {
+            crate::provider_url::operation(base_url, "audio/speech")?;
             validate_remote(base_url, model)?;
         }
         if let OcrProvider::OpenAiCompatible {
-            base_url, model, ..
+            base_url,
+            model,
+            api,
         } = &self.ocr.provider
         {
+            crate::provider_url::operation(
+                base_url,
+                if *api == OcrApi::Responses {
+                    "responses"
+                } else {
+                    "chat/completions"
+                },
+            )?;
             validate_remote(base_url, model)?;
         }
         Ok(())
@@ -449,7 +460,7 @@ impl AppConfig {
 }
 
 fn validate_remote(base_url: &str, model: &str) -> Result<()> {
-    let parsed = url::Url::parse(base_url).context("provider URL must be absolute")?;
+    let parsed = crate::provider_url::parse(base_url)?;
     if !matches!(parsed.scheme(), "https" | "http") || parsed.host_str().is_none() {
         bail!("provider URL must use HTTP or HTTPS and include a host");
     }
