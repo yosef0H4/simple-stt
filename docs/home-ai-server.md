@@ -1,7 +1,7 @@
 # This PC as a speech and OCR server
 
 This setup uses the installed Debian package, a systemd user service with boot
-lingering, and this PC's Tailscale address. The API base URL is:
+lingering, and token-authenticated LAN/Tailscale access. The API base URL is:
 
 ```text
 http://100.85.156.101:8765/v1
@@ -118,7 +118,8 @@ simple-stt-ctl assets list
 The service starts without a desktop login because lingering is enabled. Model
 workers can unload when idle; the API stays running and reloads them on demand.
 Keep the PC powered on and disable automatic suspend in its power settings.
-No router port forwarding is needed. The listener binds only to Tailscale.
+No router port forwarding is needed for Tailscale. This host listens on
+`0.0.0.0:8765`, accepting LAN and Tailscale connections with a bearer token.
 
 On this PC, sleep, suspend, hibernate, and hybrid-sleep systemd targets are
 masked so a sleep request cannot interrupt serving. To allow sleep again:
@@ -194,3 +195,6 @@ A 401 response means the token is missing or wrong. A connection failure means
 the service, Tailscale route, tailnet access policy, or host firewall needs
 checking. An inference error needs the service journal; model installation and
 successful inference are separate checks.
+
+New server configurations default to `0.0.0.0:8765`; the server remains disabled
+until explicitly enabled. Existing saved addresses are preserved.

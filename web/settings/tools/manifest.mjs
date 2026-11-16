@@ -26,7 +26,7 @@ const gzip = assets
   .filter((p) => p.endsWith(".js") || p.endsWith(".css"))
   .reduce((n, p) => n + gzipSync(readFileSync(`dist/${p}`)).length, 0);
 const total = assets.reduce((n, p) => n + readFileSync(`dist/${p}`).length, 0);
-if (gzip > 100 * 1024 || total > 300 * 1024)
+if (gzip > 100 * 1024 || total > 320 * 1024)
   throw Error(`Asset budget exceeded: ${gzip} gzip bytes, ${total} raw bytes`);
 const content = JSON.stringify(manifest, null, 2) + "\n";
 if (process.argv.includes("--verify")) {

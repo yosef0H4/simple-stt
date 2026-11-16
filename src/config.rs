@@ -332,6 +332,8 @@ pub struct AudioConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpeechConfig {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub remote_languages: std::collections::BTreeMap<String, reader_core::routing::RemoteRoute>,
     pub provider: SpeechProvider,
     pub remote_openai_compatible: RemoteSttConfig,
     pub inference_device: InferenceDevice,
@@ -348,13 +350,73 @@ pub struct SpeechConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RemoteSttConfig {
+    #[serde(
+        default = "remote_uses_feature_key",
+        skip_serializing_if = "remote_feature_key_default"
+    )]
+    pub use_feature_key: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_slot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<Box<RemoteSttConfig>>,
     pub base_url: String,
     pub model: String,
     pub fallback_to_local: bool,
     pub timeout_ms: u64,
 }
 
+fn remote_feature_key_default(value: &bool) -> bool {
+    *value
+}
+fn remote_uses_feature_key() -> bool {
+    true
+}
 impl SpeechConfig {
+    pub fn provider_for(&self, language: &str) -> SpeechProvider {
+        if self.selection_mode == ModelSelectionMode::FollowKeyboard {
+            if let Some(route) = self
+                .remote_languages
+                .get(&reader_core::routing::primary(language))
+            {
+                return if route.enabled {
+                    SpeechProvider::RemoteOpenAiCompatible
+                } else {
+                    SpeechProvider::Local
+                };
+            }
+        }
+        self.provider
+    }
+    pub fn has_remote_routes(&self) -> bool {
+        self.provider == SpeechProvider::RemoteOpenAiCompatible
+            || self.remote_languages.values().any(|route| route.enabled)
+    }
+    pub fn remote_for(&self, language: &str) -> RemoteSttConfig {
+        if self.selection_mode == ModelSelectionMode::FollowKeyboard {
+            if let Some(route) = self
+                .remote_languages
+                .get(&reader_core::routing::primary(language))
+                .filter(|route| route.enabled)
+            {
+                let convert = |connection: &reader_core::routing::Connection| RemoteSttConfig {
+                    base_url: connection.base_url.clone(),
+                    model: connection.model.clone(),
+                    key_slot: connection.key_slot.clone(),
+                    use_feature_key: false,
+                    fallback: None,
+                    fallback_to_local: route.fallback_to_local,
+                    timeout_ms: connection.timeout_ms,
+                };
+                let mut remote = convert(&route.primary);
+                remote.fallback = route
+                    .fallback
+                    .as_ref()
+                    .map(|connection| Box::new(convert(connection)));
+                return remote;
+            }
+        }
+        self.remote_openai_compatible.clone()
+    }
     pub fn model_filename_for(&self, language: &str) -> Option<&str> {
         match self.selection_mode {
             ModelSelectionMode::SingleModel => self.single_model_filename.as_deref(),
@@ -494,8 +556,12 @@ impl Default for AppConfig {
                 stop_grace_ms: 250,
             },
             speech: SpeechConfig {
+                remote_languages: Default::default(),
                 provider: SpeechProvider::Local,
                 remote_openai_compatible: RemoteSttConfig {
+                    key_slot: None,
+                    use_feature_key: true,
+                    fallback: None,
                     base_url: String::new(),
                     model: String::new(),
                     fallback_to_local: true,
@@ -707,6 +773,14 @@ impl AppConfig {
             self.speech.language_models.len() <= 128,
             "too many language assignments"
         );
+        anyhow::ensure!(
+            self.speech.remote_languages.len() <= 128,
+            "Too many remote language routes"
+        );
+        for (language, route) in &self.speech.remote_languages {
+            anyhow::ensure!(valid_language_id(language), "Invalid remote route language");
+            route.validate(reader_core::routing::Feature::Stt)?;
+        }
         for language in self.speech.language_models.keys() {
             anyhow::ensure!(valid_language_id(language), "invalid language identifier");
         }
@@ -826,6 +900,22 @@ impl AppConfig {
             diagnostics: normalize_section(&defaults.diagnostics, section("diagnostics")),
         };
         // Maps have dynamic keys, unlike the fixed-section normalizer.
+        if let Some(map) = input["speech"]["remote_languages"].as_object() {
+            for (language, value) in map.iter().take(128) {
+                if valid_language_id(language) {
+                    if let Ok(route) =
+                        serde_json::from_value::<reader_core::routing::RemoteRoute>(value.clone())
+                    {
+                        if route.validate(reader_core::routing::Feature::Stt).is_ok() {
+                            normalized
+                                .speech
+                                .remote_languages
+                                .insert(language.clone(), route);
+                        }
+                    }
+                }
+            }
+        }
         if let Some(map) = input["speech"]["language_models"].as_object() {
             for (language, value) in map.iter().take(128) {
                 if !valid_language_id(language) {
@@ -1340,6 +1430,54 @@ fn instance_local_data_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn keyboard_languages_keep_independent_remote_connections_and_local_fallbacks() {
+        let mut config = super::AppConfig::default();
+        for language in ["en", "ar"] {
+            config.speech.remote_languages.insert(
+                language.into(),
+                reader_core::routing::RemoteRoute {
+                    enabled: true,
+                    primary: reader_core::routing::Connection {
+                        base_url: format!("https://{language}.example/v1"),
+                        model: format!("{language}-stt"),
+                        key_slot: Some(format!("stt.{language}.primary")),
+                        ..Default::default()
+                    },
+                    fallback_to_local: language == "ar",
+                    ..Default::default()
+                },
+            );
+        }
+        config.speech.selection_mode = super::ModelSelectionMode::FollowKeyboard;
+        config.validate().unwrap();
+        let value = serde_json::to_value(&config).unwrap();
+        let config = super::AppConfig::normalize_json(&value);
+        let arabic = config.speech.remote_for("ar-SA");
+        let english = config.speech.remote_for("en-US");
+        assert_eq!(arabic.model, "ar-stt");
+        assert_eq!(english.model, "en-stt");
+        assert_ne!(arabic.key_slot, english.key_slot);
+        assert!(!arabic.use_feature_key);
+        assert!(arabic.fallback_to_local);
+        assert!(!english.fallback_to_local);
+        assert_eq!(
+            config.speech.provider_for("ar"),
+            super::SpeechProvider::RemoteOpenAiCompatible
+        );
+        let mut config = config;
+        config
+            .speech
+            .remote_languages
+            .get_mut("ar")
+            .unwrap()
+            .enabled = false;
+        assert_eq!(
+            config.speech.provider_for("ar"),
+            super::SpeechProvider::Local
+        );
+        assert_eq!(config.speech.remote_languages["ar"].primary.model, "ar-stt");
+    }
     #[test]
     fn remote_connection_can_be_saved_before_a_model_is_selected() {
         let mut config = AppConfig::default();

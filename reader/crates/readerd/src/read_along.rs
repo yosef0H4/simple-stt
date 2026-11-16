@@ -4,6 +4,57 @@
 //! a late result from an older page or canceled read from being promoted.
 use std::sync::atomic::{AtomicU64, Ordering};
 
+/// OCR/TTS work already elapsed since the action must count toward settling.
+pub fn settle_remaining(delay_ms: u16, elapsed: std::time::Duration) -> std::time::Duration {
+    std::time::Duration::from_millis(u64::from(delay_ms)).saturating_sub(elapsed)
+}
+
+/// State retained across attempts for one pending page, never across promotion.
+#[derive(Clone, Default)]
+pub struct Preparation {
+    advance_started: bool,
+    pub text: Option<String>,
+}
+impl Preparation {
+    pub fn new(advance_started: bool) -> Self {
+        Self {
+            advance_started,
+            text: None,
+        }
+    }
+    /// An uncertain input result must never cause the same action to be sent twice.
+    pub fn begin_advance(&mut self) -> bool {
+        !std::mem::replace(&mut self.advance_started, true)
+    }
+}
+
+/// Retry processing without replaying input, with bounded, interruptible backoff.
+pub fn retry<T>(
+    limit: u8,
+    current: &dyn Fn() -> bool,
+    mut work: impl FnMut() -> anyhow::Result<T>,
+    mut retrying: impl FnMut(u8),
+) -> anyhow::Result<T> {
+    for attempt in 0..=limit.min(5) {
+        anyhow::ensure!(current(), "read-along was canceled");
+        match work() {
+            Ok(value) => {
+                anyhow::ensure!(current(), "read-along was canceled");
+                return Ok(value);
+            }
+            Err(error) if attempt == limit.min(5) || !current() => return Err(error),
+            Err(_) => {
+                retrying(attempt + 1);
+                for _ in 0..20 {
+                    anyhow::ensure!(current(), "read-along was canceled");
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            }
+        }
+    }
+    unreachable!()
+}
+
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +113,21 @@ impl Controller {
         self.active && self.generation == generation
     }
 
+    pub fn failed(&self) -> bool {
+        self.pause_after_audio
+    }
+
+    pub fn retry_failed(&mut self, generation: u64) -> bool {
+        if !self.accepts(generation) || !self.pause_after_audio {
+            return false;
+        }
+        self.pause_after_audio = false;
+        self.capture_requested = false;
+        self.prepared_fingerprint = None;
+        self.retry_count = 0;
+        true
+    }
+
     pub fn cancel(&mut self) {
         self.active = false;
         self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
@@ -96,15 +162,9 @@ impl Controller {
         if !self.accepts(generation) {
             return AdvanceDecision::Ignore;
         }
+        self.retry_failed(generation);
         self.advance_requested = true;
         self.audio_finished |= audio_finished;
-        if self.pause_after_audio {
-            return if self.audio_finished {
-                AdvanceDecision::PauseAfterAudio
-            } else {
-                AdvanceDecision::WaitForAudio
-            };
-        }
         if !prefetch && !self.audio_finished {
             return AdvanceDecision::WaitForAudio;
         }
@@ -115,13 +175,22 @@ impl Controller {
                 AdvanceDecision::WaitForAudio
             };
         }
-        self.capture_requested = true;
+        if self.capture_requested {
+            return AdvanceDecision::WaitForPreparedPage;
+        }
         AdvanceDecision::CaptureNextPage
     }
 
     pub fn request_prefetch(&mut self, generation: u64) -> AdvanceDecision {
         if !self.accepts(generation) {
             return AdvanceDecision::Ignore;
+        }
+        if self.pause_after_audio {
+            return if self.audio_finished {
+                AdvanceDecision::PauseAfterAudio
+            } else {
+                AdvanceDecision::WaitForAudio
+            };
         }
         if self.prepared_fingerprint.is_some() || self.capture_requested {
             return AdvanceDecision::WaitForPreparedPage;
@@ -170,6 +239,8 @@ impl Controller {
             return AdvanceDecision::Ignore;
         }
         self.pause_after_audio = true;
+        self.capture_requested = false;
+        self.prepared_fingerprint = None;
         if self.audio_finished {
             AdvanceDecision::PauseAfterAudio
         } else {
@@ -204,10 +275,163 @@ mod tests {
     }
 
     #[test]
+    fn transient_processing_failure_recovers_without_another_action() {
+        let mut page = super::Preparation::default();
+        assert!(page.begin_advance());
+        let attempts = std::cell::Cell::new(0);
+        let value = super::retry(
+            2,
+            &|| true,
+            || {
+                attempts.set(attempts.get() + 1);
+                if attempts.get() == 1 {
+                    anyhow::bail!("temporary transport failure");
+                }
+                Ok("ready")
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(value, "ready");
+        assert_eq!(attempts.get(), 2);
+        assert!(!page.begin_advance());
+    }
+    #[test]
+    fn processing_retries_are_bounded_and_stop_interrupts_backoff() {
+        let attempts = std::cell::Cell::new(0);
+        let result: anyhow::Result<()> = super::retry(
+            1,
+            &|| true,
+            || {
+                attempts.set(attempts.get() + 1);
+                anyhow::bail!("offline")
+            },
+            |_| {},
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts.get(), 2);
+        let current = std::cell::Cell::new(true);
+        let attempts = std::cell::Cell::new(0);
+        let result: anyhow::Result<()> = super::retry(
+            5,
+            &|| current.get(),
+            || {
+                attempts.set(attempts.get() + 1);
+                anyhow::bail!("offline")
+            },
+            |_| current.set(false),
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts.get(), 1);
+    }
+
+    #[test]
+    fn explicit_next_leaves_the_worker_free_to_claim_the_capture() {
+        let (mut controller, generation) = reading();
+        assert_eq!(
+            controller.request_advance(generation, true, false),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(
+            controller.request_prefetch(generation),
+            Advance::CaptureNextPage
+        );
+    }
+
+    #[test]
+    fn explicit_next_can_recover_after_a_failed_page() {
+        let (mut controller, generation) = reading();
+        assert_eq!(
+            controller.request_prefetch(generation),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(controller.capture_failed(generation), Advance::WaitForAudio);
+        assert_eq!(
+            controller.audio_finished(generation),
+            Advance::PauseAfterAudio
+        );
+        assert_eq!(
+            controller.request_advance(generation, true, true),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(
+            controller.request_prefetch(generation),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(controller.ocr_result(generation, 20), OcrDecision::Prepared);
+        assert_eq!(
+            controller.audio_finished(generation),
+            Advance::PromotePreparedPage
+        );
+        assert_eq!(controller.promote(generation), Some(20));
+    }
+
+    #[test]
+    fn one_next_page_waits_for_current_playback_even_with_repeated_requests() {
+        let (mut controller, generation) = reading();
+        assert_eq!(
+            controller.request_advance(generation, true, false),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(
+            controller.request_prefetch(generation),
+            Advance::CaptureNextPage
+        );
+        for _ in 0..20 {
+            assert_eq!(
+                controller.request_advance(generation, true, false),
+                Advance::WaitForPreparedPage
+            );
+            assert_eq!(
+                controller.request_prefetch(generation),
+                Advance::WaitForPreparedPage
+            );
+        }
+        assert_eq!(controller.ocr_result(generation, 20), OcrDecision::Prepared);
+        for _ in 0..20 {
+            assert_eq!(
+                controller.request_advance(generation, true, false),
+                Advance::WaitForAudio
+            );
+            assert_eq!(
+                controller.request_prefetch(generation),
+                Advance::WaitForPreparedPage
+            );
+            assert_eq!(controller.promote(generation), None);
+        }
+        assert_eq!(
+            controller.audio_finished(generation),
+            Advance::PromotePreparedPage
+        );
+        assert_eq!(controller.promote(generation), Some(20));
+        assert_eq!(
+            controller.request_prefetch(generation),
+            Advance::CaptureNextPage
+        );
+    }
+
+    #[test]
+    fn settling_overlaps_processing_instead_of_restarting_after_it() {
+        use std::time::Duration;
+        assert_eq!(
+            super::settle_remaining(900, Duration::from_millis(700)),
+            Duration::from_millis(200)
+        );
+        assert_eq!(
+            super::settle_remaining(900, Duration::from_millis(1200)),
+            Duration::ZERO
+        );
+        assert_eq!(super::settle_remaining(0, Duration::ZERO), Duration::ZERO);
+    }
+    #[test]
     fn prefetch_waits_for_promotion_until_current_audio_finishes() {
         let (mut controller, generation) = reading();
         assert_eq!(
             controller.request_advance(generation, true, false),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(
+            controller.request_prefetch(generation),
             Advance::CaptureNextPage
         );
         assert_eq!(controller.ocr_result(generation, 11), OcrDecision::Prepared);
@@ -240,6 +464,10 @@ mod tests {
         let (mut controller, generation) = reading();
         assert_eq!(
             controller.request_advance(generation, true, false),
+            Advance::CaptureNextPage
+        );
+        assert_eq!(
+            controller.request_prefetch(generation),
             Advance::CaptureNextPage
         );
         assert_eq!(

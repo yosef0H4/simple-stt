@@ -242,7 +242,7 @@
   "reading.read_along": "القراءة مع التنقل",
   "reading.read_along_start": "بدء القراءة مع التنقل",
   "reading.read_along_action": "طريقة الانتقال",
-  "reading.read_along_key": "ضغط مفتاح",
+  "reading.read_along_key": "مفاتيح مسجلة",
   "reading.read_along_click": "نقرة",
   "reading.advance_key": "مفتاح الانتقال",
   "reading.read_along_prefetch": "تهيئة الصفحة التالية مسبقًا",
@@ -426,5 +426,15 @@
   "settings.provider_empty": "لا توجد اقتراحات. يمكنك إدخال المعرّف الدقيق.",
   "settings.save_connection": "حفظ الاتصال",
   "settings.refresh_models": "تحديث النماذج",
-  "settings.refresh_voices": "تحديث الأصوات"
+  "settings.refresh_voices": "تحديث الأصوات",
+  "reading.recorded_action": "الإجراء المسجل",
+  "reading.record_action": "تسجيل",
+  "reading.recording_action": "تسجيل المفاتيح",
+  "reading.record_action_help": "اضغط المفاتيح هنا. ينهي Esc أو إيقاف التسجيل بعد الإفلات. المغادرة تلغي التسجيل.",
+  "reading.action_unsupported": "مفتاح غير مدعوم. تم الاحتفاظ بالإجراء السابق.",
+  "reading.action_limit": "الحد: 128 حدثاً و30 ثانية. تم الاحتفاظ بالإجراء السابق.",
+  "reading.reset_action": "إعادة الضبط",
+  "settings.language_route": "مسار هذه اللغة",
+  "settings.fallback_server": "استخدام خادم احتياطي",
+  "settings.default_route": "استخدام المسار الافتراضي"
 }

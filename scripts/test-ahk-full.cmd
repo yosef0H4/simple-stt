@@ -15,6 +15,8 @@ echo INFO: validating AHK entry points
 for %%F in (
   ahk\simple-stt.ahk
   ahk\hotkey-recorder.ahk
+  ahk\action-replay.ahk
+  ahk\tests\action-replay-smoke.ahk
   ahk\tests\hotkeys-manual.ahk
   ahk\tests\ipc-smoke.ahk
   ahk\tests\typing-smoke.ahk
@@ -34,6 +36,7 @@ echo INFO: running AHK smoke tests
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\typing-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\text-transform-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\tabprotocol-retry-smoke.ahk" || exit /b 1
+"%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\action-replay-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\ipcclient-missing-response-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\ipc-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\full-smoke.ahk" || exit /b 1

@@ -22,7 +22,7 @@ async function saveKey(clear=false){busy=true;try{if(clear){await api("/api/read
   <ProviderCredentials id="stt-key" bind:value={key} saved={reading.sttKeySaved} {busy} onsave={()=>saveKey()} onclear={()=>saveKey(true)}/>
   <ProviderModels feature="stt" baseUrl={ui.config.speech.remote_openai_compatible.base_url} apiKey={key} model={ui.config.speech.remote_openai_compatible.model} onmodel={v=>set('speech.remote_openai_compatible.model',v)}/>
   <div class="field"><label for="stt-fallback">{t("reading.fallback_to_local")}</label><div class="control"><input id="stt-fallback" type="checkbox" role="switch" checked={ui.config.speech.remote_openai_compatible.fallback_to_local} onchange={event=>set("speech.remote_openai_compatible.fallback_to_local",event.currentTarget.checked)}/></div></div>
-  {#if ui.config.speech.remote_openai_compatible.fallback_to_local}<details class="guide"><summary>{t("settings.local_fallback")}</summary><ModuleSelection feature="stt" showDownloads={false}/></details>{/if}
+  <ModuleSelection feature="stt" showDownloads={false}/>
  {:else}<ModuleSelection feature="stt" showDownloads={false}/>{/if}
 </Group>
 {/if}

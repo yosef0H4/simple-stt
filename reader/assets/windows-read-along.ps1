@@ -17,6 +17,8 @@ public static class ReadAlongNative {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
   [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint flags);
   [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint processId);
@@ -115,7 +117,7 @@ if ($Mode -eq 'Select') {
 $target = Read-Target
 $live = Get-Window $target
 if ($Mode -eq 'Inspect') {
-    [pscustomobject]@{ left=$live.Left; top=$live.Top; width=$live.Width; height=$live.Height } | ConvertTo-Json -Compress
+    [pscustomobject]@{ left=$live.Left; top=$live.Top; width=$live.Width; height=$live.Height; active=([ReadAlongNative]::GetForegroundWindow() -eq [ReadAlongNative]::GetAncestor($live.Handle,2)) } | ConvertTo-Json -Compress
     exit 0
 }
 if ($Mode -eq 'Capture') { Save-Region $target; exit 0 }

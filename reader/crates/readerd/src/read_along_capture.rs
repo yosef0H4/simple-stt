@@ -115,6 +115,7 @@ pub struct WindowSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdvanceAction {
     Key(String),
+    Sequence(reader_core::recorded_action::RecordedAction),
     Click { x: u32, y: u32 },
 }
 
@@ -339,6 +340,105 @@ mod windows_backend {
                 .context("running Windows read-along helper")
         }
 
+        fn recorded(
+            &self,
+            window: &WindowSnapshot,
+            sequence: &reader_core::recorded_action::RecordedAction,
+            current: &dyn Fn() -> bool,
+        ) -> Result<()> {
+            use std::io::Write;
+            use std::process::Stdio;
+            use std::time::{Duration, Instant};
+            sequence.validate()?;
+            let WindowId::Windows { hwnd, process_id } = window.id else {
+                bail!("target is not a Windows window")
+            };
+            let root = std::env::current_exe()?
+                .parent()
+                .context("missing executable directory")?
+                .to_path_buf();
+            let mut runtimes = vec![root.join("AutoHotkey64.exe")];
+            for variable in ["ProgramFiles", "LOCALAPPDATA"] {
+                if let Some(base) = std::env::var_os(variable) {
+                    let base = PathBuf::from(base);
+                    runtimes.push(base.join("AutoHotkey/v2/AutoHotkey64.exe"));
+                    runtimes.push(base.join("Programs/AutoHotkey/v2/AutoHotkey64.exe"));
+                }
+            }
+            let runtime = runtimes
+                .into_iter()
+                .find(|path| path.is_file())
+                .context("AutoHotkey v2 is required for recorded actions")?;
+            let directory =
+                std::env::temp_dir().join(format!("simple-stt-action-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&directory)?;
+            let result = (|| -> Result<()> {
+                let script = directory.join("action-replay.ahk");
+                let events = directory.join("events.tsv");
+                let cancel = directory.join("cancel");
+                fs::write(&script, include_str!("../../../../ahk/action-replay.ahk"))?;
+                let mut output = fs::File::create(&events)?;
+                for event in &sequence.events {
+                    writeln!(
+                        output,
+                        "{}\t{}\t{}",
+                        event.at_ms,
+                        reader_core::recorded_action::windows_scan_code(&event.key)?,
+                        u8::from(event.down)
+                    )?;
+                }
+                drop(output);
+                let mut child = Command::new(&runtime)
+                    .arg("/ErrorStdOut=UTF-8")
+                    .arg(&script)
+                    .arg(hwnd.to_string())
+                    .arg(process_id.to_string())
+                    .arg(&events)
+                    .arg(&cancel)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()?;
+                let started = Instant::now();
+                let mut canceled = None;
+                loop {
+                    if let Some(status) = child.try_wait()? {
+                        ensure!(
+                            status.success(),
+                            "recorded action canceled or target unavailable"
+                        );
+                        return Ok(());
+                    }
+                    if !current() && canceled.is_none() {
+                        fs::write(&cancel, "cancel")?;
+                        canceled = Some(Instant::now());
+                    }
+                    if started.elapsed() > Duration::from_secs(35)
+                        || canceled.is_some_and(|at| at.elapsed() > Duration::from_secs(2))
+                    {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        // A forced exit cannot run OnExit. A separate AHK pass releases
+                        // only keys in the helper's atomically saved held-key journal.
+                        let _ = Command::new(&runtime)
+                            .arg("/ErrorStdOut=UTF-8")
+                            .arg(&script)
+                            .arg(hwnd.to_string())
+                            .arg(process_id.to_string())
+                            .arg(&events)
+                            .arg(&cancel)
+                            .arg("release")
+                            .stdout(Stdio::null())
+                            .stderr(Stdio::null())
+                            .status();
+                        bail!("recorded action helper did not stop");
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })();
+            let _ = fs::remove_dir_all(directory);
+            result
+        }
+
         fn target_json(window: &WindowSnapshot, region: Rect) -> Result<String> {
             let WindowId::Windows { hwnd, process_id } = window.id else {
                 bail!("target is not a Windows window")
@@ -440,6 +540,27 @@ mod windows_backend {
             Ok(path)
         }
 
+        fn input_ready(&mut self, window: &WindowSnapshot) -> Result<bool> {
+            let output = self.run(&[
+                ("Mode", "Inspect".into()),
+                (
+                    "TargetJson",
+                    Self::target_json(
+                        window,
+                        Rect {
+                            x: 0,
+                            y: 0,
+                            width: 1,
+                            height: 1,
+                        },
+                    )?,
+                ),
+            ])?;
+            ensure!(output.status.success(), "selected window is unavailable");
+            let state: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            Ok(state["active"].as_bool().unwrap_or(false))
+        }
+
         fn advance(
             &mut self,
             window: &WindowSnapshot,
@@ -448,8 +569,12 @@ mod windows_backend {
             current: &dyn Fn() -> bool,
         ) -> Result<()> {
             ensure!(current(), "read-along action canceled");
+            if let AdvanceAction::Sequence(sequence) = action {
+                return self.recorded(window, sequence, current);
+            }
             let (kind, key, x, y) = match action {
                 AdvanceAction::Key(key) => ("key", key.clone(), String::new(), String::new()),
+                AdvanceAction::Sequence(_) => unreachable!(),
                 AdvanceAction::Click { x, y } => {
                     ("click", String::new(), x.to_string(), y.to_string())
                 }
@@ -483,6 +608,7 @@ mod windows_backend {
 pub(crate) struct InputFocus {
     observer: Option<kde_backend::KdeBackend>,
     window: Option<String>,
+    x11: Option<(x11rb::rust_connection::RustConnection, u32)>,
 }
 #[cfg(target_os = "linux")]
 impl InputFocus {
@@ -508,9 +634,33 @@ impl InputFocus {
                 "no focused target window for desktop input"
             );
         }
-        Ok(Self { observer, window })
+        let x11 = if observer.is_none()
+            && std::env::var("XDG_SESSION_TYPE").unwrap_or_default() == "x11"
+        {
+            use x11rb::protocol::xproto::ConnectionExt;
+            let (connection, _) = x11rb::connect(None)?;
+            let focused = connection.get_input_focus()?.reply()?.focus;
+            Some((connection, focused))
+        } else {
+            None
+        };
+        Ok(Self {
+            observer,
+            window,
+            x11,
+        })
+    }
+    pub(crate) fn has_observer(&self) -> bool {
+        self.observer.is_some() || self.x11.is_some()
     }
     pub(crate) fn check(&mut self) -> Result<()> {
+        if let Some((connection, expected)) = &self.x11 {
+            use x11rb::protocol::xproto::ConnectionExt;
+            ensure!(
+                connection.get_input_focus()?.reply()?.focus == *expected,
+                "focused window changed; recorded action stopped"
+            );
+        }
         if let Some(observer) = &mut self.observer {
             ensure!(
                 observer.active_window()? == self.window,

@@ -36,7 +36,80 @@ pub enum Device {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+pub struct Connection {
+    pub base_url: String,
+    pub model: String,
+    pub voice: String,
+    pub format: String,
+    pub key_slot: Option<String>,
+    pub timeout_ms: u64,
+}
+impl Default for Connection {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            model: String::new(),
+            voice: String::new(),
+            format: "wav".into(),
+            key_slot: None,
+            timeout_ms: 60_000,
+        }
+    }
+}
+impl Connection {
+    pub fn validate(&self, feature: Feature) -> Result<()> {
+        let operation = if feature == Feature::Stt {
+            "audio/transcriptions"
+        } else {
+            "audio/speech"
+        };
+        let url = crate::provider_url::operation(&self.base_url, operation)?;
+        if feature == Feature::Stt {
+            crate::provider_url::validate_stt_transport(&url)?;
+        }
+        anyhow::ensure!(
+            self.model.len() <= 256 && self.voice.len() <= 256,
+            "Remote model or voice is too long"
+        );
+        anyhow::ensure!(
+            matches!(self.format.as_str(), "wav" | "pcm"),
+            "Remote speech format must be wav or pcm"
+        );
+        anyhow::ensure!(
+            (1000..=300000).contains(&self.timeout_ms),
+            "Remote timeout must be between 1000 and 300000 milliseconds"
+        );
+        if let Some(slot) = &self.key_slot {
+            crate::secrets::validate_slot(slot)?;
+        }
+        Ok(())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct RemoteRoute {
+    pub enabled: bool,
+    pub primary: Connection,
+    pub fallback: Option<Connection>,
+    pub fallback_to_local: bool,
+}
+impl RemoteRoute {
+    pub fn validate(&self, feature: Feature) -> Result<()> {
+        if self.enabled {
+            self.primary.validate(feature)?;
+            if let Some(fallback) = &self.fallback {
+                fallback.validate(feature)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Binding {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote: Option<RemoteRoute>,
     pub device: Device,
     pub runtime: Option<String>,
     pub model: Option<String>,
@@ -50,6 +123,7 @@ pub struct Binding {
 impl Default for Binding {
     fn default() -> Self {
         Self {
+            remote: None,
             device: Device::Auto,
             runtime: None,
             model: None,
@@ -96,6 +170,9 @@ impl Selection {
                     || (feature == Feature::Tts && binding.model.as_deref() == Some("kokoro")),
                 "Lowercase text is only supported by Kokoro"
             );
+            if let Some(remote) = &binding.remote {
+                remote.validate(feature)?;
+            }
             if let Some(speed) = binding.speed_percent {
                 anyhow::ensure!(
                     feature == Feature::Tts && (50..=200).contains(&speed),
@@ -350,6 +427,65 @@ impl crate::AppConfig {
     }
     pub fn routed(&self, feature: Feature, language: Option<&str>) -> Result<Self> {
         let mut config = self.clone();
+        let defaults = self.speech.route_defaults.clone().unwrap_or_else(|| {
+            crate::config::SpeechRouteDefaults {
+                provider: self.speech.provider.clone(),
+                key_slot: self.speech.key_slot.clone(),
+                use_feature_key: self.speech.use_feature_key,
+                fallback: self.speech.remote_fallback.clone(),
+                fallback_to_local: self.speech.fallback_to_local,
+            }
+        });
+        config.speech.provider = defaults.provider.clone();
+        config.speech.key_slot = defaults.key_slot.clone();
+        config.speech.use_feature_key = defaults.use_feature_key;
+        config.speech.remote_fallback = defaults.fallback.clone();
+        config.speech.fallback_to_local = defaults.fallback_to_local;
+        config.speech.route_defaults = Some(defaults);
+        let binding = self.speech.selection.binding(language);
+        if feature == Feature::Tts {
+            if let Some(remote) = &binding.remote {
+                if remote.enabled {
+                    remote.validate(feature)?;
+                    config.speech.provider = crate::SpeechProvider::OpenAiCompatible {
+                        base_url: remote.primary.base_url.clone(),
+                        model: remote.primary.model.clone(),
+                        voice: remote.primary.voice.clone(),
+                        format: remote.primary.format.clone(),
+                    };
+                    config.speech.key_slot = remote.primary.key_slot.clone();
+                    config.speech.use_feature_key = false;
+                    config.speech.remote_fallback = remote.fallback.clone();
+                    config.speech.fallback_to_local = remote.fallback_to_local;
+                    if remote.fallback_to_local {
+                        let mut local = self.clone();
+                        local.speech.provider = crate::SpeechProvider::LocalKokoro;
+                        local.speech.selection.mode = SelectionMode::SingleModel;
+                        local.speech.selection.single = binding.clone();
+                        local.speech.selection.single.remote = None;
+                        match local.routed(feature, language) {
+                            Ok(local) => {
+                                config.speech.model_dir = local.speech.model_dir;
+                                config.speech.runtime_dir = local.speech.runtime_dir;
+                                config.speech.device = local.speech.device;
+                                config.speech.voice = local.speech.voice;
+                            }
+                            Err(_) => {
+                                config.speech.model_dir =
+                                    crate::config::data_dir().join("unconfigured-local-fallback");
+                                config.speech.runtime_dir = config.speech.model_dir.clone();
+                            }
+                        }
+                    }
+                    config.speech.selection.single = binding;
+                    config.speech.language = language
+                        .map(primary)
+                        .unwrap_or_else(|| self.speech.language.clone());
+                    return Ok(config);
+                }
+                config.speech.provider = crate::SpeechProvider::LocalKokoro;
+            }
+        }
         let assets = crate::config::data_dir()
             .parent()
             .context("Reader data has no parent")?
@@ -357,11 +493,13 @@ impl crate::AppConfig {
         match feature {
             Feature::Tts
                 if matches!(
-                    self.speech.provider,
+                    config.speech.provider,
                     crate::SpeechProvider::LocalKokoro | crate::SpeechProvider::LocalSupertonic
                 ) =>
             {
                 let (runtime, model) = resolve(&self.speech.selection, feature, language, &assets)?;
+                config.speech.key_slot = None;
+                config.speech.remote_fallback = None;
                 config.speech.runtime_dir =
                     assets.join(runtime.asset.context("Speech runtime has no asset")?);
                 config.speech.model_dir = assets.join(model.asset);
@@ -413,6 +551,70 @@ impl crate::AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn local_language_routing_selects_independent_remote_models_voices_and_keys() {
+        let mut config = crate::AppConfig::default();
+        config.speech.selection.mode = SelectionMode::AutoDetect;
+        for language in ["en", "ar"] {
+            config.speech.selection.languages.insert(
+                language.into(),
+                Binding {
+                    remote: Some(RemoteRoute {
+                        enabled: true,
+                        primary: Connection {
+                            base_url: format!("https://{language}.example/v1"),
+                            model: format!("{language}-tts"),
+                            voice: format!("{language}-voice"),
+                            key_slot: Some(format!("tts.{language}.primary")),
+                            ..Default::default()
+                        },
+                        fallback: Some(Connection {
+                            base_url: format!("https://{language}-backup.example/v1"),
+                            model: "backup".into(),
+                            key_slot: Some(format!("tts.{language}.fallback")),
+                            ..Default::default()
+                        }),
+                        fallback_to_local: false,
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+        config.validate().unwrap();
+        let ar = config.routed(Feature::Tts, Some("ar")).unwrap();
+        let en = ar.routed(Feature::Tts, Some("en")).unwrap();
+        assert_eq!(ar.speech.key_slot.as_deref(), Some("tts.ar.primary"));
+        assert_eq!(en.speech.key_slot.as_deref(), Some("tts.en.primary"));
+        assert!(!en.speech.use_feature_key);
+        assert_eq!(
+            ar.speech
+                .remote_fallback
+                .as_ref()
+                .unwrap()
+                .key_slot
+                .as_deref(),
+            Some("tts.ar.fallback")
+        );
+        match en.speech.provider {
+            crate::SpeechProvider::OpenAiCompatible {
+                model,
+                voice,
+                base_url,
+                ..
+            } => {
+                assert_eq!(model, "en-tts");
+                assert_eq!(voice, "en-voice");
+                assert_eq!(base_url, "https://en.example/v1");
+            }
+            _ => panic!("expected remote route"),
+        }
+        assert!(
+            ar.routed(Feature::Tts, Some("fr")).is_err(),
+            "an unassigned language must not inherit the preceding remote server"
+        );
+        assert_eq!(config.speech.selection.mode, SelectionMode::AutoDetect);
+    }
+
     #[test]
     fn automatic_languages_never_inherit_a_general_assignment() {
         let selection: Selection = serde_json::from_value(serde_json::json!({

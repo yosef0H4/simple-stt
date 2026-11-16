@@ -19,8 +19,15 @@ async function saveConnection(kind:"speech"|"ocr"){busy=true;try{await saveReadi
 
 function route(section:"speech"|"ocr",value:string){
  if(!reading.config)return;
- if(section==="speech")reading.config.speech.provider=value==="local_kokoro"?{kind:"local_kokoro"}:{kind:"open_ai_compatible",base_url:"https://",model:"tts-1",voice:"alloy",format:"wav"};
- else reading.config.ocr.provider=value==="local_paddle"?{kind:"local_paddle"}:{kind:"open_ai_compatible",base_url:"https://",model:"vision-model",api:"chat_completions"};
+ if(section==="speech"){
+  const settings=reading.config.speech;
+  if(settings.provider.kind==='open_ai_compatible')settings.saved_remote={...settings.provider};
+  settings.provider=value==='local_kokoro'?{kind:'local_kokoro'}:settings.saved_remote??{kind:'open_ai_compatible',base_url:'https://',model:'tts-1',voice:'alloy',format:'wav'};
+ }else{
+  const settings=reading.config.ocr;
+  if(settings.provider.kind==='open_ai_compatible')settings.saved_remote={...settings.provider};
+  settings.provider=value==='local_paddle'?{kind:'local_paddle'}:settings.saved_remote??{kind:'open_ai_compatible',base_url:'https://',model:'vision-model',api:'chat_completions'};
+ }
 }
 onMount(()=>{void refresh().catch(error=>notice(t("reading.failed"),"error",String(error)));});
 </script>
@@ -36,7 +43,7 @@ onMount(()=>{void refresh().catch(error=>notice(t("reading.failed"),"error",Stri
       <ProviderModels feature="tts" baseUrl={reading.config.speech.provider.base_url} apiKey={reading.speechKey} model={reading.config.speech.provider.model} voice={reading.config.speech.provider.voice} onmodel={v=>{if(reading.config?.speech.provider.kind==='open_ai_compatible')reading.config.speech.provider.model=v;}} onvoice={v=>{if(reading.config?.speech.provider.kind==='open_ai_compatible')reading.config.speech.provider.voice=v;}}/>
       <div class="field"><label for="speech-format">{t('reading.format')}</label><div class="control"><input id="speech-format" bind:value={reading.config.speech.provider.format}/></div></div>
       <div class="field"><label for="speech-fallback">{t("reading.fallback_to_local")}</label><div class="control"><input id="speech-fallback" type="checkbox" role="switch" bind:checked={reading.config.speech.fallback_to_local} /></div></div>
-      {#if reading.config.speech.fallback_to_local}<details class="guide"><summary>{t("settings.local_fallback")}</summary><ModuleSelection feature="tts" showDownloads={false}/></details>{/if}
+      <ModuleSelection feature="tts" showDownloads={false}/>
 
     {/if}
   </Group>

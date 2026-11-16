@@ -387,6 +387,31 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
                 .context("Start the local API before showing its token")?;
             Ok(json_response(StatusCode(200), &json!({"token":key}), state))
         }
+        (&Method::Post, "/api/connection-secret") => {
+            let payload: Value = serde_json::from_slice(&read_body(request)?)?;
+            let slot = payload["slot"]
+                .as_str()
+                .context("credential slot is required")?;
+            reader_core::secrets::validate_slot(slot)?;
+            if payload["clear"] == true {
+                reader_core::secrets::delete_connection_key(slot)?;
+            }
+            if let Some(key) = payload["value"]
+                .as_str()
+                .filter(|key| !key.trim().is_empty())
+            {
+                reader_core::secrets::set_connection_key(slot, key)?;
+            }
+            let saved = reader_core::secrets::connection_key(slot)
+                .ok()
+                .flatten()
+                .is_some();
+            Ok(json_response(
+                StatusCode(200),
+                &json!({"saved":saved}),
+                state,
+            ))
+        }
         (&Method::Post, "/api/reader-secrets") => {
             let payload: Value = serde_json::from_slice(&read_body(request)?)?;
             if let Some(key) = payload["stt"].as_str().filter(|k| !k.trim().is_empty()) {
@@ -1046,17 +1071,63 @@ fn parse_indexed_values(response: &ShellResponse, prefix: &str) -> Vec<Value> {
 fn saved_discovery_key(
     request: &simple_stt::provider_discovery::DiscoveryRequest,
 ) -> Result<Option<String>> {
+    if let Some(slot) = &request.key_slot {
+        reader_core::secrets::validate_slot(slot)?;
+        fn matches(value: &Value, slot: &str, url: &str) -> bool {
+            match value {
+                Value::Object(fields) => {
+                    (fields.get("key_slot").and_then(Value::as_str) == Some(slot)
+                        && fields
+                            .get("base_url")
+                            .and_then(Value::as_str)
+                            .is_some_and(|saved| {
+                                saved.trim().trim_end_matches('/')
+                                    == url.trim().trim_end_matches('/')
+                            }))
+                        || fields.values().any(|value| matches(value, slot, url))
+                }
+                Value::Array(values) => values.iter().any(|value| matches(value, slot, url)),
+                _ => false,
+            }
+        }
+        let config = if request.feature == "stt" {
+            serde_json::to_value(AppConfig::load()?.speech.remote_languages)?
+        } else if request.feature == "tts" {
+            serde_json::to_value(simple_stt::reader::load()?.speech.selection)?
+        } else {
+            return Ok(None);
+        };
+        return if matches(&config, slot, &request.base_url) {
+            reader_core::secrets::connection_key(slot)
+        } else {
+            Ok(None)
+        };
+    }
     let configured = match request.feature.as_str() {
         "stt" => AppConfig::load()?.speech.remote_openai_compatible.base_url,
         "cleanup" => AppConfig::load()?.cleanup.openai_compatible.base_url,
-        "tts" => match simple_stt::reader::load()?.speech.provider {
-            reader_core::SpeechProvider::OpenAiCompatible { base_url, .. } => base_url,
-            _ => String::new(),
-        },
-        "ocr" => match simple_stt::reader::load()?.ocr.provider {
-            reader_core::OcrProvider::OpenAiCompatible { base_url, .. } => base_url,
-            _ => String::new(),
-        },
+        "tts" => {
+            let speech = simple_stt::reader::load()?.speech;
+            match speech.provider {
+                reader_core::SpeechProvider::OpenAiCompatible { base_url, .. } => base_url,
+                _ => match speech.saved_remote {
+                    Some(reader_core::SpeechProvider::OpenAiCompatible { base_url, .. }) => {
+                        base_url
+                    }
+                    _ => String::new(),
+                },
+            }
+        }
+        "ocr" => {
+            let ocr = simple_stt::reader::load()?.ocr;
+            match ocr.provider {
+                reader_core::OcrProvider::OpenAiCompatible { base_url, .. } => base_url,
+                _ => match ocr.saved_remote {
+                    Some(reader_core::OcrProvider::OpenAiCompatible { base_url, .. }) => base_url,
+                    _ => String::new(),
+                },
+            }
+        }
         _ => String::new(),
     };
     let same = |a: &str, b: &str| a.trim().trim_end_matches('/') == b.trim().trim_end_matches('/');

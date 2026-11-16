@@ -34,16 +34,17 @@ impl Transcriber {
             return transcribe(wav, language);
         }
         let config = AppConfig::load()?;
-        if config.speech.provider == crate::config::SpeechProvider::RemoteOpenAiCompatible {
-            let language = normalized_language(language)?;
-            let remote = crate::remote_stt::transcribe_wav(
-                &config.speech.remote_openai_compatible,
-                wav,
-                language.as_deref(),
-            );
-            let fallback_enabled = config.speech.remote_openai_compatible.fallback_to_local;
+        let normalized = normalized_language(language)?;
+        let language = normalized.as_deref();
+        let route_language = language.unwrap_or("single");
+        if config.speech.provider_for(route_language)
+            == crate::config::SpeechProvider::RemoteOpenAiCompatible
+        {
+            let remote_config = config.speech.remote_for(route_language);
+            let remote = crate::remote_stt::transcribe_wav(&remote_config, wav, language);
+            let fallback_enabled = remote_config.fallback_to_local;
             return crate::remote_stt::with_local_fallback(remote, fallback_enabled, || {
-                let local_language = local_fallback_language(&config, language.as_deref())?;
+                let local_language = local_fallback_language(&config, language)?;
                 let next = local_fallback_worker_config(&config, &local_language)?;
                 let worker = match &mut self.worker {
                     Some(worker) => {

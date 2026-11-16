@@ -435,6 +435,9 @@ callDBus({bus}, {path}, "org.simple_stt.ReadAlong", "report", state);
         }
         let input = match action {
             AdvanceAction::Key(key) => crate::portal_input::Action::Key { key: key.clone() },
+            AdvanceAction::Sequence(sequence) => crate::portal_input::Action::Sequence {
+                sequence: sequence.clone(),
+            },
             AdvanceAction::Click { x, y } => {
                 ensure!(
                     *x < region.width && *y < region.height,
@@ -456,7 +459,9 @@ impl WindowBackend for KdeBackend {
     fn prepare_input(&mut self, action: &AdvanceAction, current: &dyn Fn() -> bool) -> Result<()> {
         crate::portal_input::run(
             match action {
-                AdvanceAction::Key(_) => crate::portal_input::Action::Prepare,
+                AdvanceAction::Key(_) | AdvanceAction::Sequence(_) => {
+                    crate::portal_input::Action::Prepare
+                }
                 AdvanceAction::Click { .. } => crate::portal_input::Action::PreparePointer,
             },
             current,

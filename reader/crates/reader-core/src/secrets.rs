@@ -20,13 +20,15 @@ pub fn ocr_key() -> Result<Option<String>> {
     get("ocr-api-key")
 }
 pub fn set_speech_key(value: &str) -> Result<()> {
-    set("speech-api-key", value)
+    set("speech-api-key", value)?;
+    mark_changed()
 }
 pub fn set_ocr_key(value: &str) -> Result<()> {
     set("ocr-api-key", value)
 }
 pub fn delete_speech_key() -> Result<()> {
-    delete("speech-api-key")
+    delete("speech-api-key")?;
+    mark_changed()
 }
 pub fn delete_ocr_key() -> Result<()> {
     delete("ocr-api-key")
@@ -36,6 +38,49 @@ pub fn server_key() -> Result<Option<String>> {
 }
 pub fn set_server_key(value: &str) -> Result<()> {
     set("server-auth-token", value)
+}
+
+fn mark_changed() -> Result<()> {
+    let path = crate::config::data_dir().join("credentials.revision");
+    std::fs::create_dir_all(
+        path.parent()
+            .context("missing credential state directory")?,
+    )?;
+    let revision = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_nanos();
+    std::fs::write(path, revision.to_string())?;
+    Ok(())
+}
+pub fn credential_revision() -> String {
+    std::fs::read_to_string(crate::config::data_dir().join("credentials.revision"))
+        .unwrap_or_default()
+}
+
+pub fn validate_slot(slot: &str) -> Result<()> {
+    anyhow::ensure!(
+        !slot.is_empty()
+            && slot.len() <= 128
+            && slot
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c)),
+        "Invalid connection credential slot"
+    );
+    Ok(())
+}
+pub fn connection_key(slot: &str) -> Result<Option<String>> {
+    validate_slot(slot)?;
+    get(&format!("connection-{slot}"))
+}
+pub fn set_connection_key(slot: &str, value: &str) -> Result<()> {
+    validate_slot(slot)?;
+    set(&format!("connection-{slot}"), value)?;
+    mark_changed()
+}
+pub fn delete_connection_key(slot: &str) -> Result<()> {
+    validate_slot(slot)?;
+    delete(&format!("connection-{slot}"))?;
+    mark_changed()
 }
 
 #[cfg(windows)]

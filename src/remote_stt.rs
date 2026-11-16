@@ -84,6 +84,13 @@ fn transcribe_bytes(
 ) -> Result<String> {
     anyhow::ensure!(!audio.is_empty(), "audio is empty");
     anyhow::ensure!(
+        config
+            .fallback
+            .as_ref()
+            .is_none_or(|fallback| fallback.fallback.is_none()),
+        "Only one fallback server is supported"
+    );
+    anyhow::ensure!(
         !config.model.trim().is_empty() && config.model.len() <= 256,
         "remote STT model must contain 1 to 256 characters"
     );
@@ -92,8 +99,20 @@ fn transcribe_bytes(
         "remote STT timeout_ms must be in [1000, 300000]"
     );
     let endpoint = endpoint(&config.base_url)?;
-    let token = crate::cleanup::secrets::stt_api_key()?;
-    transcribe_bytes_with_token(config, &endpoint, audio, language, token.as_deref())
+    let token = if let Some(slot) = &config.key_slot {
+        reader_core::secrets::connection_key(slot)?
+    } else if config.use_feature_key {
+        crate::cleanup::secrets::stt_api_key()?
+    } else {
+        None
+    };
+    let result = transcribe_bytes_with_token(config, &endpoint, audio, language, token.as_deref());
+    if result.is_err() {
+        if let Some(fallback) = &config.fallback {
+            return transcribe_bytes(fallback, audio, language);
+        }
+    }
+    result
 }
 
 fn transcribe_bytes_with_token(
@@ -294,6 +313,9 @@ mod tests {
     use super::*;
     fn config(base_url: String) -> RemoteSttConfig {
         RemoteSttConfig {
+            key_slot: None,
+            fallback: None,
+            use_feature_key: true,
             base_url,
             model: "whisper-test".to_owned(),
             fallback_to_local: true,

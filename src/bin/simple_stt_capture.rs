@@ -859,16 +859,17 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     }));
                 }
             }
-            let remote_stt = config.speech.provider
-                == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible;
             let language = if config.speech.selection_mode == ModelSelectionMode::FollowKeyboard
-                && (remote_stt || config.speech.assigned_models().next().is_some())
+                && (config.speech.has_remote_routes()
+                    || config.speech.assigned_models().next().is_some())
             {
                 simple_stt::capture::input_language::active_keyboard_language().ok()
             } else {
                 None
             };
             let route_language = language.as_deref().unwrap_or("single");
+            let remote_stt = config.speech.provider_for(route_language)
+                == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible;
             let (language, model_path) = if remote_stt {
                 let language = language.unwrap_or_else(|| "single".to_owned());
                 (
@@ -1110,9 +1111,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     }
                     normalized
                 }
-                None if config.speech.provider
-                    == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible =>
-                {
+                None if config.speech.has_remote_routes() => {
                     if config.speech.selection_mode == ModelSelectionMode::SingleModel {
                         "single".to_owned()
                     } else {
@@ -1131,14 +1130,15 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     Err(error) => return ShellResponse::error(error.to_string()),
                 },
             };
-            if config.speech.provider == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible
+            if config.speech.provider_for(&language)
+                == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible
             {
+                let remote_config = config.speech.remote_for(&language);
                 let language = if language == "single" {
                     None
                 } else {
                     Some(language)
                 };
-                let remote_config = config.speech.remote_openai_compatible.clone();
                 let fallback_enabled = remote_config.fallback_to_local;
                 let fallback_config = config.clone();
                 let local_worker = Arc::clone(worker);
@@ -1324,7 +1324,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 ));
                 return message_response(true, "capture.recordingShort");
             }
-            let remote_stt = config.speech.provider
+            let remote_stt = config.speech.provider_for(&frozen_worker.speech_language)
                 == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible;
             if !remote_stt && !frozen_worker.model_path.is_file() {
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
@@ -1354,7 +1354,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
             let next_worker: Result<WorkerConfig> = Ok(frozen_worker);
-            let remote_config = config.speech.remote_openai_compatible.clone();
+            let remote_config = config.speech.remote_for(
+                next_worker
+                    .as_ref()
+                    .map(|worker| worker.speech_language.as_str())
+                    .unwrap_or("single"),
+            );
             let fallback_enabled = remote_config.fallback_to_local;
             let fallback_config = config.clone();
             let remote_language = if next_worker
@@ -1627,13 +1632,14 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             } else {
                 "en"
             };
-            if config.speech.provider == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible
+            if config.speech.provider_for(language_id)
+                == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible
             {
                 let audio = simple_stt::models::smoke_audio_path_for(language);
                 if let Err(error) = simple_stt::models::ensure_smoke_audio(&audio) {
                     return ShellResponse::error(error.to_string());
                 }
-                let remote_config = config.speech.remote_openai_compatible.clone();
+                let remote_config = config.speech.remote_for(language_id);
                 let language = language_id.to_owned();
                 let generation = cancel_generation.load(Ordering::SeqCst);
                 let cancelled = Arc::clone(cancel_generation);

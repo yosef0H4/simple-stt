@@ -29,9 +29,20 @@ use std::{
 pub enum Action {
     Prepare,
     PreparePointer,
-    Key { key: String },
-    Text { text: String, delay_ms: u64 },
-    Click { x: i32, y: i32 },
+    Key {
+        key: String,
+    },
+    Sequence {
+        sequence: reader_core::recorded_action::RecordedAction,
+    },
+    Text {
+        text: String,
+        delay_ms: u64,
+    },
+    Click {
+        x: i32,
+        y: i32,
+    },
 }
 struct Task {
     action: Action,
@@ -88,6 +99,9 @@ pub fn run(action: Action, current: &dyn Fn() -> bool) -> Result<()> {
     );
     if let Action::Key { key } = &action {
         chord(key)?;
+    }
+    if let Action::Sequence { sequence } = &action {
+        sequence.validate()?;
     }
     if let Action::Text { text, delay_ms } = &action {
         ensure!(
@@ -386,6 +400,84 @@ impl Connection {
         pressed?;
         released
     }
+    fn recorded(
+        &mut self,
+        sequence: &reader_core::recorded_action::RecordedAction,
+        current: &dyn Fn() -> bool,
+        focus: &mut Option<crate::read_along_capture::InputFocus>,
+    ) -> Result<()> {
+        use reader_core::recorded_action::{keycode, replay, Playback};
+        ensure!(
+            focus.as_ref().is_some_and(|focus| focus.has_observer()),
+            "recorded actions require an observable focused window on this desktop"
+        );
+        let device = self.device(Cap::Keyboard, current)?;
+        let keyboard = device
+            .interface::<ei::Keyboard>()
+            .context("keyboard interface unavailable")?;
+        self.sequence = self.sequence.wrapping_add(1);
+        device
+            .device()
+            .start_emulating(self.events.connection().serial(), self.sequence);
+        struct Output<'a> {
+            connection: &'a mut Connection,
+            device: &'a Device,
+            keyboard: &'a ei::Keyboard,
+            current: &'a dyn Fn() -> bool,
+            focus: &'a mut Option<crate::read_along_capture::InputFocus>,
+            started: Instant,
+        }
+        impl Playback for Output<'_> {
+            fn wait_until(&mut self, at_ms: u32) -> Result<()> {
+                loop {
+                    ensure!((self.current)(), "recorded action canceled");
+                    if let Some(focus) = self.focus.as_mut() {
+                        focus.check()?;
+                    }
+                    self.connection.pump()?;
+                    ensure!(
+                        self.connection.active.contains(self.device),
+                        "keyboard device paused or removed"
+                    );
+                    let remaining = Duration::from_millis(u64::from(at_ms))
+                        .saturating_sub(self.started.elapsed());
+                    if remaining.is_zero() {
+                        return Ok(());
+                    }
+                    std::thread::sleep(remaining.min(Duration::from_millis(5)));
+                }
+            }
+            fn key(&mut self, key: &str, down: bool) -> Result<()> {
+                self.keyboard.key(
+                    keycode(key)?,
+                    if down {
+                        ei::keyboard::KeyState::Press
+                    } else {
+                        ei::keyboard::KeyState::Released
+                    },
+                );
+                self.connection.frame(self.device);
+                self.connection.context.flush()?;
+                Ok(())
+            }
+        }
+        let result = replay(
+            sequence,
+            &mut Output {
+                connection: self,
+                device: &device,
+                keyboard: &keyboard,
+                current,
+                focus,
+                started: Instant::now(),
+            },
+        );
+        device
+            .device()
+            .stop_emulating(self.events.connection().serial());
+        let released = self.sync(&|| true);
+        result.and(released)
+    }
     fn execute(
         &mut self,
         action: &Action,
@@ -406,6 +498,7 @@ impl Connection {
                 Ok(())
             }
             Action::Key { key } => self.keys(&chord(key)?, current),
+            Action::Sequence { sequence } => self.recorded(sequence, current, focus),
             Action::Text { text, delay_ms } => {
                 let device = self.device(Cap::Text, current).context("Unicode typing requires the compositor's EIS text support; choose a paste action on older desktops")?;
                 let input = device

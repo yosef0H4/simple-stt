@@ -333,6 +333,23 @@ impl WindowBackend for LinuxBackend {
         self.save_region(live, region, current)
     }
 
+    fn input_ready(&mut self, window: &WindowSnapshot) -> Result<bool> {
+        let WindowId::X11(target) = window.id else {
+            return Ok(false);
+        };
+        let mut focused = self.connection.get_input_focus()?.reply()?.focus;
+        for _ in 0..64 {
+            if focused == target {
+                return Ok(true);
+            }
+            if focused == self.root || focused == 0 {
+                return Ok(false);
+            }
+            focused = self.connection.query_tree(focused)?.reply()?.parent;
+        }
+        Ok(false)
+    }
+
     fn advance(
         &mut self,
         window: &WindowSnapshot,
@@ -351,8 +368,14 @@ impl WindowBackend for LinuxBackend {
             "saved region no longer fits the selected window"
         );
         ensure!(current(), "read-along action canceled");
+        if !self.input_ready(window)? {
+            return Err(super::FocusChanged.into());
+        }
         let input = match action {
             AdvanceAction::Key(key) => crate::portal_input::Action::Key { key: key.clone() },
+            AdvanceAction::Sequence(sequence) => crate::portal_input::Action::Sequence {
+                sequence: sequence.clone(),
+            },
             AdvanceAction::Click { x, y } => {
                 ensure!(
                     *x < region.width && *y < region.height,

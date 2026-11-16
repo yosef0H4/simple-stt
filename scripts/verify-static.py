@@ -325,6 +325,11 @@ need("src/bin/simple_stt_capture.rs", "LastDeliveryCache", "ShellCommand::Rememb
 need("web/settings/src/lib/settings.ts", "ui.keep_clipboard_clean.10b3d3", "general.retry_delivery_hotkey")
 need("web/settings/src/lib/locales/en.json", "Keep clipboard clean")
 
+need("reader/crates/reader-core/src/recorded_action.rs", "MAX_EVENTS", "MAX_DURATION_MS", "pub fn replay", "held.into_iter().rev()")
+need("reader/crates/readerd/src/portal_input.rs", "Action::Sequence", "recorded_action", "has_observer")
+need("ahk/action-replay.ahk", "#Requires AutoHotkey v2.0", "#SingleInstance Force", "OnExit(ReleaseHeld)", "CheckTarget()", "QueryPerformanceCounter", "SaveHeld()")
+need("ahk/tests/action-replay-smoke.ahk", "Expected two paired key presses", "Canceled action delivered input")
+
 if errors:
     print("STATIC VERIFY FAILED")
     print("\n".join(" - " + error for error in errors))

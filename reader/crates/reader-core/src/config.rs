@@ -96,6 +96,8 @@ pub struct ReadAlongSettings {
     pub prefetch: bool,
     /// Key used to advance to the next page in key-action mode.
     pub advance_key: String,
+    /// Recorded physical events; absent values retain the existing key assignment.
+    pub sequence: Option<crate::recorded_action::RecordedAction>,
     /// How the user triggers a page advance: a key press or a click.
     pub action: ReadAlongAction,
     /// Delay after an advance action before OCR starts, in milliseconds.
@@ -109,6 +111,7 @@ impl Default for ReadAlongSettings {
         Self {
             prefetch: true,
             advance_key: "Space".into(),
+            sequence: None,
             action: ReadAlongAction::Key,
             delay_ms: 900,
             retry_count: 5,
@@ -116,9 +119,23 @@ impl Default for ReadAlongSettings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpeechRouteDefaults {
+    pub provider: SpeechProvider,
+    pub key_slot: Option<String>,
+    pub use_feature_key: bool,
+    pub fallback: Option<crate::routing::Connection>,
+    pub fallback_to_local: bool,
+}
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpeechSettings {
+    #[serde(skip)]
+    pub route_defaults: Option<SpeechRouteDefaults>,
+    pub saved_remote: Option<SpeechProvider>,
+    pub key_slot: Option<String>,
+    pub remote_fallback: Option<crate::routing::Connection>,
+    pub use_feature_key: bool,
     pub selection: crate::routing::Selection,
     pub provider: SpeechProvider,
     /// Retry transient remote failures, then use the installed local speech assignment.
@@ -135,6 +152,11 @@ pub struct SpeechSettings {
 impl Default for SpeechSettings {
     fn default() -> Self {
         Self {
+            route_defaults: None,
+            saved_remote: None,
+            key_slot: None,
+            remote_fallback: None,
+            use_feature_key: true,
             selection: crate::routing::Selection {
                 mode: crate::routing::SelectionMode::AutoDetect,
                 ..Default::default()
@@ -155,6 +177,7 @@ impl Default for SpeechSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OcrSettings {
+    pub saved_remote: Option<OcrProvider>,
     pub idle_timeout_secs: u16,
     pub selection: crate::routing::Selection,
     pub provider: OcrProvider,
@@ -170,6 +193,7 @@ pub struct OcrSettings {
 impl Default for OcrSettings {
     fn default() -> Self {
         Self {
+            saved_remote: None,
             selection: Default::default(),
             idle_timeout_secs: 300,
             provider: OcrProvider::default(),
@@ -309,8 +333,8 @@ impl Default for ServerSettings {
     fn default() -> Self {
         Self {
             enabled: false,
-            listen: "127.0.0.1:8765".into(),
-            allow_remote: false,
+            listen: "0.0.0.0:8765".into(),
+            allow_remote: true,
             max_clients: 4,
             max_text_bytes: 1_048_576,
             max_image_pixels: 20_000_000,
@@ -405,6 +429,9 @@ impl AppConfig {
         if self.read_along.delay_ms > 10_000 {
             bail!("read-along delay must be at most 10000 milliseconds");
         }
+        if let Some(sequence) = &self.read_along.sequence {
+            sequence.validate()?;
+        }
         if self.read_along.retry_count > 5 {
             bail!("read-along retries must be at most 5");
         }
@@ -420,9 +447,6 @@ impl AppConfig {
         if self.server.max_image_pixels == 0 || self.server.max_image_pixels > 20_000_000 {
             bail!("server image limit must be between 1 and 20 megapixels");
         }
-        if self.server.allow_remote && !self.server.enabled {
-            bail!("remote listening requires server mode to be enabled");
-        }
         for (name, value) in [
             ("voice", &self.speech.voice),
             ("speech language", &self.speech.language),
@@ -431,6 +455,12 @@ impl AppConfig {
             if value.trim().is_empty() || value.len() > 128 {
                 bail!("{name} must contain 1 to 128 bytes");
             }
+        }
+        if let Some(slot) = &self.speech.key_slot {
+            crate::secrets::validate_slot(slot)?;
+        }
+        if let Some(fallback) = &self.speech.remote_fallback {
+            fallback.validate(crate::routing::Feature::Tts)?;
         }
         if let SpeechProvider::OpenAiCompatible {
             base_url, model, ..
@@ -571,6 +601,19 @@ impl ConfigStore {
 mod tests {
     use super::*;
 
+    #[test]
+    fn old_key_assignments_do_not_turn_into_the_default_recording() {
+        let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+        value["read_along"]["advance_key"] = "Ctrl+PageDown".into();
+        value["read_along"]
+            .as_object_mut()
+            .unwrap()
+            .remove("sequence");
+        let config: AppConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(config.read_along.advance_key, "Ctrl+PageDown");
+        assert!(config.read_along.sequence.is_none());
+        config.validate().unwrap();
+    }
     #[test]
     fn voice_retention_defaults_to_five_minutes_and_allows_one_hour() {
         let mut config = AppConfig::default();

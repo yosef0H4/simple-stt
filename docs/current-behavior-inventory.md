@@ -180,3 +180,37 @@ keyboard notation stays left-to-right in Arabic. The recording shortcut uses
 The Linux base package leaves speech/OCR runtime and model installation to Settings → Downloads; it bundles the compressed fastText language-identification model. CUDA/Vulkan dictation and the integrated Kokoro/Supertonic/PaddleOCR reading routes use separate optional assets. Dictation defaults to keyboard-language routing, reading defaults to automatic text-language routing, and OCR defaults to a single Paddle selection. Reading settings use the existing explicit Save bar; the main shell owns reading shortcuts and tray actions. Reading workers, API providers, OCR, clipboard listening, chunk navigation and cancellation are adapted from Simple TTS under `reader/crates/`, without depending on that checkout.
 
 Mode-based assignments show one editor for the selected language, with explicit assignments only and no general fallback. Voice speed is local to the assignment; background timeouts remain shared per module. The default recording finish delay is 500 ms. Normal completed work stays warm until its configured independent idle timeout; memory estimates do not evict a just-used worker. The local reading tooltip shows the current prepared spoken passage, while notification privacy remains separate.
+
+## Recorded actions and preparation overlap
+
+Read-along can record physical key presses and releases in a focused Settings
+panel. Esc or Stop finishes after release; leaving the panel cancels. The first
+event starts at zero and no idle time follows the final release. Existing saved
+keys remain valid, and reset restores a single Space press. Actions are bounded
+to 128 events and 30 seconds. Linux replays through its authorized RemoteDesktop
+EIS session; Windows replays through the AHK v2 helper with target identity and
+focus checks, cancellation, and held-key cleanup.
+
+With prefetch enabled, an initial captured image is advanced while its OCR and
+speech start. The settling timer starts after the final recorded key release and backend
+completion. Exactly one next page may be captured and prepared while the
+current page plays. A ready page waits for current playback to finish; only then may another
+advance begin. Processing failures retry within the configured limit, without
+repeating an advance action whose delivery may already have occurred. An
+exhausted attempt clears next-page activity, finishes current audio, and pauses;
+Resume or Next retries that pending page, retaining OCR text if only speech
+failed. Disabling prefetch uses sequential preparation.
+OCR and speech keep their independent local/remote routes. Captures and actions
+always remain local to the client. New server configurations listen on all IPv4
+interfaces when enabled and still require a valid bearer token.
+
+Client language detection stays local. TTS language assignments and dictation
+keyboard-language assignments can independently select a remote URL, model,
+voice, credential slot, alternate server, and local fallback assignment. A local
+route preserves dormant connection fields. Credentials remain in the secure
+store; configuration files contain only slot references. Replacing or clearing
+credentials invalidates remote voice workers before their next request.
+
+The server exposes installed Supertonic 3 as `supertonic3` in the TTS model
+catalog, with `sid:0` through `sid:9` voices. Explicit speech model requests select
+the matching installed engine rather than reusing an unrelated default model.

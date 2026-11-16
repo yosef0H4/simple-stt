@@ -10,6 +10,8 @@ const MAX_RESPONSE: u64 = 1024 * 1024;
 
 #[derive(Debug, Deserialize)]
 pub struct DiscoveryRequest {
+    #[serde(default)]
+    pub key_slot: Option<String>,
     pub feature: String,
     pub base_url: String,
     #[serde(default)]
@@ -223,6 +225,7 @@ mod tests {
             }
         });
         let request = DiscoveryRequest {
+            key_slot: None,
             feature: "tts".into(),
             base_url: format!("http://{address}/v1"),
             api_key: None,

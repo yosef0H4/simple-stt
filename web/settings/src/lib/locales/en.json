@@ -242,7 +242,7 @@
   "reading.read_along": "Read along",
   "reading.read_along_start": "Start read-along",
   "reading.read_along_action": "Advance action",
-  "reading.read_along_key": "Press a key",
+  "reading.read_along_key": "Recorded keys",
   "reading.read_along_click": "Click",
   "reading.advance_key": "Advance key",
   "reading.read_along_prefetch": "Prepare the next page early",
@@ -426,5 +426,15 @@
   "settings.provider_empty": "No suggestions available. You can still enter an exact ID.",
   "settings.save_connection": "Save connection",
   "settings.refresh_models": "Refresh models",
-  "settings.refresh_voices": "Refresh voices"
+  "settings.refresh_voices": "Refresh voices",
+  "reading.recorded_action": "Recorded action",
+  "reading.record_action": "Record",
+  "reading.recording_action": "Recording keys",
+  "reading.record_action_help": "Press keys here. Esc or Stop finishes after release. Leaving cancels.",
+  "reading.action_unsupported": "Unsupported key. Previous action kept.",
+  "reading.action_limit": "Limit: 128 events, 30 seconds. Previous action kept.",
+  "reading.reset_action": "Reset",
+  "settings.language_route": "Route for this language",
+  "settings.fallback_server": "Use a fallback server",
+  "settings.default_route": "Use the default route"
 }

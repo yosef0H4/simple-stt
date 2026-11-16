@@ -4,6 +4,7 @@
   import { t } from "../lib/i18n";
   import { reading, loadReading } from "../lib/reading-state.svelte";
   import { ui, markDirty, notice } from "../lib/state.svelte";
+  import ActionRecorder from "../components/ActionRecorder.svelte";
   import ReadingBehavior from "../components/ReadingBehavior.svelte";
   import General from "./General.svelte";
   import Range from "../components/Range.svelte";
@@ -64,7 +65,7 @@
   </Group>
   <Group title="reading.read_along" icon="keyboard">
     <div class="field"><label for="read-along-action">{t("reading.read_along_action")}</label><div class="control"><select id="read-along-action" bind:value={reading.config.read_along.action}><option value="key">{t("reading.read_along_key")}</option><option value="click">{t("reading.read_along_click")}</option></select></div></div>
-    {#if reading.config.read_along.action === "key"}<div class="field"><label for="read-along-key">{t("reading.advance_key")}</label><div class="control"><input id="read-along-key" dir="ltr" bind:value={reading.config.read_along.advance_key} /></div></div>{/if}
+    {#if reading.config.read_along.action === "key"}<ActionRecorder />{/if}
     <div class="field"><label for="read-along-prefetch">{t("reading.read_along_prefetch")}</label><div class="control"><input id="read-along-prefetch" type="checkbox" role="switch" bind:checked={reading.config.read_along.prefetch} /></div></div>
     <Range label="reading.read_along_delay" path="read_along.delay_ms" value={reading.config.read_along.delay_ms} min={0} max={10000} step={50} unit="ms" onchange={value=>{if(reading.config)reading.config.read_along.delay_ms=value;}}/>
     <Range label="reading.read_along_retries" path="read_along.retry_count" value={reading.config.read_along.retry_count} min={0} max={5} step={1} unit="" onchange={value=>{if(reading.config)reading.config.read_along.retry_count=value;}}/>

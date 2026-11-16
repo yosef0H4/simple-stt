@@ -5,7 +5,7 @@
  import {ui,set,refreshLanguages,notice} from '../lib/state.svelte';
  import {reading} from '../lib/reading-state.svelte';
  import {modules,refreshModules,emptyBinding,catalogView,selectionView,type Binding,type Feature,type Selection} from '../lib/modules.svelte';
- import EngineAssignment from './EngineAssignment.svelte';
+ import RouteAssignment from './RouteAssignment.svelte';
  import IconButton from './IconButton.svelte';
  let {feature,showDownloads=true}:{feature:Feature;showDownloads?:boolean}=$props();
  let adding=$state(false);
@@ -25,11 +25,11 @@
  function removeLanguage(code:string){const s=selection();if(s){delete s.languages[code];selectionView[feature]='';}}
  function selection():Selection|undefined{return reading.config?.[readerSection].selection;}
  function binding(language:string):Binding {
-  if(feature==='stt') {const s=ui.config?.speech;const runtimePath=s?.runtime_dir||'';return {runtime:language?(s?.language_runtimes?.[language]??null):(runtimePath.split(/[\\/]/).pop()||null),model:language?s?.language_models[language]||null:s?.single_model_filename||null,device:language?s?.language_devices?.[language]||'auto':s?.inference_device||'auto'};}
+  if(feature==='stt') {const s=ui.config?.speech;const runtimePath=s?.runtime_dir||'';return {remote:language?s?.remote_languages?.[language]:undefined,runtime:language?(s?.language_runtimes?.[language]??null):(runtimePath.split(/[\\/]/).pop()||null),model:language?s?.language_models[language]||null:s?.single_model_filename||null,device:language?s?.language_devices?.[language]||'auto':s?.inference_device||'auto'};}
   const s=selection();return (language?s?.languages[language]:s?.single)||emptyBinding();
  }
  function update(value:Binding,language:string){
-  if(feature==='stt'&&ui.config){const s=ui.config.speech;if(language){set(`speech.language_models.${language}`,value.model);s.language_runtimes??={};s.language_devices??={};s.language_runtimes[language]=value.runtime;s.language_devices[language]=value.device;set('speech.language_runtimes',{...s.language_runtimes});set('speech.language_devices',{...s.language_devices});}else{set('speech.single_model_filename',value.model);set('speech.runtime_dir',value.runtime?modulesRuntimeDirectory(value.runtime):'');set('speech.inference_device',value.device);}}
+  if(feature==='stt'&&ui.config){const s=ui.config.speech;if(language){s.remote_languages??={};if(value.remote)s.remote_languages[language]=value.remote;else delete s.remote_languages[language];set('speech.remote_languages',{...s.remote_languages});set(`speech.language_models.${language}`,value.model);s.language_runtimes??={};s.language_devices??={};s.language_runtimes[language]=value.runtime;s.language_devices[language]=value.device;set('speech.language_runtimes',{...s.language_runtimes});set('speech.language_devices',{...s.language_devices});}else{set('speech.single_model_filename',value.model);set('speech.runtime_dir',value.runtime?modulesRuntimeDirectory(value.runtime):'');set('speech.inference_device',value.device);}}
   else {const s=selection();if(s){if(language)s.languages[language]=value;else s.single=value;}}
  }
  function modulesRuntimeDirectory(id:string){return modules.runtimes.find(r=>r.id===id)?.directory||'';}
@@ -52,7 +52,7 @@
  {:else}<p class="inline-status">{t('ui.keyboard_detection_unavailable.091ebb')}</p>{/if}
 {/if}
 {#if mode==='single_model' || editing}
- <EngineAssignment {feature} showLanguageName={false} language={mode==='single_model'?'':editing} path={`${feature}.${mode==='single_model'?'single':editing}`} binding={binding(mode==='single_model'?'':editing)} onchange={(value)=>update(value,mode==='single_model'?'':editing)}/>
+ <RouteAssignment {feature} language={mode==='single_model'?'':editing} path={`${feature}.${mode==='single_model'?'single':editing}`} binding={binding(mode==='single_model'?'':editing)} onchange={(value)=>update(value,mode==='single_model'?'':editing)}/>
 {/if}
 {#if mode==='auto_detect' && feature==='tts'}
  {#if editing}<button type="button" class="quiet" aria-label={`${t('module.remove_language')} ${languageName(editing)}`} onclick={()=>removeLanguage(editing)}>{t('module.remove_language')}</button>{/if}

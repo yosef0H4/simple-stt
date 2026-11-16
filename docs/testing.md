@@ -513,3 +513,21 @@ does not establish compatibility with a specific commercial game or Proton.
 `python scripts/test-read-along-desktop.py --repeat-region` selects a region once in an isolated test profile, performs real OCR and speech, changes the dialogue manually, and repeats the saved area. It asserts new OCR output and audio frames without a second selection or a page-advance key. Reader unit tests cover stale completion protection; root tests cover choosing the newest reader or dictation action without transferring payloads.
 
 `python scripts/test-read-along-desktop.py --hud-progress` verifies that real playback retains current text while independent next-page capture/OCR/TTS progress is available. HUD formatter tests cover stale activity metadata and suppressing shortcut hints only for read-along. `overlay-e2e --offscreen` includes English and Arabic current-sentence/next-page examples.
+
+## Recorded actions
+
+`node scripts/test-settings-recorded-actions.cjs` covers timing trim, paired
+keys, focused capture, Esc stop, cancellation, save/reload, and responsive layout.
+`cargo test -p reader-core recorded_action::tests` verifies replay ordering,
+cancellation releases, and bounded validation. Reader controller tests cover
+one-page backpressure, capture ownership, bounded recovery, and settling only
+after the recorded action completes. `node scripts/test-settings-provider-routes.cjs`
+checks saved connections, independent language credentials, fallback, and reload.
+The Windows native suite includes `ahk/tests/action-replay-smoke.ahk`.
+
+Before a desktop handoff, record a short repeated-key action and a modifier
+chord, then test Stop and target focus changes in an isolated target window.
+Check prefetch both enabled and disabled, including mixed local/remote OCR and
+speech providers. Portal support depends on the compositor/backend; see
+[recorded-action research](research/recorded-actions.md). Native Windows and
+compositor playback are not established by browser or fake-backend tests.
