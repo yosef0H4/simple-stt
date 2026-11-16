@@ -6587,7 +6587,7 @@ fn handle_server_request(app: &App, token: &str, mut request: tiny_http::Request
         )),
         "/v1/models" => Ok(server_json(
             200,
-            &serde_json::json!({"object":"list","data":[{"id":"kokoro-v1","object":"model","owned_by":"simple-tts"},{"id":"simple-tts-ocr","object":"model","owned_by":"simple-tts"}]}),
+            &serde_json::json!({"object":"list","data":[{"id":"configured-stt","object":"model","owned_by":"simple-stt","capabilities":["stt"]},{"id":"kokoro-v1","object":"model","owned_by":"simple-tts","capabilities":["tts"]},{"id":"simple-tts-ocr","object":"model","owned_by":"simple-tts","capabilities":["ocr"]}]}),
         )),
         "/v1/audio/transcriptions" if *request.method() == tiny_http::Method::Post => {
             let content_type = request

@@ -98,6 +98,9 @@ pub enum CredentialCommand {
         /// Generate a fresh token without a keyring or saving it (for headless hosts).
         #[arg(long, conflicts_with = "replace")]
         stdout: bool,
+        /// Save a new key for the Linux background service and restart it.
+        #[arg(long, conflicts_with_all = ["stdout", "replace"])]
+        activate: bool,
     },
     /// Report whether credentials are present without revealing their values.
     List,
@@ -367,8 +370,16 @@ fn credentials(command: CredentialCommand) -> Result<()> {
             kind: GeneratedCredentialKind::Server,
             replace,
             stdout,
+            activate,
         } => {
+            if activate {
+                let token = generated_server_token(None, true);
+                activate_server_token(&token)?;
+                println!("{token}");
+                return Ok(());
+            }
             if stdout {
+                eprintln!("Generated only; the running server is unchanged. For the Linux background service, use: simple-stt credentials generate server --activate");
                 println!("{}", generated_server_token(None, true));
                 return Ok(());
             }
@@ -433,6 +444,62 @@ fn credentials(command: CredentialCommand) -> Result<()> {
             }
             print(&json!({"removed": true, "kind": format!("{kind:?}").to_lowercase()}))
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn write_server_token(path: &std::path::Path, token: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let parent = path.parent().context("server token file has no parent")?;
+    std::fs::create_dir_all(parent)?;
+    let existing = match std::fs::read_to_string(path) {
+        Ok(value) => value,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(error.into()),
+    };
+    let temporary = parent.join(format!(".server-env-{}", uuid::Uuid::new_v4()));
+    let result = (|| -> Result<()> {
+        let mut output = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        for line in existing
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("SIMPLE_TTS_SERVER_TOKEN="))
+        {
+            writeln!(output, "{line}")?;
+        }
+        writeln!(output, "SIMPLE_TTS_SERVER_TOKEN={token}")?;
+        output.sync_all()?;
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn activate_server_token(token: &str) -> Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        let path = dirs::config_dir()
+            .context("user configuration directory unavailable")?
+            .join("simple-stt/server.env");
+        write_server_token(&path, token)?;
+        let status = std::process::Command::new("systemctl")
+            .args(["--user", "restart", "simple-stt-server.service"])
+            .status()
+            .context("token saved; could not restart simple-stt-server.service")?;
+        anyhow::ensure!(status.success(), "token saved, but server restart failed; run systemctl --user restart simple-stt-server.service");
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = token;
+        bail!("--activate supports the packaged Linux background service only")
     }
 }
 
@@ -682,6 +749,25 @@ fn ensure_installed(id: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn headless_token_activation_preserves_other_environment_and_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("server.env");
+        std::fs::write(&path, "OTHER_SETTING=keep\nSIMPLE_TTS_SERVER_TOKEN=old\n").unwrap();
+        write_server_token(&path, "fixture-token").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "OTHER_SETTING=keep\nSIMPLE_TTS_SERVER_TOKEN=fixture-token\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn installation_tracks_parent_job_while_a_dependency_is_downloading() {

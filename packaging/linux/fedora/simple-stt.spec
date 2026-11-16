@@ -1,6 +1,6 @@
 Name:           simple-stt
 Version:        0.3.1
-Release:        28%{?dist}
+Release:        29%{?dist}
 %global __provides_exclude_from ^/usr/lib/simple-stt/.*\.so.*$
 Summary:        Local dictation, read aloud, and screen text for Linux desktops
 License:        GPL-2.0-only AND MIT AND OFL-1.1 AND CC-BY-SA-3.0
@@ -38,6 +38,7 @@ cp -a %{_sourcedir}/stage/. %{buildroot}/
 /usr/lib/simple-stt/fixtures
 %defattr(-,root,root,-)
 %attr(0755,root,root) /usr/bin/simple-stt
+/usr/bin/simple-stt-ctl
 %dir /usr/lib/simple-stt
 %attr(0755,root,root) /usr/lib/simple-stt/simple-stt-linux
 %attr(0755,root,root) /usr/lib/simple-stt/simple-stt-capture
@@ -61,6 +62,7 @@ cp -a %{_sourcedir}/stage/. %{buildroot}/
 /usr/share/icons/hicolor/scalable/apps/simple-stt.svg
 %dir /usr/lib/systemd/user
 /usr/lib/systemd/user/simple-stt-linux.service
+/usr/lib/systemd/user/simple-stt-server.service
 %license /usr/share/licenses/simple-stt/LICENSE
 %license /usr/share/licenses/simple-stt/THIRD_PARTY_NOTICES.md
 %license /usr/share/licenses/simple-stt/OFL-JetBrainsMono.txt

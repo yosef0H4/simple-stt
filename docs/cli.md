@@ -91,7 +91,16 @@ simple-stt-ctl credentials set ocr --env OCR_API_KEY
 simple-stt-ctl credentials set stt --env SIMPLE_STT_STT_API_KEY
 simple-stt-ctl credentials list
 simple-stt-ctl credentials remove ai
+simple-stt-ctl credentials generate server --activate
 ```
+
+On a packaged Linux server, `credentials generate server --activate` writes the
+new key to the private service environment file and restarts the background
+service before printing it. `--stdout` prints a key without saving or activating
+it, and emits a reminder on stderr. Remote STT connections may be saved before
+choosing a model, but transcription still requires a model. This server
+advertises `configured-stt`, `kokoro-v1`, and `simple-tts-ocr`, with feature hints
+so STT discovery does not offer OCR or TTS aliases.
 
 The `stt` credential is independent from the `ai` cleanup credential. The
 legacy `simple-stt-ctl config-show` output includes `reader_read_along`, the

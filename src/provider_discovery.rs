@@ -54,7 +54,11 @@ pub fn discover(request: &DiscoveryRequest, saved_key: Option<String>) -> Result
     let models_url = endpoint(&base, "models")?;
     let models_response = send(&client, models_url, key.as_deref())?;
     let model_json = read_json(models_response)?;
-    let models = list(&model_json).into_iter().filter_map(item).collect();
+    let models = list(&model_json)
+        .into_iter()
+        .filter(|model| supports_feature(model, &request.feature))
+        .filter_map(item)
+        .collect();
     let mut voices = Vec::new();
     let mut voices_supported = false;
     if request.feature == "tts" {
@@ -93,11 +97,11 @@ fn send(client: &Client, url: url::Url, key: Option<&str>) -> Result<Response> {
     let response = request
         .send()
         .context("provider discovery request failed")?;
-    anyhow::ensure!(
-        response.status().is_success(),
-        "provider discovery returned HTTP {}; model discovery may be unavailable: enter a model ID manually, or check the URL and this feature’s key",
-        response.status()
-    );
+    match response.status().as_u16() {
+        401 => anyhow::bail!("Provider authentication failed (HTTP 401). Check this feature's key and confirm it is activated on the server. Generating a key with --stdout alone does not activate it."),
+        403 => anyhow::bail!("Provider access denied (HTTP 403). Check this key's permissions."),
+        _ => anyhow::ensure!(response.status().is_success(), "Model discovery unavailable (HTTP {}); enter a model ID manually or check the URL.",response.status()),
+    }
     if let Some(length) = response.content_length() {
         anyhow::ensure!(
             length <= MAX_RESPONSE,
@@ -128,6 +132,16 @@ fn list(value: &Value) -> Vec<Value> {
         .cloned()
         .unwrap_or_default()
 }
+fn supports_feature(model: &Value, feature: &str) -> bool {
+    model
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .is_none_or(|capabilities| {
+            capabilities
+                .iter()
+                .any(|value| value.as_str() == Some(feature))
+        })
+}
 fn item(value: Value) -> Option<Item> {
     let id = value
         .get("id")
@@ -154,6 +168,21 @@ fn item(value: Value) -> Option<Item> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn separates_advertised_features_without_hiding_generic_provider_models() {
+        assert!(supports_feature(
+            &serde_json::json!({"id":"external-model"}),
+            "stt"
+        ));
+        assert!(supports_feature(
+            &serde_json::json!({"id":"configured-stt","capabilities":["stt"]}),
+            "stt"
+        ));
+        assert!(!supports_feature(
+            &serde_json::json!({"id":"kokoro-v1","capabilities":["tts"]}),
+            "stt"
+        ));
+    }
     #[test]
     fn endpoint_preserves_prefix_and_rejects_url_secrets() {
         let base = validate_base("http://localhost:1234/v1/").unwrap();

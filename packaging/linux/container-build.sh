@@ -35,6 +35,7 @@ mkdir -p "$stage/usr/bin" "$app" \
   "$stage/usr/share/icons/hicolor/scalable/apps" \
   "$stage/usr/lib/systemd/user" "$stage/usr/share/licenses/simple-stt"
 install -m 0755 packaging/linux/simple-stt "$stage/usr/bin/simple-stt"
+ln -s ../lib/simple-stt/simple-stt-ctl "$stage/usr/bin/simple-stt-ctl"
 for binary in simple-stt-linux simple-stt-capture simple-stt-infer simple-stt-ctl simple-stt-settings readerd readerctl reader-tts reader-ocr reader-hud; do
   install -m 0755 "$CARGO_TARGET_DIR/release/$binary" "$app/$binary"
 done
@@ -46,6 +47,7 @@ install -m 0644 packaging/linux/simple-stt-settings.desktop "$stage/usr/share/ap
 install -m 0644 packaging/linux/simple-stt-readerd.desktop "$stage/usr/share/applications/"
 install -m 0644 packaging/linux/simple-stt.svg "$stage/usr/share/icons/hicolor/scalable/apps/"
 install -m 0644 packaging/linux/simple-stt-linux.service "$stage/usr/lib/systemd/user/"
+install -m 0644 packaging/linux/simple-stt-server.service "$stage/usr/lib/systemd/user/"
 install -m 0644 LICENSE "$stage/usr/share/licenses/simple-stt/"
 install -m 0644 THIRD_PARTY_NOTICES.md "$stage/usr/share/licenses/simple-stt/"
 install -m 0644 assets/catalog/downloads.json "$app/downloads.json"

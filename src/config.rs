@@ -690,9 +690,8 @@ impl AppConfig {
         );
         if self.speech.provider == SpeechProvider::RemoteOpenAiCompatible {
             anyhow::ensure!(
-                !self.speech.remote_openai_compatible.model.trim().is_empty()
-                    && self.speech.remote_openai_compatible.model.len() <= 256,
-                "remote STT model must contain 1 to 256 characters"
+                self.speech.remote_openai_compatible.model.len() <= 256,
+                "remote STT model must contain at most 256 characters"
             );
             validate_remote_stt_base_url(&self.speech.remote_openai_compatible.base_url)?;
         }
@@ -1341,6 +1340,14 @@ fn instance_local_data_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn remote_connection_can_be_saved_before_a_model_is_selected() {
+        let mut config = AppConfig::default();
+        config.speech.provider = SpeechProvider::RemoteOpenAiCompatible;
+        config.speech.remote_openai_compatible.base_url = "http://100.85.156.101:8765/v1".into();
+        config.speech.remote_openai_compatible.model.clear();
+        config.validate().unwrap();
+    }
     #[test]
     fn legacy_linux_input_backends_migrate_to_one_portal_action_cycle() {
         let config = AppConfig::normalize_json(&serde_json::json!({"schema_version":9,"output":{

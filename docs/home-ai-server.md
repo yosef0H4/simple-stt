@@ -14,17 +14,17 @@ bootstrap token used during setup. Generating a token in the desktop keyring
 alone does not replace the headless service's environment file.
 
 ```bash
-umask 077
-mkdir -p ~/.config/simple-stt
-token="$(simple-stt-ctl credentials generate server --stdout)"
-printf 'SIMPLE_TTS_SERVER_TOKEN=%s\n' "$token" > ~/.config/simple-stt/server.env
-unset token
-systemctl --user restart simple-stt-server
+simple-stt credentials generate server --activate
 ```
 
 To retrieve it for your client, open `~/.config/simple-stt/server.env` locally and
 copy only the value after `=`. Keep it private. Repeating the commands rotates
 the token and requires updating every client.
+
+`--activate` saves the generated key for the background service, restarts it,
+and prints the activated key. `--stdout` only prints a fresh key: it does not
+change the running server. Copying a printed-only key into a client gives HTTP
+401 until that key is installed on the server.
 
 ## Connect another device
 
