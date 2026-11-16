@@ -32,6 +32,14 @@ struct Args {
 }
 #[derive(Debug, Subcommand)]
 enum CommandKind {
+    #[command(flatten)]
+    Administration(simple_stt::admin::Command),
+    Media {
+        #[command(subcommand)]
+        command: simple_stt::cli::MediaCommand,
+    },
+    /// Serve persistent file transcription requests over newline-delimited JSON.
+    MediaServe,
     Ping,
     StartRecording {
         #[arg(long)]
@@ -43,6 +51,16 @@ enum CommandKind {
         #[arg(long)]
         session_id: u64,
     },
+    BeginDelivery {
+        #[arg(long)]
+        session_id: u64,
+    },
+    DeliveryProgress {
+        #[arg(long)]
+        session_id: u64,
+        #[arg(long, value_enum)]
+        phase: simple_stt::common::shell_protocol::DeliveryPhase,
+    },
     DeliveryComplete {
         #[arg(long)]
         session_id: u64,
@@ -52,6 +70,8 @@ enum CommandKind {
         session_id: u64,
     },
     LastDelivery,
+    ShowShortcuts,
+    RefreshShortcuts,
     Cancel,
     PollEvents {
         #[arg(long, default_value_t = 0)]
@@ -83,6 +103,12 @@ enum CommandKind {
         text: String,
     },
     Shutdown,
+    KeyboardLanguage,
+    ReaderAction {
+        action: String,
+        #[arg(long, default_value_t = 0)]
+        since_ms: u64,
+    },
     ConfigShow,
     ConfigSave {
         #[arg(long)]
@@ -100,7 +126,41 @@ enum NoticeArg {
 fn main() {
     let args = Args::parse();
     let output_path = args.output.clone();
-    let result = run(args);
+    let result = match args.command {
+        CommandKind::Administration(command) => {
+            if let Err(error) = simple_stt::admin::dispatch(command) {
+                eprintln!("simple-stt-ctl: {error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        CommandKind::Media { command } => {
+            if args.output.is_some() {
+                eprintln!("simple-stt-ctl: --output is only supported for shell protocol commands");
+                std::process::exit(2);
+            }
+            if let Err(error) = simple_stt::cli::dispatch_media(
+                command,
+                &mut simple_stt::reader::ConfiguredBackend::default(),
+            ) {
+                eprintln!("simple-stt-ctl: {error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        CommandKind::MediaServe => {
+            if args.output.is_some() {
+                eprintln!("simple-stt-ctl: --output is not supported by media-serve");
+                std::process::exit(2);
+            }
+            if let Err(error) = media_serve() {
+                eprintln!("simple-stt-ctl media-serve: {error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        command => run(Args { command, ..args }),
+    };
     let body = match result {
         Ok(response) => render_response(response),
         Err(error) => format!(
@@ -121,11 +181,87 @@ fn main() {
     }
 }
 
+fn media_serve() -> Result<()> {
+    let stdout = std::io::stdout();
+    let (send, receive) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        let mut input = BufReader::new(stdin.lock());
+        loop {
+            let mut line = String::new();
+            match input.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) if line.len() <= 64 * 1024 => {
+                    if send.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Ok(_) => {
+                    let _ = send.send(Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "media request exceeds 64 KiB",
+                    )));
+                    break;
+                }
+                Err(error) => {
+                    let _ = send.send(Err(error));
+                    break;
+                }
+            }
+        }
+    });
+    let mut output = stdout.lock();
+    let mut backend = simple_stt::reader::ConfiguredBackend::default();
+    loop {
+        let line = match receive.recv_timeout(Duration::from_millis(100)) {
+            Ok(line) => line?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                backend.poll_idle()?;
+                continue;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+        };
+        let response = (|| -> Result<serde_json::Value> {
+            let request: serde_json::Value = serde_json::from_str(&line)?;
+            let path = request
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .context("request path is missing")?;
+            let language = request.get("language").and_then(serde_json::Value::as_str);
+            let text = simple_stt::cli::transcribe_file(&mut backend, Path::new(path), language)?;
+            Ok(serde_json::json!({"text": text}))
+        })();
+        let frame = match response {
+            Ok(value) => value,
+            Err(error) => serde_json::json!({"error": format!("{error:#}")}),
+        };
+        serde_json::to_writer(&mut output, &frame)?;
+        output.write_all(b"\n")?;
+        output.flush()?;
+    }
+}
+
 fn run(args: Args) -> Result<ShellResponse> {
     match &args.command {
+        CommandKind::KeyboardLanguage => {
+            let language = simple_stt::capture::input_language::active_keyboard_language()?;
+            return Ok(ShellResponse::ok(language));
+        }
+        CommandKind::ReaderAction { action, since_ms } => {
+            if action == "repeat_if_newer" {
+                let repeated = simple_stt::reader::repeat_if_newer(*since_ms)?;
+                return Ok(ShellResponse::ok(if repeated {
+                    "reader_repeated"
+                } else {
+                    "dictation"
+                }));
+            }
+            return simple_stt::reader::action(action, "").map(ShellResponse::ok);
+        }
         CommandKind::ConfigShow => return config_show(),
         CommandKind::ConfigSave { input } => return config_save(input),
         CommandKind::ConfigReset => {
+            let _config_guard = simple_stt::config::lock_config()?;
             let config = AppConfig::default();
             config.save()?;
             return config_show();
@@ -239,7 +375,13 @@ fn translate(command: CommandKind) -> ShellCommand {
         CommandKind::DeliveryComplete { session_id } => {
             ShellCommand::DeliveryComplete { session_id }
         }
+        CommandKind::BeginDelivery { session_id } => ShellCommand::BeginDelivery { session_id },
+        CommandKind::DeliveryProgress { session_id, phase } => {
+            ShellCommand::DeliveryProgress { session_id, phase }
+        }
         CommandKind::LastDelivery => ShellCommand::LastDelivery,
+        CommandKind::ShowShortcuts => ShellCommand::ShowShortcuts,
+        CommandKind::RefreshShortcuts => ShellCommand::RefreshShortcuts,
         CommandKind::RememberDelivery { .. } => unreachable!("stdin command handled separately"),
         CommandKind::Cancel => ShellCommand::Cancel,
         CommandKind::PollEvents { after_seq, .. } => ShellCommand::PollEvents { after_seq },
@@ -263,14 +405,30 @@ fn translate(command: CommandKind) -> ShellCommand {
             text,
         },
         CommandKind::Shutdown => ShellCommand::Shutdown,
-        CommandKind::ConfigShow | CommandKind::ConfigSave { .. } | CommandKind::ConfigReset => {
+        CommandKind::Administration(_)
+        | CommandKind::KeyboardLanguage
+        | CommandKind::Media { .. }
+        | CommandKind::MediaServe
+        | CommandKind::ReaderAction { .. }
+        | CommandKind::ConfigShow
+        | CommandKind::ConfigSave { .. }
+        | CommandKind::ConfigReset => {
             unreachable!("local config commands are handled before IPC")
         }
     }
 }
 fn config_show() -> Result<ShellResponse> {
     let config = AppConfig::load()?;
+    let reader = simple_stt::reader::load().unwrap_or_else(|_| simple_stt::reader::defaults());
     let mut response = ShellResponse::ok("config");
+    response.values.insert(
+        "show_shortcuts_hotkey".into(),
+        config.general.show_shortcuts_hotkey.clone(),
+    );
+    response.values.insert(
+        "shortcut_reminders".into(),
+        config.general.shortcut_reminders.to_string(),
+    );
     response.values.insert(
         "retry_delivery_hotkey".into(),
         config.general.retry_delivery_hotkey.clone(),
@@ -387,6 +545,72 @@ fn config_show() -> Result<ShellResponse> {
         config.speech.worker_shutdown_grace_ms.to_string(),
     );
     response.values.insert(
+        "speech_provider".into(),
+        match config.speech.provider {
+            simple_stt::config::SpeechProvider::Local => "local",
+            simple_stt::config::SpeechProvider::RemoteOpenAiCompatible => {
+                "remote_openai_compatible"
+            }
+        }
+        .into(),
+    );
+    response.values.insert(
+        "remote_stt_base_url".into(),
+        config.speech.remote_openai_compatible.base_url.clone(),
+    );
+    response.values.insert(
+        "remote_stt_model".into(),
+        config.speech.remote_openai_compatible.model.clone(),
+    );
+    response.values.insert(
+        "remote_stt_fallback_to_local".into(),
+        config
+            .speech
+            .remote_openai_compatible
+            .fallback_to_local
+            .to_string(),
+    );
+    response.values.insert(
+        "remote_stt_timeout_ms".into(),
+        config
+            .speech
+            .remote_openai_compatible
+            .timeout_ms
+            .to_string(),
+    );
+    for (key, seconds) in [
+        (
+            "request_budgets.connect_timeout_secs",
+            reader.request_budgets.connect.as_secs(),
+        ),
+        (
+            "request_budgets.queue_timeout_secs",
+            reader.request_budgets.queue.as_secs(),
+        ),
+        (
+            "request_budgets.cold_model_load_timeout_secs",
+            reader.request_budgets.cold_model_load.as_secs(),
+        ),
+        (
+            "request_budgets.warm_model_load_timeout_secs",
+            reader.request_budgets.warm_model_load.as_secs(),
+        ),
+        (
+            "request_budgets.warm_inference_timeout_secs",
+            reader.request_budgets.warm_inference.as_secs(),
+        ),
+        (
+            "request_budgets.stream_inactivity_timeout_secs",
+            reader.request_budgets.stream_inactivity.as_secs(),
+        ),
+        (
+            "request_budgets.total_timeout_secs",
+            reader.request_budgets.total.as_secs(),
+        ),
+    ] {
+        response.values.insert(key.into(), seconds.to_string());
+    }
+    response.values.insert(
         "start_with_windows".into(),
         config.general.start_at_login.to_string(),
     );
@@ -433,6 +657,15 @@ fn config_show() -> Result<ShellResponse> {
             .as_str()
             .into(),
     );
+    for (key, value) in [
+        ("reader_read_selection", reader.shortcuts.read_selection),
+        ("reader_read_region", reader.shortcuts.read_region),
+        ("reader_copy_region", reader.shortcuts.copy_region),
+        ("reader_listen_clipboard", reader.shortcuts.listen_clipboard),
+        ("reader_read_along", reader.shortcuts.read_along),
+    ] {
+        response.values.insert(key.to_owned(), value);
+    }
     response.values.insert(
         "parakeet_runtime_dir".into(),
         config.speech.runtime_dir.clone(),
@@ -495,6 +728,7 @@ fn config_show() -> Result<ShellResponse> {
     Ok(response)
 }
 fn config_save(input: &Path) -> Result<ShellResponse> {
+    let _config_guard = simple_stt::config::lock_config()?;
     let raw = fs::read_to_string(input).with_context(|| format!("reading {}", input.display()))?;
     let mut config = AppConfig::load()?;
     apply_config_text(&mut config, &raw)?;
@@ -542,6 +776,7 @@ fn apply_bool_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
         return Ok(true);
     }
     let target = match key {
+        "shortcut_reminders" => &mut config.general.shortcut_reminders,
         "hotkey_enabled" => &mut config.general.enabled,
         "paced_typing_enabled" => &mut config.output.paced_typing_enabled,
         "preserve_clipboard" => &mut config.output.preserve_clipboard,
@@ -569,6 +804,7 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
         return true;
     }
     let target = match key {
+        "show_shortcuts_hotkey" => &mut config.general.show_shortcuts_hotkey,
         "retry_delivery_hotkey" => &mut config.general.retry_delivery_hotkey,
         "record_hotkey" => &mut config.general.record_hotkey,
         "toggle_delivery_hotkey" => &mut config.general.toggle_delivery_hotkey,
@@ -767,6 +1003,35 @@ fn write_atomic(path: &Path, body: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn administration_and_legacy_shell_commands_parse() {
+        assert!(Args::try_parse_from(["simple-stt-ctl", "config", "show"]).is_ok());
+        assert!(Args::try_parse_from(["simple-stt-ctl", "assets", "list"]).is_ok());
+        assert!(Args::try_parse_from(["simple-stt-ctl", "ping"]).is_ok());
+        assert!(Args::try_parse_from(["simple-stt-ctl", "media-serve"]).is_ok());
+        assert!(
+            Args::try_parse_from(["simple-stt-ctl", "media", "transcribe", "meeting.wav"]).is_ok()
+        );
+        assert!(Args::try_parse_from([
+            "simple-stt-ctl",
+            "credentials",
+            "set",
+            "speech",
+            "--env",
+            "SPEECH_KEY"
+        ])
+        .is_ok());
+        assert!(Args::try_parse_from([
+            "simple-stt-ctl",
+            "credentials",
+            "set",
+            "stt",
+            "--env",
+            "SIMPLE_STT_STT_API_KEY"
+        ])
+        .is_ok());
+    }
 
     #[test]
     fn decode_config_line_strips_initial_bom() {

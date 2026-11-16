@@ -1,0 +1,46 @@
+[package]
+name = "readerd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+dirs.workspace = true
+cpal = "0.18.2"
+ctrlc = { version = "3.4", features = ["termination"] }
+reader-core = { path = "../reader-core" }
+serde_json.workspace = true
+serde.workspace = true
+base64 = "0.22"
+tiny_http.workspace = true
+hound = "3.5"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+cc = "1"
+embed-resource = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cpal = { version = "0.18.2", features = ["pipewire"] }
+libc = "0.2"
+nix = { version = "0.31.3", features = ["fs"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+ksni = { version = "0.3.6", default-features = false, features = ["async-io", "blocking"] }
+x11rb = { version = "0.13", features = ["xkb", "xfixes"] }
+ashpd = { version = "0.13", default-features = false, features = ["global_shortcuts", "memory_monitor", "screenshot", "remote_desktop", "screencast", "async-io"] }
+futures-lite = "2"
+reis = "0.7.1"
+zbus = { version = "5.19", default-features = false, features = ["async-io"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_DataExchange", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "png", "jpeg", "webp"] }

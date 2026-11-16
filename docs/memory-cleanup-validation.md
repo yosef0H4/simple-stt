@@ -4,7 +4,7 @@
 
 The retired monolith called a native unload path inside the resident Rust process. That may release model state and VRAM but cannot guarantee that every allocator page is returned to Windows. The new cleanup guarantee is worker process exit.
 
-Only `simple-stt-infer.exe` imports `libloading` and loads `parakeet.dll`. `simple-stt-capture.exe` remains resident but does not load the model DLL. After idle timeout or manual unload, capture asks the worker to shut down, waits for its PID to exit, and force-terminates only that child PID if it hangs past `worker_shutdown_grace_ms`. An independent atomic PID tracker keeps that fallback available even when a transcript read is blocked behind the supervisor mutex.
+Only `simple-stt-infer.exe` imports `libloading` and loads `parakeet.dll`. `simple-stt-capture.exe` remains resident but does not load the model DLL. After the idle timeout or manual unload, capture asks the worker to shut down, waits for its PID to exit, and force-terminates only that child PID if it hangs past `worker_shutdown_grace_ms`. An independent atomic PID tracker keeps that fallback available even when a transcript read is blocked behind the supervisor mutex.
 
 ## Repeatable Windows diagnostic
 
@@ -69,3 +69,9 @@ worker logs that process exit is the memory cleanup guarantee
 ```
 
 The Windows diagnostic script is included so observed machine-specific figures can be captured rather than invented.
+
+After ordinary completion, STT, voice, and OCR workers remain reusable until their respective configured idle timeouts. Explicit unload, cancellation, zero timeout, and operating-system memory-pressure handling can release workers earlier. Timers and worker identities prevent stale callbacks from unloading a newer use or process.
+
+## Residency regression scope
+
+Validate with controllable worker children that STT, voice, API voice, and OCR reuse their workers before the configured timeout and exit after it, including a worker whose memory usage exceeds prior fixed thresholds. Check model-switch cache bounds, warm leases, zero timeout, explicit unload, and stale timer callbacks against the exact child PID. Exercise screen selection with a delayed and canceled picker, including cancellation while OCR prewarm holds its gate. Include an end-to-end memory pass on a supported desktop; native Windows behavior and its process-memory measurement are not validated by Linux tests.

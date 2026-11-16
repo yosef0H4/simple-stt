@@ -79,6 +79,12 @@ StartCapture() {
     Assert(WaitForState(), "capture state file was not published")
     response := CallCtl("ping")
     Assert(response["ok"] && response["message"] = "pong", "capture ping failed: " . response["message"])
+    Assert(CallCtl("show-shortcuts")["ok"], "on-demand shortcut tooltip command failed")
+    Assert(CallCtl("refresh-shortcuts")["ok"], "shortcut reminder refresh failed")
+    Assert(CallCtl("begin-delivery --session-id 42")["ok"], "retry delivery registration failed")
+    Assert(CallCtl("delivery-progress --session-id 42 --phase waiting-for-keys")["ok"], "held-key progress failed")
+    Assert(CallCtl("delivery-progress --session-id 42 --phase typing")["ok"], "typing progress failed")
+    Assert(CallCtl("delivery-complete --session-id 42")["ok"], "retry completion failed")
     return response
 }
 

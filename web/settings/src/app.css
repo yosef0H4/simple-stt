@@ -427,10 +427,41 @@ h2 {
   width: 100%;
 }
 .range-value {
+  flex-shrink: 0;
   white-space: nowrap;
   font-size: 12px;
   min-width: 68px;
   font-variant-numeric: tabular-nums;
+}
+.admin-sign-in {
+  width: min(100% - 32px, 360px);
+  margin: min(18vh, 120px) auto 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.admin-sign-in h1 {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+.admin-sign-in > p,
+.admin-sign-in [role="alert"] {
+  color: var(--muted);
+  line-height: 1.5;
+}
+.admin-sign-in form {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+.admin-sign-in input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.admin-sign-in button {
+  justify-self: start;
+  min-height: 36px;
 }
 .field-disabled > .field-copy {
   color: var(--muted);
@@ -785,75 +816,6 @@ dialog::backdrop {
   }
 }
 @media (max-width: 700px) {
-  .app-shell {
-    grid-template-columns: 58px minmax(0, 1fr);
-  }
-  .rail {
-    width: 58px;
-    padding: 22px 7px 12px;
-    gap: 22px;
-    align-items: center;
-  }
-  .brand {
-    padding: 0;
-  }
-  .brand strong,
-  nav span,
-  .service-pill > span {
-    display: none;
-  }
-  nav button {
-    padding: 9px;
-    justify-content: center;
-    gap: 0;
-    width: 40px;
-  }
-  .settings-search {
-    width: 40px;
-  }
-  .settings-search > svg {
-    inset-inline-start: 11px;
-    pointer-events: none;
-  }
-  .settings-search input {
-    width: 40px;
-    padding: 0 !important;
-    color: transparent;
-    border-color: transparent;
-    background: transparent;
-    cursor: pointer;
-  }
-  .settings-search input::placeholder {
-    color: transparent;
-  }
-  .settings-search:focus-within {
-    z-index: 35;
-  }
-  .settings-search:focus-within input {
-    position: absolute;
-    inset-inline-start: 0;
-    width: 250px;
-    padding: 7px 10px !important;
-    background: var(--raised);
-    border-color: var(--line);
-    color: var(--ink);
-    cursor: text;
-  }
-  .settings-search:focus-within > svg {
-    display: none;
-  }
-  .settings-search-results {
-    top: 26px;
-    width: 270px;
-  }
-  .rail-bottom {
-    flex-direction: column;
-    gap: 13px;
-    padding: 0;
-  }
-  .service-pill {
-    height: 12px;
-  }
   .page-head {
     margin-bottom: 24px;
   }
@@ -943,3 +905,31 @@ dialog::backdrop {
     scroll-behavior: auto !important;
   }
 }
+
+.nav-copy {display:flex;flex-direction:column;gap:3px;text-align:start;min-width:0;}
+.nav-copy small {font-size:10px;line-height:1.35;color:var(--muted);font-weight:400;}
+nav button {align-items:flex-start;}
+nav button>svg {margin-top:2px;flex-shrink:0;}
+.page-description {margin:6px 0 0;color:var(--muted);font-size:13px;line-height:1.5;}
+.range-control input[type=range] {flex:1;min-width:40px;}
+.control .range-number {flex:0 0 76px;width:76px;min-width:0;text-align:center;}
+@media (max-width:700px) {
+ .app-shell {display:block;}
+ .rail {position:relative;width:100%;height:auto;padding:14px 16px;gap:12px;align-items:stretch;border-inline-end:0;border-bottom:1px solid var(--line);}
+ .brand {padding:0;}
+ .brand strong {display:block;}
+ .settings-search {width:100%;}
+ .settings-search input,.settings-search:focus-within input {position:static;width:100%;padding:7px 10px 7px 34px!important;color:var(--ink);background:var(--raised);border-color:var(--line);cursor:text;}
+ [dir=rtl] .settings-search input {padding:7px 34px 7px 10px!important;}
+ .settings-search input::placeholder {color:var(--muted);}
+ .settings-search:focus-within>svg {display:block;}
+ .settings-search-results {top:40px;width:100%;}
+ nav {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;}
+ nav button {width:auto;min-width:0;padding:9px 4px;flex-direction:column;align-items:center;gap:5px;}
+ nav .nav-copy,nav .nav-copy>span {display:block;text-align:center;font-size:12px;}
+ nav .nav-copy small {display:none;}
+ .rail-bottom {position:absolute;inset-inline-end:16px;top:14px;flex-direction:row;gap:10px;}
+ main {padding:24px 18px 100px;}
+}
+
+.reading-actions {display:flex;flex-wrap:wrap;gap:8px;margin-block:16px;}

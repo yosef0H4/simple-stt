@@ -29,6 +29,8 @@ const makeConfig = () => ({
     record_hotkey: "CapsLock+S",
     toggle_delivery_hotkey: "CapsLock+D",
     cancel_hotkey: "CapsLock+A",
+    show_shortcuts_hotkey: "CapsLock+H",
+    shortcut_reminders: true,
     retry_delivery_hotkey: "Ctrl+Alt+V",
     toggle_cleanup_hotkey: "None",
     linux_hotkey_backend: "auto",
@@ -37,18 +39,23 @@ const makeConfig = () => ({
     ui_theme: "light",
     ui_language: "auto",
   },
-  audio: { preferred_device_id: "", gain: 1 },
+  audio: { preferred_device_id: "", gain: 1, stop_grace_ms: 250 },
   speech: {
-    inference_device: "auto",
-    runtime_dir: "runtime",
-    model_dir: "models",
-    selection_mode: "single_model",
-    single_model_filename: "missing-saved-model.gguf",
-    language_models: {
-      en: null,
-      ar: "arabic-q8.gguf",
-      fr: "missing-french.gguf",
+    provider: "local",
+    remote_openai_compatible: {
+      base_url: "",
+      model: "",
+      fallback_to_local: true,
+      timeout_ms: 180000,
     },
+    inference_device: "auto",
+    runtime_dir: "",
+    model_dir: "models",
+    selection_mode: "follow_keyboard",
+    single_model_filename: null,
+    language_models: {},
+    language_runtimes: {},
+    language_devices: {},
     idle_worker_timeout_secs: 180,
     worker_shutdown_grace_ms: 2000,
   },
@@ -59,7 +66,7 @@ const makeConfig = () => ({
     linux_delivery_cycle: [],
     app_overrides: [],
     paced_typing_enabled: true,
-    typing_speed_wpm: 80,
+    typing_speed_wpm: 450,
     preserve_clipboard: true,
     trailing_space: true,
     remove_punctuation: false,
@@ -109,6 +116,7 @@ const options = {
 let keyboardRequests = 0;
 let eventSeq = 0;
 const actions = [];
+const modelDownloads = new Map();
 const models = [
   {
     family: "English Q4",
@@ -184,6 +192,7 @@ const models = [
     download_url: "https://models.example.test/en-new",
   },
 ];
+for (const model of models) model.installed = false;
 const eventWaiters = new Set();
 const queuedEvents = [];
 const sendJson = (res, status, value) => {
@@ -204,6 +213,53 @@ const readBody = (req) =>
     req.on("end", () => resolve(text));
     req.on("error", reject);
   });
+let readerConfig = {
+  revision:1,
+  read_along:{prefetch:true,advance_key:"Space",action:"key",delay_ms:900,retry_count:5},
+  request_budgets:{connect_timeout_secs:3,queue_timeout_secs:30,cold_model_load_timeout_secs:180,warm_model_load_timeout_secs:30,warm_inference_timeout_secs:60,stream_inactivity_timeout_secs:60,total_timeout_secs:300},
+  speech:{selection:{mode:"auto_detect",single:{runtime:null,model:null,device:"auto"},languages:{}},provider:{kind:"local_kokoro"},voice:"af_heart",language:"en-us",speed:1,device:"auto",model_dir:"/assets/kokoro",runtime_dir:"/assets/sherpa-cpu",worker_library:null},
+  ocr:{selection:{mode:"single_model",single:{runtime:null,model:null,device:"auto"},languages:{}},provider:{kind:"local_paddle"},language:"en",model_dir:"/assets/paddle-ar-en",runtime_dir:"/assets/sherpa-cpu",device:"auto",idle_timeout_secs:300,worker_library:null},
+  playback:{keep_warm_seconds:300,output_device:null,max_buffer_seconds:8,sentence_gap_ms:120,auto_dismiss_seconds:2},
+  shortcuts:{read_along:"None",read_selection:"Ctrl+Alt+R",read_region:"Ctrl+Alt+O",copy_region:"None",listen_clipboard:"Ctrl+Alt+C"},
+  selection_copy:{backend:"auto",shortcut:"ctrl_insert",allow_clipboard_copy:true,show_clipboard_notice:true},selection_copy_overrides:[],privacy:{hide_text_in_notifications:true},server:{enabled:false,listen:"127.0.0.1:8765",allow_remote:false,max_clients:4,max_text_bytes:1048576,max_image_pixels:20000000},
+};
+const assets = [
+  {id:"parakeet-vulkan",label:"Parakeet · Vulkan",kind:"dictation",bytes:18482077,installed:true,available:true,directory:"/assets/parakeet-vulkan",dependencies:[]},
+  {id:"parakeet-cuda",label:"Parakeet · CUDA",kind:"dictation",bytes:563569811,installed:false,available:true,directory:"/assets/parakeet-cuda",dependencies:[]},
+  {id:"sherpa-cpu",label:"Sherpa ONNX · CPU",kind:"reading",bytes:9816899,installed:true,available:true,directory:"/assets/sherpa-cpu",dependencies:[]},
+  {id:"sherpa-cuda",label:"Sherpa ONNX · CUDA",kind:"reading",bytes:1304247059,installed:false,available:true,directory:"/assets/sherpa-cuda",dependencies:["cuda-cudnn","cuda-cublas","cuda-nvrtc"]},
+  {id:"kokoro",label:"Kokoro · English",kind:"voice",bytes:349886476,installed:true,available:true,directory:"/assets/kokoro",dependencies:[]},
+  {id:"paddle-ar-en",label:"PaddleOCR · Arabic + English",kind:"ocr",bytes:8026538,installed:true,available:true,directory:"/assets/paddle-ar-en",dependencies:[]},
+  {id:"supertonic3",label:"Supertonic 3 · multilingual",kind:"voice",bytes:128774318,installed:false,available:true,directory:"/assets/supertonic3",dependencies:[]},
+];
+for (const asset of assets) asset.installed = false;
+const runtimes = [
+  {id:"parakeet-vulkan",feature:"stt",engine:"parakeet",backend:"vulkan",label:"Parakeet Vulkan",asset:"parakeet-vulkan",directory:"/assets/parakeet-vulkan"},
+  {id:"parakeet-cuda",feature:"stt",engine:"parakeet",backend:"cuda",label:"Parakeet CUDA",asset:"parakeet-cuda",directory:"/assets/parakeet-cuda"},
+  {id:"sherpa-cpu",feature:"tts",engine:"sherpa",backend:"cpu",label:"Sherpa ONNX · CPU",asset:"sherpa-cpu",directory:"/assets/sherpa-cpu"},
+  {id:"sherpa-cuda",feature:"tts",engine:"sherpa",backend:"cuda",label:"Sherpa ONNX · CUDA",asset:"sherpa-cuda",directory:"/assets/sherpa-cuda"},
+  {id:"paddle-cpu",feature:"ocr",engine:"paddleocr",backend:"cpu",label:"Sherpa ONNX · CPU",asset:"sherpa-cpu",directory:"/assets/sherpa-cpu"},
+  {id:"paddle-cuda",feature:"ocr",engine:"paddleocr",backend:"cuda",label:"Sherpa ONNX · CUDA",asset:"sherpa-cuda",directory:"/assets/sherpa-cuda"},
+];
+const moduleModels = [
+  {id:"kokoro",feature:"tts",engine:"sherpa",label:"Kokoro · English",languages:["en"],asset:"kokoro",recommended:true},
+  {id:"supertonic3",feature:"tts",engine:"sherpa",label:"Supertonic 3",languages:["ar","en"],asset:"supertonic3"},
+  {id:"paddle-ar-en",feature:"ocr",engine:"paddleocr",label:"PaddleOCR Arabic + English",languages:["ar","en"],asset:"paddle-ar-en"},
+];
+function inventory() {
+  const recommend = row => options.recommendations && Object.hasOwn(options.recommendations,row.id) ? {...row,recommended:!!options.recommendations[row.id],recommendation:options.recommendations[row.id]} : row;
+  return {runtimes:runtimes.map(r=>recommend({...r,installed:r.asset ? !!assets.find(a=>a.id===r.asset)?.installed : !!r.installed})),models:[...models.map(m=>recommend({id:m.file,feature:"stt",engine:"parakeet",label:m.family,languages:m.languages.map(l=>l.match(/\(([^)]+)\)/)?.[1]).filter(Boolean),installed:m.installed,asset:null,recommended:m.recommended})),...moduleModels.map(m=>recommend({...m,installed:!!assets.find(a=>a.id===m.asset)?.installed}))]};
+}
+function installFixture(id) {
+  const asset=assets.find(a=>a.id===id); const model=models.find(m=>m.file===id); const runtime=runtimes.find(r=>r.id===id);
+  if(asset) {asset.installed=true;const job=assetJobs.find(job=>job.job_id===id);if(job)job.phase='ready';advanceAssetQueue();} else if(model) model.installed=true; else if(runtime) runtime.installed=true; else throw Error(`Unknown fixture ${id}`);
+}
+let assetProgress={id:"",phase:"",downloaded:0,total:0,error:"",queued:[]};
+const assetJobs=[];
+function advanceAssetQueue() {
+  let active=assetJobs.filter(job=>['downloading','verifying','extracting'].includes(job.phase)).length;
+  for(const job of assetJobs) if(job.phase==='queued'&&active<2){job.phase='downloading';active++;}
+}
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://127.0.0.1");
   if (
@@ -212,7 +268,21 @@ const server = http.createServer(async (req, res) => {
   )
     return sendJson(res, 401, { error: "Missing test token" });
   try {
-    if (url.pathname === "/api/state" && req.method === "GET")
+    if(url.pathname==="/api/modules") return sendJson(res,200,inventory());
+    if(url.pathname==="/api/assets") return sendJson(res,200,{assets,progress:assetProgress,jobs:assetJobs,selection_revision:options.selectionRevision||0});
+    if(url.pathname==="/api/asset-action") {
+      const body=JSON.parse(await readBody(req));actions.push(body);
+      if(body.action==="install") {const asset=assets.find(a=>a.id===body.id);assert(asset);let job=assetJobs.find(job=>job.job_id===body.id);if(!job||!['queued','downloading','verifying','extracting'].includes(job.phase)){const next={id:body.id,job_id:body.id,phase:'queued',downloaded:Math.floor(asset.bytes/4),total:asset.bytes,error:'',queued:[]};if(job)Object.assign(job,next);else{job=next;assetJobs.push(job);}advanceAssetQueue();}assetProgress=job;}
+      if(body.action==="cancel") {for(const job of assetJobs)if(!body.id||job.job_id===body.id){job.phase='cancelled';job.error='';}advanceAssetQueue();}
+      if(body.action==="remove") {const asset=assets.find(a=>a.id===body.id);assert(asset);asset.installed=false;}
+      return sendJson(res,200,{ok:true});
+    }
+    if(url.pathname==="/api/provider-discovery") {const body=JSON.parse(await readBody(req));actions.push({action:'provider_discovery',...body});return sendJson(res,200,{models:[{id:'server-model',label:'Server model'}],voices:[{id:'af_bella',label:'Bella',model:'server-model'}],voices_supported:true});}
+    if(url.pathname==="/api/reader") return sendJson(res,200,{config:clone(readerConfig),status:null,speech_key_saved:false,ocr_key_saved:false});
+    if(url.pathname==="/api/reader-status") return sendJson(res,200,{status:null});
+    if(url.pathname==="/api/reader-save") {const body=JSON.parse(await readBody(req));assert.equal(body.expected_revision,readerConfig.revision);readerConfig=body.config;readerConfig.revision++;return sendJson(res,200,{config:clone(readerConfig)});}
+    if(url.pathname==="/api/reader-action") {actions.push(JSON.parse(await readBody(req)));return sendJson(res,200,{message:"Reading started"});}
+    if(url.pathname==="/api/state" && req.method === "GET")
       return sendJson(res, 200, {
         config: clone(serverConfig),
         config_hash: `hash-${configHash}`,
@@ -321,6 +391,8 @@ const server = http.createServer(async (req, res) => {
       if (body.action === "download_model") {
         const model = models.find((entry) => entry.file === body.filename);
         assert(model, `download requested for unknown model ${body.filename}`);
+        const job = {cancelled:false, stop:()=>{}};
+        modelDownloads.set(body.filename,job);
         const progress = {
           seq: ++eventSeq,
           kind: "model_download_progress",
@@ -333,11 +405,12 @@ const server = http.createServer(async (req, res) => {
           queuedEvents.splice(queuedEvents.indexOf(progress), 1);
           waiter.res.end(`data: ${JSON.stringify({ events: [progress] })}\n\n`);
         }
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        model.installed = true;
+        await new Promise(resolve=>{const timer=setTimeout(resolve,options.modelDownloadDelay||800);job.stop=()=>{clearTimeout(timer);resolve();};});
+        modelDownloads.delete(body.filename);
+        if(!job.cancelled) model.installed = true;
         const event = {
           seq: ++eventSeq,
-          kind: "model_download_complete",
+          kind: job.cancelled ? "model_download_cancelled" : "model_download_complete",
           values: { filename: body.filename },
         };
         queuedEvents.push(event);
@@ -348,6 +421,7 @@ const server = http.createServer(async (req, res) => {
           waiter.res.end(`data: ${JSON.stringify({ events: [event] })}\n\n`);
         }
       }
+      if(body.action==='cancel_model_download') {const job=modelDownloads.get(body.filename);if(job){job.cancelled=true;job.stop();}}
       return sendJson(res, 200, { message: `${body.action} completed` });
     }
     if (url.pathname === "/api/events" && req.method === "GET") {
@@ -424,12 +498,20 @@ module.exports = {
   models,
   actions,
   keyboardDiscovery,
+  assets,
+  assetJobs,
+  runtimes,
+  installFixture,
+  inventory,
   makeConfig,
   setConfig(value) {
     serverConfig = value;
   },
   getConfig() {
     return serverConfig;
+  },
+  getReaderConfig() {
+    return readerConfig;
   },
   getKeyboardRequests() {
     return keyboardRequests;

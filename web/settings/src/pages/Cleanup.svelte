@@ -15,6 +15,7 @@
   import IconButton from "../components/IconButton.svelte";
   import type { Reasoning } from "../lib/types";
   import { t } from "../lib/i18n";
+  let { section = "behavior" }: { section?: "provider" | "behavior" } = $props();
   let key = $state(""),
     test = $state("uh hello jason no sorry Jayson comma this is a test"),
     result = $state(""),
@@ -71,12 +72,8 @@
   }
 </script>
 
-<Group
-  title="ui.ai_cleanup.05cb5b"
-  icon="cleanup"
-  paths={["cleanup.enabled", "cleanup.provider"]}
-  ><Field spec={fields.cleanup} /><Field spec={fields.provider} /></Group
->
+{#if section === "provider"}
+<Group title="ui.connection.6512ee" icon="connect" paths={["cleanup.provider"]}><Field spec={fields.provider}/></Group>
 <Group
   title="ui.connection.6512ee"
   icon="connect"
@@ -158,18 +155,7 @@
       />{/snippet}</Combo
   >
 </Group>
-<Group
-  title="ui.text_cleanup.52f093"
-  icon="text"
-  paths={[
-    "cleanup.prompt",
-    "cleanup.timeout_ms",
-    "cleanup.max_output_tokens",
-    "cleanup.openai_compatible.reasoning_effort",
-    "cleanup.chatgpt.reasoning_effort",
-  ]}
->
-  <Field
+<Group title="settings.model_options" icon="models">  <Field
     spec={{
       path: reasoningPath,
       label: "Reasoning",
@@ -184,6 +170,20 @@
       ] as [Reasoning, string][],
     }}
   />
+</Group>
+{:else}
+<Group title="ui.ai_cleanup.05cb5b" icon="cleanup" paths={["cleanup.enabled"]}><Field spec={fields.cleanup}/></Group>
+<Group
+  title="ui.text_cleanup.52f093"
+  icon="text"
+  paths={[
+    "cleanup.prompt",
+    "cleanup.timeout_ms",
+    "cleanup.max_output_tokens",
+    "cleanup.openai_compatible.reasoning_effort",
+    "cleanup.chatgpt.reasoning_effort",
+  ]}
+>
   {#each ["timeout", "tokens", "prompt"] as key}<Field
       spec={fields[key]}
     />{/each}
@@ -246,3 +246,5 @@
       />
     </article>{:else}<p class="empty">{t("ui.no_cleaned_dictation_yet.2380b4")}</p>{/each}
 </Group>
+
+{/if}

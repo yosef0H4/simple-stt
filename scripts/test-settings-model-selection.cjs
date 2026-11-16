@@ -1,491 +1,83 @@
-const assert = require("node:assert/strict");
-const fs = require("node:fs");
-const path = require("node:path");
-const { chromium } = require("playwright");
-const f = require("./settings-fixture.cjs");
-const { server, token, models, actions, keyboardDiscovery, makeConfig } = f;
-(async () => {
+const assert = require('node:assert/strict');
+const {chromium} = require('playwright');
+const f = require('./settings-fixture.cjs');
+(async()=>{
   let browser;
   try {
-    models.find((model) => model.file === "english-q4.gguf").recommended = true;
-    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    browser = await chromium.launch({ headless: true });
-    const page = await browser.newPage({
-      viewport: { width: 360, height: 820 },
-    });
-    const pageErrors = [];
-    page.on("pageerror", (error) => pageErrors.push(error.message));
-    await page.goto(`http://127.0.0.1:${address.port}/#token=${token}`);
-    await page.getByRole("heading", { name: "General" }).waitFor();
-    assert.equal(
-      f.getKeyboardRequests(),
-      1,
-      "settings should call the authenticated keyboard language discovery endpoint",
-    );
-    await page.locator('nav button[data-page="audio"]').click();
-    const mode = page.locator(
-      '[data-setting-path="speech.selection_mode"] select',
-    );
-    assert.equal(await mode.inputValue(), "single_model");
-    assert(
-      await mode
-        .locator("option")
-        .allTextContents()
-        .then((texts) => texts.includes("Use one model")),
-    );
-    const singleModel = page.locator(
-      '[data-setting-path="speech.single_model_filename"] .combo-input',
-    );
-    assert.match(
-      await singleModel.inputValue(),
-      /Unavailable · missing-saved-model\.gguf/,
-    );
-    assert.equal(
-      await page
-        .locator(
-          '[data-setting-path="speech.single_model_filename"] [data-model-test="true"]',
-        )
-        .isDisabled(),
-      true,
-    );
-
-    await mode.selectOption("follow_keyboard");
-    const { modelItems, orderModels, recommendedModel } =
-      await import("../web/settings/src/lib/models.ts");
-    const rankingModels = [
-      {
-        file: "z-compatible-recommended.gguf",
-        quant: "Q4",
-        recommended: true,
-        size_mb: 300,
-        installed: true,
-        languages: ["English (en)"],
-      },
-      {
-        file: "a-unrelated-recommended.gguf",
-        quant: "Q8",
-        recommended: true,
-        size_mb: 50,
-        installed: true,
-        languages: ["Arabic (ar)"],
-      },
-      {
-        file: "b-compatible-standard.gguf",
-        quant: "Q8",
-        recommended: false,
-        size_mb: 50,
-        installed: true,
-        languages: ["English (en)"],
-      },
-    ];
-    assert.deepEqual(
-      orderModels(rankingModels, { id: "en", name: "English" }).map(
-        (model) => model.file,
-      ),
-      [
-        "z-compatible-recommended.gguf",
-        "a-unrelated-recommended.gguf",
-        "b-compatible-standard.gguf",
-      ],
-      "recommendation ranks first and language relevance breaks ties within each group",
-    );
-    assert.deepEqual(
-      modelItems(rankingModels, { id: "en", name: "English" }).map(
-        (item) => item.value,
-      ),
-      [
-        "",
-        "z-compatible-recommended.gguf",
-        "a-unrelated-recommended.gguf",
-        "b-compatible-standard.gguf",
-      ],
-      "None stays first while the selector preserves recommendation-first order",
-    );
-    assert.equal(
-      recommendedModel(rankingModels, { id: "en", name: "English" })?.file,
-      "z-compatible-recommended.gguf",
-    );
-
-    if (process.env.SETTINGS_MODEL_ORDER_SCREENSHOTS) {
-      const directory = path.resolve("artifacts/model-recommendation");
-      fs.mkdirSync(directory, { recursive: true });
-      await page.setViewportSize({ width: 1280, height: 900 });
-      for (const [language, recommended] of [
-        ["en", "English Q4"],
-        ["ar", "Arabic Q8"],
-      ]) {
-        const input = page.locator(
-          `[data-setting-path="speech.language_models.${language}"] .combo-input`,
-        );
-        await input.click();
-        const list = page.locator(
-          `[data-combo-list="speech.language_models.${language}"]`,
-        );
-        const options = list.getByRole("option");
-        await options.first().waitFor();
-        const labels = await options.allTextContents();
-        assert.match(labels[0], /^None/);
-        assert.match(labels[1], new RegExp(recommended));
-        await list.screenshot({
-          path: path.join(directory, `${language}-recommended-first.png`),
-        });
-        await input.press("Escape");
+    for (const id of ['parakeet-vulkan','english-q4.gguf','english-q8.gguf','arabic-q8.gguf']) f.installFixture(id);
+    await new Promise(resolve=>f.server.listen(0,'127.0.0.1',resolve));
+    browser=await chromium.launch({headless:true});
+    const page=await browser.newPage({viewport:{width:360,height:820}});
+    const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(`http://127.0.0.1:${f.server.address().port}/#token=${f.token}`);
+    const go=async(name)=>{
+      if(name==='config'){
+        await page.locator('[data-page=advanced]').click();
+        await page.locator('[data-settings-json]').evaluate(element=>element.open=true);
+        return;
       }
-    }
-
-    const draft = async () => {
-      const active = await page
-        .locator('nav button[aria-current="page"]')
-        .getAttribute("data-page");
-      await page.locator('nav button[data-page="config"]').click();
-      const value = JSON.parse(await page.locator("#json").inputValue());
-      await page.locator(`nav button[data-page="${active}"]`).click();
-      return value;
+      await page.locator(`[data-page=${name}]`).click();
     };
-    let current = await draft();
-    assert.equal(
-      current.speech.language_models.en,
-      null,
-      "explicit None must not be replaced while entering follow mode",
-    );
-    assert.equal(
-      current.speech.language_models.ar,
-      "arabic-q8.gguf",
-      "existing assignments must survive mode changes",
-    );
-    assert.equal(
-      current.speech.language_models.es,
-      "spanish-recommended-q4.gguf",
-      "recommended compatible model should outrank Q8",
-    );
-    assert.equal(
-      current.speech.language_models.it,
-      "italian-q8.gguf",
-      "Q8 should outrank smaller compatible models when none is recommended",
-    );
-    await page
-      .getByRole("button", { name: /Refresh keyboard languages/ })
-      .click();
-    await page
-      .locator('[data-setting-path="speech.language_models.it"]')
-      .waitFor();
-    assert.equal(
-      f.getKeyboardRequests(),
-      2,
-      "explicit discovery refresh should call the keyboard language endpoint again",
-    );
-    assert.equal(
-      (await draft()).speech.language_models.en,
-      null,
-      "discovery refresh should preserve explicit None",
-    );
-
-    const tieWinner = recommendedModel(
-      [
-        {
-          file: "b.gguf",
-          quant: "Q8",
-          recommended: false,
-          size_mb: 100,
-          installed: true,
-          languages: ["Slovak (sk)"],
-        },
-        {
-          file: "a.gguf",
-          quant: "Q8",
-          recommended: false,
-          size_mb: 100,
-          installed: true,
-          languages: ["Slovak (sk)"],
-        },
-        {
-          file: "large.gguf",
-          quant: "Q8",
-          recommended: false,
-          size_mb: 110,
-          installed: true,
-          languages: ["Slovak (sk)"],
-        },
-      ],
-      { id: "sk" },
-    ).file;
-    assert.equal(
-      tieWinner,
-      "a.gguf",
-      "size and filename provide deterministic ties",
-    );
-    keyboardDiscovery.languages = keyboardDiscovery.languages.filter(
-      (language) => language.id !== "ar",
-    );
-    keyboardDiscovery.languages.push(
-      { id: "de", name: "German" },
-      { id: "xkb:unknown:variant", name: "Unknown layout" },
-    );
-    await page
-      .getByRole("button", { name: "Refresh keyboard languages" })
-      .click();
-    await page
-      .locator('[data-setting-path="speech.language_models.de"]')
-      .waitFor();
-    current = await draft();
-    assert.equal(
-      current.speech.language_models.de,
-      null,
-      "unmatched languages receive None",
-    );
-    assert.equal(
-      current.speech.language_models["xkb:unknown:variant"],
-      null,
-      "unidentified layouts receive None",
-    );
-    assert.equal(
-      current.speech.language_models.ar,
-      "arabic-q8.gguf",
-      "removed languages retain assignments",
-    );
-    keyboardDiscovery.languages.push({ id: "ar", name: "Arabic" });
-    await page
-      .getByRole("button", { name: "Refresh keyboard languages" })
-      .click();
-    await page
-      .locator('[data-setting-path="speech.language_models.ar"] .combo-input')
-      .waitFor();
-
-    const italian = page.locator(
-      '[data-setting-path="speech.language_models.it"] .combo-input',
-    );
-    await italian.click();
-    await italian.fill("Italian Q4");
-    await italian.press("ArrowDown");
-    await page.keyboard.press("Enter");
-    current = await draft();
-    assert.equal(
-      current.speech.language_models.it,
-      "italian-q4.gguf",
-      "keyboard navigation should select the highlighted installed model",
-    );
-
-    const english = page.locator(
-      '[data-setting-path="speech.language_models.en"] .combo-input',
-    );
-    await english.click();
-    await english.fill("an-unlisted-custom-filename.gguf");
-    await english.press("Tab");
-    current = await draft();
-    assert.equal(
-      current.speech.language_models.en,
-      null,
-      "typing and blurring an arbitrary filename must not save it",
-    );
-
-    const arabic = page.locator(
-      '[data-setting-path="speech.language_models.ar"] .combo-input',
-    );
-    await arabic.click();
-    await arabic.fill("English Q8");
-    const englishQ8 = page.getByRole("option", { name: /English Q8/ });
-    assert.equal(
-      await englishQ8.count(),
-      1,
-      "search should find installed models by label and metadata",
-    );
-    await englishQ8.click();
-    current = await draft();
-    assert.equal(
-      current.speech.language_models.ar,
-      "english-q8.gguf",
-      "mouse selection should update the draft assignment",
-    );
-    await arabic.click();
-    await arabic.fill("English New");
-    assert.equal(
-      await page.getByRole("option", { name: /English New Q8/ }).count(),
-      0,
-      "uninstalled models must not appear in assignment selectors",
-    );
-    await arabic.press("Escape");
-
-    const removed = page.locator(".removed-keyboard-languages");
-    assert.equal(
-      await removed.locator("summary").innerText(),
-      "Other languages (1)",
-    );
-    await removed.locator("summary").click();
-    assert.match(
-      await removed.locator(".combo-input").inputValue(),
-      /Unavailable · missing-french\.gguf/,
-    );
-
-    await page.locator('nav button[data-page="models"]').click();
-    const catalogSearch = page.locator("#model-search");
-
-    await catalogSearch.fill("Spanish");
-    const spanishResults = page.locator("#model-results .model-result .model-copy strong");
-    assert.equal(await spanishResults.first().innerText(), "Spanish Q4");
-    assert.equal(await spanishResults.nth(1).innerText(), "Spanish Q8");
-    await catalogSearch.fill("");
-
-    await page.getByRole("button", { name: "Refresh model catalog" }).click();
-    await page.locator("#model-results .model-result").first().waitFor();
-    assert.equal(
-      (await draft()).speech.language_models.en,
-      null,
-      "catalog refresh should preserve explicit None",
-    );
-    await catalogSearch.fill("Arabic Q8");
-    const savedArabicRemove = page.getByRole("button", {
-      name: "Remove Arabic Q8 Q8",
-    });
-    assert.equal(
-      await savedArabicRemove.isDisabled(),
-      true,
-      "saved assignment must guard removal even after the draft changed",
-    );
-    assert.match(await savedArabicRemove.getAttribute("title"), /Arabic/);
-
-    await catalogSearch.fill("English New Q8");
-    await page.getByRole("button", { name: "Download English New Q8" }).click();
-    await page.waitForFunction(
-      () => document.querySelector(".download-progress")?.value === 50,
-    );
-    assert(
-      await page
-        .getByRole("button", { name: "Downloading English New Q8" })
-        .isDisabled(),
-    );
-    current = await draft();
-    assert.equal(
-      current.speech.language_models.en,
-      null,
-      "installation and event refresh must preserve explicit None",
-    );
-    const removeNewModel = page.getByRole("button", {
-      name: /Remove English New Q8/,
-    });
-    await removeNewModel.waitFor({ timeout: 8000 });
-    assert.equal(await removeNewModel.isEnabled(), true);
-
-    await page.locator('nav button[data-page="audio"]').click();
-    await page.locator("#savebar button[type=submit]").click();
-    await page.getByText("Saved and applied.").waitFor();
-    assert.equal(
-      f.getConfig().speech.language_models.en,
-      null,
-      "Save should preserve explicit None",
-    );
-    assert.equal(f.getConfig().speech.language_models.ar, "english-q8.gguf");
-
-    await page.locator('nav button[data-page="config"]').click();
-    await page.getByRole("button", { name: "Reset preview" }).click();
-    await page.waitForFunction(
-      () =>
-        JSON.parse(document.querySelector("#json").value).speech
-          .selection_mode === "single_model",
-    );
-    assert.equal(
-      (await draft()).speech.selection_mode,
-      "single_model",
-      "Reset should preview defaults",
-    );
-    await page.locator("#savebar button[type=submit]").click();
-    await page.getByText("Saved and applied.").waitFor();
-    const importConfig = makeConfig();
-    importConfig.speech.selection_mode = "follow_keyboard";
-    importConfig.speech.language_models = { en: null, ar: "arabic-q8.gguf" };
-    await page.locator("#import-file").setInputFiles({
-      name: "model-selection-import.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(importConfig)),
-    });
-    await page.getByText("Import previewed. Save to write it.").waitFor();
-    current = await draft();
-    assert.equal(current.speech.selection_mode, "follow_keyboard");
-    assert.equal(
-      current.speech.language_models.en,
-      null,
-      "Import preview should preserve explicit None",
-    );
-
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth > window.innerWidth,
-    );
-    assert.equal(
-      overflow,
-      false,
-      "narrow settings layout should not overflow horizontally",
-    );
-    assert.deepEqual(
-      pageErrors,
-      [],
-      `browser errors: ${pageErrors.join("; ")}`,
-    );
-    assert(
-      actions.some(
-        (entry) =>
-          entry.action === "download_model" &&
-          entry.filename === "english-new-q8.gguf",
-      ),
-    );
-    keyboardDiscovery.available = false;
-    keyboardDiscovery.message =
-      "Keyboard language detection unavailable on this desktop";
-    await page.reload();
-    await page.locator('[data-setting-path="general.enabled"]').waitFor();
-    await page.locator('button[data-page="audio"]').click();
-    await page
-      .locator('[data-setting-path="speech.selection_mode"] select')
-      .selectOption("single_model");
-    await page.waitForFunction(
-      () =>
-        document.querySelector(
-          '[data-setting-path="speech.selection_mode"] option[value="follow_keyboard"]',
-        )?.disabled === true,
-    );
-    assert(
-      await page
-        .getByRole("status")
-        .filter({ hasText: "Keyboard detection unavailable" })
-        .isVisible(),
-    );
-    if (process.env.SETTINGS_TEST_SCREENSHOT) {
-      keyboardDiscovery.available = true;
-      keyboardDiscovery.message = "";
-      keyboardDiscovery.languages = [
-        { id: "ar", name: "Arabic" },
-        { id: "en", name: "English" },
-      ];
-      f.setConfig(makeConfig());
-      f.getConfig().general.ui_theme = "dark";
-      f.getConfig().speech.selection_mode = "follow_keyboard";
-      f.getConfig().speech.inference_device = "gpu";
-      models.find((model) => model.file === "arabic-q8.gguf").family =
-        "Lemura Arabic ASR Lite";
-      models.find((model) => model.file === "arabic-q8.gguf").quant = "q8_0";
-      models.find((model) => model.file === "english-q8.gguf").family =
-        "tdt-ctc110m";
-      models.find((model) => model.file === "english-q8.gguf").quant = "q8_0";
-      f.getConfig().speech.language_models = {
-        ar: "arabic-q8.gguf",
-        en: "english-q8.gguf",
-      };
-      await page.setViewportSize({ width: 1280, height: 900 });
-      await page.reload();
-      await page.locator('[data-setting-path="general.enabled"]').waitFor();
-      await page.locator('nav button[data-page="audio"]').click();
-      await page
-        .locator("main")
-        .screenshot({ path: process.env.SETTINGS_TEST_SCREENSHOT });
-    }
-    console.log(
-      "PASS settings model selection: discovery, ranking, combos, None preservation, import/reset/save, guarded removal, and narrow layout",
-    );
-  } finally {
-    await browser?.close();
-    f.closeEvents();
-    await new Promise((resolve) => server.close(resolve));
-  }
-})().catch((error) => {
-  console.error(error.stack || error);
-  process.exitCode = 1;
-});
+    await go('audio');
+    assert.equal(await page.locator('#stt-mode, .engine-assignment[data-module="stt"]').count(),0,'dictation controls do not duplicate model assignments');
+    await go('models');
+    await page.locator('[data-catalog-feature=stt]').click();
+    assert.equal(await page.locator('#stt-mode').inputValue(),'follow_keyboard');
+    const draft=async()=>{await go('config');const value=JSON.parse(await page.locator('#json').inputValue());await go('models');await page.locator('[data-catalog-feature=stt]').click();return value;};
+    const {modelItems,orderModels,recommendedModel}=await import('../web/settings/src/lib/models.ts');
+    const ranked=[{file:'z.gguf',quant:'Q4',recommended:true,size_mb:300,installed:true,languages:['English (en)']},{file:'a.gguf',quant:'Q8',recommended:true,size_mb:50,installed:true,languages:['Arabic (ar)']},{file:'b.gguf',quant:'Q8',recommended:false,size_mb:50,installed:true,languages:['English (en)']}];
+    assert.deepEqual(orderModels(ranked,{id:'en',name:'English'}).map(m=>m.file),['z.gguf','a.gguf','b.gguf']);
+    assert.equal(modelItems(ranked,{id:'en',name:'English'})[0].value,'');
+    assert.equal(recommendedModel(ranked,{id:'en',name:'English'}).file,'z.gguf');
+    let config=await draft();
+    assert.deepEqual(config.speech.language_models,{},'discovery must not assign models');
+    assert.equal(config.speech.provider,'local');
+    assert.deepEqual(config.speech.remote_openai_compatible,{base_url:'',model:'',fallback_to_local:true,timeout_ms:180000});
+    const choose=async(path,query,option)=>{const input=page.locator(`[data-setting-path="${path}"] .combo-input`);await input.click();await input.fill(query);await page.locator(`[data-combo-list="${path}"]`).getByRole('option',{name:option}).click();};
+    assert.equal(await page.locator('.engine-assignment[data-module=stt]').count(),1);
+    assert.equal(await page.locator('[id="stt.ar.device"]').count(),0);
+    await choose('stt.edit-language','Arabic',/^Arabic$/);
+    assert.equal(await page.locator('[id="stt.en.device"]').count(),0);
+    await choose('stt.edit-language','English',/^English$/);
+    await choose('stt.en.runtime','Vulkan',/^GPU$/);
+    await choose('stt.en.model','English Q8',/English Q8/);
+    await choose('stt.en.device','GPU',/^GPU$/);
+    config=await draft();
+    assert.equal(config.speech.language_models.en,'english-q8.gguf');
+    assert.equal(config.speech.language_runtimes.en,'parakeet-vulkan');
+    assert.equal(config.speech.language_devices.en,'gpu');
+    assert.equal(config.speech.language_models.ar,undefined,'other languages stay unassigned');
+    const input=page.locator('[data-setting-path="stt.en.model"] .combo-input');
+    await input.click();await input.fill('English Q4');await input.press('ArrowDown');await input.press('Enter');
+    assert.equal((await draft()).speech.language_models.en,'english-q4.gguf','keyboard selects a model immediately');
+    await input.click();await input.fill('arbitrary.gguf');await input.press('Tab');
+    assert.equal((await draft()).speech.language_models.en,'english-q4.gguf','arbitrary input is not committed');
+    await choose('stt.en.model','None',/^None/);
+    assert.equal((await draft()).speech.language_models.en,null,'None is explicit');
+    await page.getByRole('button',{name:/Refresh keyboard languages/}).click();
+    assert.equal((await draft()).speech.language_models.en,null,'refresh preserves None');
+    await choose('speech.provider','OpenAI',/OpenAI-compatible/);
+    await page.locator('#stt-base_url').fill('https://stt.example.test/v1');
+    await page.locator('[data-setting-path="stt-remote-model"] .combo-input').fill('transcription-model');await page.keyboard.press('Tab');
+    assert(await page.locator('#stt-fallback').isChecked(),'remote STT defaults to local fallback');
+    config=await draft();
+    assert.equal(config.speech.provider,'remote_openai_compatible');
+    assert.deepEqual(config.speech.remote_openai_compatible,{base_url:'https://stt.example.test/v1',model:'transcription-model',fallback_to_local:true,timeout_ms:180000});
+    await choose('speech.provider','Local',/Local models/);
+    assert.equal((await draft()).speech.language_models.en,null,'switching provider preserves explicit local assignments');
+    await page.locator('#savebar button[type=submit]').click();
+    await page.getByText('Saved and applied.').waitFor();
+    assert.equal(f.getConfig().speech.language_models.en,null);
+    await go('config');await page.getByRole('button',{name:'Reset preview'}).click();
+    await page.waitForFunction(()=>{const value=JSON.parse(document.querySelector('#json').value);return value.speech.selection_mode==='follow_keyboard'&&Object.keys(value.speech.language_models||{}).length===0;});
+    assert.deepEqual(JSON.parse(await page.locator('#json').inputValue()).speech.language_models,{});
+    const imported=f.makeConfig();imported.speech.language_models={en:null,ar:'arabic-q8.gguf'};
+    await page.locator('#import-file').setInputFiles({name:'settings.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(imported))});
+    await page.getByText('Import previewed. Save to write it.').waitFor();
+    const preview=JSON.parse(await page.locator('#json').inputValue());
+    assert.deepEqual(preview.speech.language_models,imported.speech.language_models,'import preserves explicit assignments');
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    assert.deepEqual(errors,[]);
+    console.log('PASS model selection: empty defaults, draft bindings, keyboard, None, refresh, save, reset and import');
+  } finally {await browser?.close();f.closeEvents();await new Promise(resolve=>f.server.close(resolve));}
+})().catch(e=>{console.error(e.stack||e);process.exitCode=1;});

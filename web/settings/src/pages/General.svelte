@@ -1,6 +1,12 @@
 <script lang="ts">
-  import { ui, platformAction, run, set } from "../lib/state.svelte";
+  import { ui, platformAction, run, set, markDirty } from "../lib/state.svelte";
   import { t } from "../lib/i18n";
+  import { onMount } from "svelte";
+  import { api } from "../lib/api";
+  import { loadReading, reading } from "../lib/reading-state.svelte";
+  import type { ReaderConfig } from "../lib/reader";
+  let { section = "system" }: { section?: "system" | "dictation" | "reading" } = $props();
+  onMount(() => { void loadReading().catch(() => {}); });
   import { fields, hotkeys } from "../lib/settings";
   import Group from "../components/Group.svelte";
   import Field from "../components/Field.svelte";
@@ -33,12 +39,7 @@
 <Group
   title="ui.shortcuts.90c935"
   icon="keyboard"
-  paths={[
-    "general.enabled",
-    "general.recording_mode",
-    "general.linux_hotkey_backend",
-    ...hotkeys.map(([p]) => p),
-  ]}
+  paths={section === "system" ? ["general.enabled","general.shortcut_reminders","general.linux_hotkey_backend"] : section === "dictation" ? ["general.recording_mode",...hotkeys.map(([path])=>path)] : []}
 >
   {#snippet actions()}{#if ui.state?.platform === "linux"}<IconButton
         icon="refresh"
@@ -52,14 +53,18 @@
         onclick={() => run(configureShortcuts)}
       ><Icon name="keyboard" size={15} /><span>{t("ui.set_up_shortcuts.a104f9")}</span></button
       >{/if}{/snippet}
-  <Field spec={fields.enabled} />
+  {#if section === "system"}<Field spec={fields.enabled} />
+  <Field spec={fields.shortcutReminders} />
+  <button type="button" class="quiet" onclick={() => run(() => platformAction("show_shortcuts"))}>{t("ui.show_shortcuts")}</button>
+  {/if}
+  {#if section === "dictation"}
   {#if ui.state?.platform === "linux"}
     <Field spec={fields.shortcutSystem} />
     {#if backend === "x11"}{#each hotkeys as [path, label]}<Shortcut
           {path}
           {label}
         />{/each}
-    {:else if backend === "portal"}{#each ["record", "cancel", "delivery", "cleanup", "retry"] as id, i}<div
+    {:else if backend === "portal"}{#each ["record", "cancel", "delivery", "cleanup", "retry", "shortcuts"] as id, i}<div
           class="field"
           data-setting-path={`linux.shortcut.${id}`}
         >
@@ -67,7 +72,7 @@
           >{ui.state.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output
           >
         </div>{/each}
-    {:else}{#each ["toggle", "cancel", "cycle-delivery", "toggle-cleanup", "retry-delivery"] as command, i}<div
+    {:else}{#each ["toggle", "cancel", "cycle-delivery", "toggle-cleanup", "retry-delivery", "show-shortcuts"] as command, i}<div
           class="field"
         >
           <span>{t(hotkeys[i][1])}</span><code>simple-stt-linux {command}</code>
@@ -95,7 +100,20 @@
   {:else}<Field
       spec={fields.recordingMode}
     />{#each hotkeys as [path, label]}<Shortcut {path} {label} />{/each}{/if}
+  {/if}
+  {#if section === "reading"}
+  {#if ui.state?.platform === "linux" && backend === "portal"}
+    {#each [["read-selection","read_selection"],["read-region","read_region"],["copy-region","copy_region"],["listen-clipboard","listen_clipboard"],["read-along","read_along"]] as [id,key]}
+      <div class="field" data-setting-path={`reader.shortcuts.${key}`}><span>{t(`reading.${key}`)}</span><output>{ui.state?.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output></div>
+    {/each}
+  {:else if reading.config}
+    {#each ["read_selection","read_region","copy_region","listen_clipboard","read_along"] as key}
+      <div class="field" data-setting-path={`reader.shortcuts.${key}`}><label for={`reader-shortcut-${key}`}>{t(`reading.${key}`)}</label><div class="control"><input id={`reader-shortcut-${key}`} dir="ltr" value={reading.config.shortcuts[key as keyof typeof reading.config.shortcuts]} oninput={(e)=>{if(reading.config){reading.config.shortcuts[key as keyof typeof reading.config.shortcuts]=e.currentTarget.value;markDirty();}}} /></div></div>
+    {/each}
+  {/if}
+  {/if}
 </Group>
+{#if section === "system"}
 <Group
   title="ui.system.bc0792"
   icon="system"
@@ -118,6 +136,7 @@
   /><Field spec={fields.theme} />
 </Group>
 
+{/if}
 <style>
   .shortcut-setup {
     display: inline-flex;

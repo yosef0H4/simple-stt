@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Simple STT Read Along Capture
+Comment=KWin screenshot permission for Simple STT read-along
+Exec=/usr/lib/simple-stt/readerd
+NoDisplay=true
+Terminal=false
+X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2

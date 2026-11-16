@@ -8,6 +8,7 @@ python3 -c 'import shutil; [shutil.rmtree("/work/build/" + name, ignore_errors=T
 mkdir -p "$work/src" "$work/out"
 tar -C "$source_dir" -cf - . | tar -C "$work/src" -xf -
 cd "$work/src"
+python3 scripts/prepare-linux-package-source.py "$work/src"
 
 npm --prefix web/settings ci
 npm --prefix web/settings run build
@@ -20,56 +21,40 @@ test -x resources/bin/linux-fast-paste
 nm -D resources/bin/linux-fast-paste > "$work/linux-fast-paste.symbols"
 grep -q atspi_ "$work/linux-fast-paste.symbols"
 grep -q g_dbus_ "$work/linux-fast-paste.symbols"
-grep -q XTestFakeKeyEvent "$work/linux-fast-paste.symbols"
+! grep -q XTestFakeKeyEvent "$work/linux-fast-paste.symbols"
 cargo +1.99.0 build --release --locked --jobs "${CARGO_BUILD_JOBS:-2}" \
   --bin simple-stt-linux --bin simple-stt-capture --bin simple-stt-infer \
-  --bin simple-stt-ctl --bin simple-stt-settings
-
-runtime_dir="$work/parakeet"
-mkdir -p "$runtime_dir"
-if [[ ! -s "$runtime_dir/runtime.tar.gz" ]]; then
-  curl -fL \
-    https://github.com/mudler/parakeet.cpp/releases/download/v0.5.0/parakeet-v0.5.0-lib-linux-vulkan-x64.tar.gz \
-    -o "$runtime_dir/runtime.tar.gz"
-fi
-echo 'a8e7a5af6ef82088a71b0e34708c31bf6ab9f69624bcd2cff2ad7e8c11e7e494  '"$runtime_dir/runtime.tar.gz" | sha256sum -c -
-tar -xzf "$runtime_dir/runtime.tar.gz" -C "$runtime_dir"
-upstream="$runtime_dir/parakeet-v0.5.0-lib-linux-vulkan-x64"
-test -s "$upstream/libparakeet.so"
-test -s "$upstream/LICENSE"
+  --bin simple-stt-ctl --bin simple-stt-settings --bin reader-hud
+cargo +1.99.0 build --release --locked --jobs "${CARGO_BUILD_JOBS:-2}" \
+  -p readerd -p readerctl -p reader-tts -p reader-ocr
 
 stage="$work/stage"
 app="$stage/usr/lib/simple-stt"
-mkdir -p "$stage/usr/bin" "$app/runtime/bin" \
+mkdir -p "$stage/usr/bin" "$app" \
   "$stage/usr/share/applications" \
   "$stage/usr/share/icons/hicolor/scalable/apps" \
   "$stage/usr/lib/systemd/user" "$stage/usr/share/licenses/simple-stt"
 install -m 0755 packaging/linux/simple-stt "$stage/usr/bin/simple-stt"
-for binary in simple-stt-linux simple-stt-capture simple-stt-infer simple-stt-ctl simple-stt-settings; do
+for binary in simple-stt-linux simple-stt-capture simple-stt-infer simple-stt-ctl simple-stt-settings readerd readerctl reader-tts reader-ocr reader-hud; do
   install -m 0755 "$CARGO_TARGET_DIR/release/$binary" "$app/$binary"
 done
 install -m 0755 resources/bin/linux-fast-paste "$app/linux-fast-paste"
-install -m 0755 "$upstream/libparakeet.so" "$app/runtime/bin/libparakeet.so"
+install -D -m 0644 fixtures/parakeet-smoke.wav "$app/fixtures/parakeet-smoke.wav"
+install -D -m 0644 fixtures/asr/arabic-sa.wav "$app/fixtures/asr/arabic-sa.wav"
 install -m 0644 packaging/linux/io.github.yosef0H4.simple_stt.desktop "$stage/usr/share/applications/"
 install -m 0644 packaging/linux/simple-stt-settings.desktop "$stage/usr/share/applications/"
+install -m 0644 packaging/linux/simple-stt-readerd.desktop "$stage/usr/share/applications/"
 install -m 0644 packaging/linux/simple-stt.svg "$stage/usr/share/icons/hicolor/scalable/apps/"
 install -m 0644 packaging/linux/simple-stt-linux.service "$stage/usr/lib/systemd/user/"
 install -m 0644 LICENSE "$stage/usr/share/licenses/simple-stt/"
 install -m 0644 THIRD_PARTY_NOTICES.md "$stage/usr/share/licenses/simple-stt/"
-install -m 0644 "$upstream/LICENSE" "$stage/usr/share/licenses/simple-stt/parakeet-MIT"
-install -m 0644 packaging/linux/parakeet-runtime.txt "$stage/usr/share/licenses/simple-stt/"
+install -m 0644 assets/catalog/downloads.json "$app/downloads.json"
+install -m 0644 assets/language/lid.176.ftz "$app/lid.176.ftz"
+install -m 0644 assets/language/LICENSE-CC-BY-SA-3.0.txt "$stage/usr/share/licenses/simple-stt/"
+install -m 0644 assets/language/ATTRIBUTION.md "$stage/usr/share/licenses/simple-stt/fastText-ATTRIBUTION.md"
 install -m 0644 assets/fonts/LICENSE-JetBrainsMono.txt "$stage/usr/share/licenses/simple-stt/OFL-JetBrainsMono.txt"
 install -m 0644 assets/fonts/LICENSE-NotoSansArabic.txt "$stage/usr/share/licenses/simple-stt/OFL-NotoSansArabic.txt"
 printf 'Installed runtime root; models use the per-user data directory.\n' > "$app/linux-installation"
-install -m 0644 "$upstream/LICENSE" "$work/parakeet-MIT"
-
-ldd "$app/runtime/bin/libparakeet.so" | tee "$work/parakeet-ldd.txt"
-if grep -F 'not found' "$work/parakeet-ldd.txt"; then
-  echo 'Parakeet library has unresolved shared libraries' >&2
-  exit 1
-fi
-cp "$work/parakeet-ldd.txt" "/out/parakeet-ldd-$distro.txt"
-
 if [[ "$distro" == fedora ]]; then
   topdir="$work/rpmbuild"
   mkdir -p "$topdir/SOURCES" "$topdir/SPECS" "$work/out"
@@ -92,5 +77,4 @@ else
 fi
 
 cp -a "$work/out/." /out/
-cp -a "$work/parakeet-MIT" /out/parakeet-MIT
 printf 'Package contents built for %s\n' "$distro"

@@ -5,12 +5,21 @@ This intentionally does not pretend to be a Rust compiler or an AutoHotkey runti
 It checks the architectural invariants that are easy to regress during source edits.
 """
 from pathlib import Path
+import hashlib
+import json
 import subprocess
 import sys
 
 root = Path(__file__).resolve().parents[1]
 errors: list[str] = []
 checks: list[str] = []
+
+language_model = root / "assets/language/lid.176.ftz"
+if not language_model.is_file() or hashlib.sha256(language_model.read_bytes()).hexdigest() != "8f3472cfe8738a7b6099e8e999c3cbfae0dcd15696aac7d7738a8039db603e83":
+    errors.append("bundled fastText language model is missing or differs from its pinned hash")
+for license_file in ["assets/language/ATTRIBUTION.md", "assets/language/LICENSE-CC-BY-SA-3.0.txt"]:
+    if not (root / license_file).is_file():
+        errors.append(f"missing language-model license: {license_file}")
 
 frontend_check = subprocess.run(
     [sys.executable, str(Path(__file__).with_name("verify-settings-frontend.py"))],
@@ -102,6 +111,21 @@ need("src/bin/simple_stt_settings.rs", "ui_localization", "arabic.woff2", "font-
 need("src/bin/simple_stt_linux.rs", 'get("terminal")', "saved_ui_locale")
 checks.append("shared locale catalogs, RTL rendering, and structured terminal notices")
 
+# OCR bundles declare their complete pipeline; the worker must not select one
+# fixed recognizer/dictionary for every model shown in Settings.
+need("reader/crates/reader-ocr/src/main.rs", "PaddleProfile::for_directory(model_dir)", "profile.detector", "profile.recognizer", "profile.dictionary", "reverse_arabic")
+download_catalog = {asset["id"]: asset for asset in json.loads(text("assets/catalog/downloads.json"))}
+for model in json.loads(text("assets/catalog/modules.json"))["models"]:
+    if model["feature"] != "ocr":
+        continue
+    profile = model.get("paddle", {})
+    required = download_catalog.get(model["asset"], {}).get("required", [])
+    for part in ("detector", "recognizer", "dictionary"):
+        filename = profile.get(part, "")
+        if not filename or Path(filename).name != filename or "\\" in filename or filename not in required:
+            errors.append(f"{model['id']} has an invalid or missing OCR {part} bundle file")
+checks.append("per-model Paddle detector/recognizer/dictionary bundles and scoped Arabic decoding")
+
 # Application releases should commit a fresh lockfile after the first Windows build.
 gitignore = text(".gitignore")
 if any(line.strip() == "Cargo.lock" for line in gitignore.splitlines()):
@@ -182,16 +206,18 @@ need("src/bin/simple_stt_infer.rs", "log_level: LogLevel", "&args.log_level", "i
 need("src/config.rs", "CONFIG_SCHEMA_VERSION: u32 = 9", "pub struct GeneralConfig", "pub struct AudioConfig", "pub struct SpeechConfig", "pub struct OutputConfig", "pub struct CleanupConfig", "pub struct DiagnosticsConfig", "normalize_json", "malformed_json_is_preserved", "pub enum RecordingMode", "pub enum InferenceDevice", "pub enum SpeechLanguage", "pub enum ModelSelectionMode", "single_model_filename", "language_models", "pub enum LinuxAutomationBackend", "pub enum LinuxHotkeyBackend", "pub struct LinuxDeliveryChoice", "pub struct AppDeliveryOverride", "app_overrides", "linux_hotkey_backend", "linux_automation_backend", "linux_delivery_cycle", "enabled_delivery_modes", "toggle_cleanup_hotkey", "Clipboard", "Gpu", "Auto", "auto_inference_device")
 need("src/capture/input_language.rs", "GetForegroundWindow", "GetWindowThreadProcessId", "GetKeyboardLayout", "GetKeyboardLayoutList", "GetLocaleInfoW", "normalize_language")
 need("src/bin/simple_stt_capture.rs", "speech_language: language.into()", "resolve_recording_model", "skipped_recording_response", "frozen_worker")
-need("src/infer/parakeet_native.rs", "preferred_vulkan_device", "select_windows_vulkan_device", "GGML_VK_VISIBLE_DEVICES", "storage_buffer16_bit_access", "_putenv_s", "GPU mode requires a physical Vulkan GPU")
-need("src/models.rs", "pinned_model_sha256", "download_url", "sha256_file", "single_model_filename", "language_models")
+need("src/infer/parakeet_native.rs", "preferred_gpu_device", "select_windows_vulkan_device", "GGML_VK_VISIBLE_DEVICES", "storage_buffer16_bit_access", "_putenv_s", "GPU mode requires an available physical GPU")
+need("src/models.rs", "pinned_model_sha256", "download_url", "hasher.update", "hasher.finalize", "DownloadCancellation", "single_model_filename", "language_models")
+need("src/common/shell_protocol.rs", "CancelModelDownload")
+need("src/bin/simple_stt_capture.rs", "model_download_cancelled", "model_download_queued", "downloads.running")
 need("src/models.rs", "https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF/resolve/main/lemura-arabic-asr-lite-q8_0.gguf", "b0aa3f0f316551a45bbd76d1ac7674102a3b221d5fd8c4cd6cac1c2bc4ccce86")
 need("resources/simple-stt.iss", "https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF/resolve/main/lemura-arabic-asr-lite-q8_0.gguf", "ArabicModelNeedsDownload", "ExternalSize: 158617056", "b0aa3f0f316551a45bbd76d1ac7674102a3b221d5fd8c4cd6cac1c2bc4ccce86")
 forbid("resources/simple-stt.iss", 'Source: "arabic-model\\')
 need("resources/simple-stt.iss", "installarabic", "lemura-arabic-asr-lite-q8_0.gguf", "tdt_ctc-110m-q8_0.gguf")
 forbid("resources/simple-stt.iss", "parakeet-windows-cuda", "tdt_ctc-110m-f16.gguf")
-need("src/bin/simple_stt_settings.rs", "127.0.0.1", "X-Simple-STT-Token", "Content-Security-Policy", "settings-session.json", "text/event-stream", "ShellCommand::DownloadModel", "ShellCommand::RemoveModel", "ShellCommand::TestModel", "linux_shortcut_state", "sync_shortcuts", "capture_hotkey_with_ahk", "dist/index.html", "dist/styles.css", "dist/app.js")
+need("src/bin/simple_stt_settings.rs", "127.0.0.1", "X-Simple-STT-Token", "Content-Security-Policy", "settings-session-{instance_id}.json", "text/event-stream", "ShellCommand::DownloadModel", "ShellCommand::RemoveModel", "ShellCommand::TestModel", "linux_shortcut_state", "sync_shortcuts", "capture_hotkey_with_ahk", "dist/index.html", "dist/styles.css", "dist/app.js")
 need("src/bin/simple_stt_settings.rs", "/api/cleanup-action", "save_api_key", "chatgpt_login_browser", "chatgpt_login_code", "clear_history")
-need("src/bin/simple_stt_settings.rs", "settings-instance.lock", "lock.try_lock()", "impl Drop for SettingsInstance", "no second server was started")
+need("src/bin/simple_stt_settings.rs", "settings-instance-{instance_id}.lock", "executable_build_id", "session.instance_id != instance_id", "lock.try_lock()", "impl Drop for SettingsInstance", "no second server was started")
 need("scripts/test-settings-single-instance.py", "12 concurrent Settings launches", "unauthenticated Close", "stale session recovers", "immediate reopen")
 need("src/cleanup/mod.rs", "openai_compatible", "backend-api/codex/responses", "stream", "response.completed")
 need("src/cleanup/secrets.rs", "CredWriteW", "secret-tool", "SIMPLE_STT_AI_API_KEY")
@@ -216,7 +242,7 @@ checks.append("Parakeet DLL/model loading is isolated to disposable simple-stt-i
 checks.append("microphone preference uses stable IDs, temporary default fallback, endpoint notifications with bounded retries, and recording-start resolution")
 
 # AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
-tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", 'UiText("menu.openSettings")', 'UiText("menu.restartAudio")', 'UiText("menu.unload")')
+tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", 'UiText("menu.openSettings")', 'UiText("menu.restartAudio")', 'UiText("menu.unloadAll")')
 for needle in ["TraySetIcon", "SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
     if needle in tray_ahk:
         errors.append(f"tray menu must use the default Windows/AHK drawing path, but found {needle!r}")
@@ -236,6 +262,16 @@ typist = need("ahk/lib/Typist.ahk", "SendText(", "paced_typing_enabled", "Typing
 need("ahk/lib/Typist.ahk", "CaptureEditPasteProbe", "SendMessageTimeoutW", "submitted_unverified", "pasteVerified")
 forbid("ahk/lib/Typist.ahk", "Sleep(60)", "SetTimer(this.timer, -400)")
 need("ahk/tests/full-smoke.ahk", "DelayedEditPasteProc", "copied during paste", "unknown-control paste")
+need("src/capture/overlay_render.rs", "paint_keycaps", "Noto Color Emoji", "new_allow_breaks(false)", "only_shortcut_keycaps_receive_decorations")
+need("src/shortcuts.rs", "linux-shortcuts.json", "shortcut.record", "shortcut.show", "reminders_do_not_keep_overlay_alive")
+need("src/common/shell_protocol.rs", "ShowShortcuts", "RefreshShortcuts", "BeginDelivery")
+need("src/bin/simple_stt_capture.rs", "retry_registers_delivery_before_progress", "OverlayPrimary::WaitingForKeys")
+need("ahk/lib/Typist.ahk", "ReportProgress", 'this.ReportProgress("waiting-for-keys")')
+need("src/bin/simple_stt_linux.rs", 'NewShortcut::new("shortcuts", "Show shortcuts")', "show_shortcuts_hotkey", "RefreshShortcuts")
+need("src/bin/simple_stt_linux.rs", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', 'unload_all_models()')
+need("ahk/lib/Tray.ahk", 'UiText("menu.copyRegion")', 'UiText("menu.abort")', 'UiText("menu.unloadAll")')
+need("ahk/simple-stt.ahk", "showShortcutsHotkey.Configure", 'CallService("show-shortcuts")')
+need("web/settings/src/pages/General.svelte", "fields.shortcutReminders", 'platformAction("show_shortcuts")')
 need("src/capture/overlay_model.rs", "RecordingIndicators", 'ai_cleanup: bool', 'screen_context: bool', '1f916', '1f4f7')
 need("src/config.rs", "screen context requires AI cleanup", "normalized.cleanup.screenshot.enabled = false")
 need("scripts/test-full.cmd", "test-cleanup-settings-e2e.py")
@@ -248,7 +284,7 @@ checks.append("AHK owns tray, hotkeys, full-format clipboard-preserving paste mo
 # The shell stays non-blocking for service calls and reconnects after a new capture PID.
 ipc_ahk = need("ahk/lib/IpcClient.ahk", "Run(command", "SetTimer", "poll-events --after-seq ", "--wait-ms 900", "ResetServiceSession", "this.latestSeq := 0", "RetryPing", "simple-stt-ctl helper timed out", 'responseReady := FileExist(job["path"])', '"missing_since"', "A_TickCount - job[\"missing_since\"] < 250")
 supervisor_ahk = need("ahk/lib/ProcessSupervisor.ahk", "Run(command", "ProcessWaitClose", "ProcessClose", "SimpleSttRandomToken", "ResetServiceSession", "readyProbeInFlight", "this.startTimer")
-need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "CancelAll", "cancelHotkey", 'CallService("cancel")', "ToggleDeliveryModeHotkey", "deliveryToggleHotkey", "ToggleCleanupHotkey", "cleanupToggleHotkey", "enabled_delivery_modes", "SimpleSttNextDeliveryMode")
+need("ahk/simple-stt.ahk", "pendingStarts", "pendingStops", "recording stop deferred until start acknowledgement", "CancelAll", "cancelHotkey", 'CallService("cancel", ObjBindMethod(this, "CancelServiceFinished", callback))', 'this.ReaderAction("stop")', "ToggleDeliveryModeHotkey", "deliveryToggleHotkey", "ToggleCleanupHotkey", "cleanupToggleHotkey", "enabled_delivery_modes", "SimpleSttNextDeliveryMode")
 need("ahk/lib/Utils.ahk", "SimpleSttNextDeliveryMode", "StrSplit(configured", "Mod(index, modes.Length)")
 if "RunWait(command" in ipc_ahk:
     errors.append("IpcClient.ahk service calls must be asynchronous")

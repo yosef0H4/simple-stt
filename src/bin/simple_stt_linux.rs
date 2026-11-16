@@ -34,6 +34,12 @@ struct Args {
 
 #[derive(Debug, Subcommand)]
 enum LinuxCommand {
+    #[command(flatten)]
+    Administration(simple_stt::admin::Command),
+    Media {
+        #[command(subcommand)]
+        command: simple_stt::cli::MediaCommand,
+    },
     Daemon {
         #[arg(long)]
         config: Option<PathBuf>,
@@ -50,7 +56,16 @@ enum LinuxCommand {
         #[arg(long)]
         shift_insert: bool,
     },
+    #[command(alias = "repeat", alias = "repeat-last-action")]
     RetryDelivery,
+    ShowShortcuts,
+    ReadSelection,
+    ReadRegion,
+    ReadAlong,
+    CopyRegion,
+    ReadClipboard,
+    StopReading,
+    ListenClipboard,
     #[command(hide = true)]
     ClipboardOwner {
         #[arg(long)]
@@ -146,6 +161,11 @@ fn main() -> Result<()> {
         Locale::En => simple_stt::config::UiLanguage::En,
     });
     match Args::parse().command {
+        LinuxCommand::Administration(command) => simple_stt::admin::dispatch(command),
+        LinuxCommand::Media { command } => simple_stt::cli::dispatch_media(
+            command,
+            &mut simple_stt::reader::ConfiguredBackend::default(),
+        ),
         LinuxCommand::Daemon { config } => daemon(config),
         LinuxCommand::Toggle {
             timeout,
@@ -156,6 +176,16 @@ fn main() -> Result<()> {
             shift_insert,
         } => stop(timeout, shift_insert),
         LinuxCommand::RetryDelivery => retry_delivery(),
+        LinuxCommand::ShowShortcuts => show_shortcuts(),
+        LinuxCommand::ReadSelection => simple_stt::reader::action("read_selection", "").map(|_| ()),
+        LinuxCommand::ReadRegion => simple_stt::reader::action("read_region", "").map(|_| ()),
+        LinuxCommand::ReadAlong => simple_stt::reader::action("read_along", "").map(|_| ()),
+        LinuxCommand::CopyRegion => simple_stt::reader::action("copy_region", "").map(|_| ()),
+        LinuxCommand::ReadClipboard => simple_stt::reader::action("read_clipboard", "").map(|_| ()),
+        LinuxCommand::StopReading => simple_stt::reader::action("stop", "").map(|_| ()),
+        LinuxCommand::ListenClipboard => {
+            simple_stt::reader::action("listen_clipboard", "").map(|_| ())
+        }
         LinuxCommand::ClipboardOwner { primary } => private_clipboard_owner(primary),
         LinuxCommand::ClipboardTransaction { primary } => clipboard_transaction_owner(primary),
         LinuxCommand::ClipboardCacheDaemon => clipboard_cache_daemon(),
@@ -217,6 +247,8 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
     }
     ensure_dirs()?;
     #[cfg(target_os = "linux")]
+    fs::write(shortcut_state_file(), "{}\n")?;
+    #[cfg(target_os = "linux")]
     wait_for_graphical_environment(Duration::from_secs(60));
     let capture = find_exe("simple-stt-capture")?;
     let mut cmd = ProcessCommand::new(capture);
@@ -266,6 +298,9 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
                 false,
             );
         }
+        if simple_stt::reader::status().is_some() {
+            let _ = simple_stt::reader::action("shutdown", "");
+        }
         let _ = run_ctl(["shutdown"], Duration::from_secs(5), false);
         if let Some(mut child) = shutdown_child.lock().unwrap().take() {
             let _ = child.kill();
@@ -290,6 +325,9 @@ fn daemon(config: Option<PathBuf>) -> Result<()> {
             &clipboard_cache_socket(),
             false,
         );
+    }
+    if simple_stt::reader::status().is_some() {
+        let _ = simple_stt::reader::action("shutdown", "");
     }
     if status.success() {
         Ok(())
@@ -513,6 +551,7 @@ fn hotkey_supervisor(requested: LinuxHotkeyBackend) {
             hotkey_backend_label(resolved),
             retry.as_secs()
         );
+        let _ = write_shortcut_state(Vec::new());
         let _ = write_hotkey_backend_state(requested, resolved, "retrying", Some(&error));
         std::thread::sleep(retry);
         retry = (retry * 2).min(Duration::from_secs(30));
@@ -669,6 +708,77 @@ impl ksni::Tray for LinuxTray {
                 ..Default::default()
             }
             .into(),
+            MenuItem::Separator,
+            StandardItem {
+                label: simple_stt::localization::translate(self.locale, "menu.readSelection", &[]),
+                icon_name: "audio-volume-high".into(),
+                activate: Box::new(|_| {
+                    std::thread::spawn(|| {
+                        if let Err(error) = simple_stt::reader::action("read_selection", "") {
+                            eprintln!("Reading failed: {error:#}");
+                        }
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: simple_stt::localization::translate(self.locale, "menu.readRegion", &[]),
+                icon_name: "edit-select".into(),
+                activate: Box::new(|_| {
+                    std::thread::spawn(|| {
+                        if let Err(error) = simple_stt::reader::action("read_region", "") {
+                            eprintln!("OCR failed: {error:#}");
+                        }
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: if self.locale == Locale::Ar {
+                    "بدء القراءة مع التنقل".to_owned()
+                } else {
+                    "Start read-along".to_owned()
+                },
+                icon_name: "view-paged".into(),
+                activate: Box::new(|_| {
+                    std::thread::spawn(|| {
+                        if let Err(error) = simple_stt::reader::action("read_along", "") {
+                            eprintln!("Read-along failed: {error:#}");
+                        }
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: simple_stt::localization::translate(self.locale, "menu.copyRegion", &[]),
+                icon_name: "edit-copy".into(),
+                activate: Box::new(|_| {
+                    std::thread::spawn(|| {
+                        if let Err(error) = simple_stt::reader::action("copy_region", "") {
+                            eprintln!("OCR copy failed: {error:#}");
+                        }
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: simple_stt::localization::translate(self.locale, "menu.abort", &[]),
+                icon_name: "media-playback-stop".into(),
+                activate: Box::new(|_| {
+                    std::thread::spawn(|| {
+                        if let Err(error) = cancel() {
+                            eprintln!("[{APP}] tray abort failed: {error:#}");
+                        }
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
             StandardItem {
                 label: simple_stt::localization::translate(self.locale, "menu.settings", &[]),
                 icon_name: "configure".to_owned(),
@@ -681,17 +791,18 @@ impl ksni::Tray for LinuxTray {
             }
             .into(),
             StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.unload", &[]),
+                label: simple_stt::localization::translate(self.locale, "menu.unloadAll", &[]),
                 icon_name: "edit-clear".to_owned(),
                 activate: Box::new(|_| {
-                    if let Err(error) = unload_model() {
-                        eprintln!("[{APP}] tray unload action failed: {error:#}");
-                    }
+                    std::thread::spawn(|| {
+                        if let Err(error) = unload_all_models() {
+                            eprintln!("[{APP}] tray unload failed: {error:#}");
+                        }
+                    });
                 }),
                 ..Default::default()
             }
             .into(),
-            MenuItem::Separator,
             StandardItem {
                 label: simple_stt::localization::translate(self.locale, "menu.close", &[]),
                 icon_name: "application-exit".to_owned(),
@@ -995,7 +1106,11 @@ fn remember_delivery(session_id: u64, text: &str) -> Result<()> {
 }
 
 fn retry_delivery() -> Result<()> {
-    let result = retry_delivery_inner();
+    retry_delivery_with_release(None)
+}
+
+fn retry_delivery_with_release(released: Option<std::sync::mpsc::Receiver<()>>) -> Result<()> {
+    let result = retry_delivery_inner(released);
     if result.is_err() {
         shell_notice("notice.retryFailed", true);
     }
@@ -1018,7 +1133,7 @@ fn shell_notice(id: &str, warning: bool) {
     });
 }
 
-fn retry_delivery_inner() -> Result<()> {
+fn retry_delivery_inner(released: Option<std::sync::mpsc::Receiver<()>>) -> Result<()> {
     let action = DICTATION_ACTION_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1027,21 +1142,58 @@ fn retry_delivery_inner() -> Result<()> {
         return Ok(());
     }
     let response =
-        memory_delivery_command(simple_stt::common::shell_protocol::ShellCommand::LastDelivery)?;
-    let Some(text) = response.values.get("text").filter(|text| !text.is_empty()) else {
+        memory_delivery_command(simple_stt::common::shell_protocol::ShellCommand::LastDelivery)
+            .ok();
+    let dictation_at = response
+        .as_ref()
+        .and_then(|response| response.values.get("remembered_at_ms"))
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    if simple_stt::reader::repeat_if_newer(dictation_at)? {
+        println!("[{APP}] repeated last reading action");
+        return Ok(());
+    }
+    let Some(text) = response
+        .as_ref()
+        .and_then(|response| response.values.get("text"))
+        .filter(|text| !text.is_empty())
+    else {
         shell_notice("notice.retryEmpty", true);
         return Ok(());
     };
-    shell_notice("notice.retrying", false);
-    #[cfg(target_os = "linux")]
-    wait_retry_modifiers()?;
     invalidate_delivery_session()?;
     let cancelled = run_ctl(["cancel"], Duration::from_secs(5), true)?;
     anyhow::ensure!(cancelled.ok, "{}", cancelled.message);
     let session_id = read_session()?.session_id;
+    memory_delivery_command(
+        simple_stt::common::shell_protocol::ShellCommand::BeginDelivery { session_id },
+    )?;
     drop(action);
-    // The cached text is already transformed. Never add another trailing space.
-    let outcome = deliver_text(text, false, session_id)?;
+    let result = (|| {
+        if let Some(released) = released {
+            loop {
+                anyhow::ensure!(
+                    read_session()
+                        .is_ok_and(|state| delivery_session_is_current(&state, session_id)),
+                    "retry superseded while waiting for release"
+                );
+                match released.recv_timeout(Duration::from_millis(50)) {
+                    Ok(()) => break,
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        wait_retry_modifiers()?;
+        // The cached text is already transformed. Never add another trailing space.
+        deliver_text(text, false, session_id)
+    })();
+    // Complete on failure too; a failed retry must not leave a permanent overlay.
+    let _ = memory_delivery_command(
+        simple_stt::common::shell_protocol::ShellCommand::DeliveryComplete { session_id },
+    );
+    let outcome = result?;
     shell_notice(retry_outcome_notice(outcome), outcome == "copied");
     println!("[{APP}] retry: {outcome}");
     Ok(())
@@ -1085,9 +1237,20 @@ fn cancel() -> Result<()> {
     let _action = DICTATION_ACTION_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // Abort covers both dictation and read-along, even while the capture
+    // service is healthy. Stop is safe when no reader job is active.
+    stop_reader_fallback();
     ensure_service()?;
     invalidate_delivery_session()?;
-    let _ = run_ctl(["cancel"], Duration::from_secs(5), false)?;
+    match run_ctl(["cancel"], Duration::from_secs(5), false) {
+        Ok(result) if result.ok => {}
+        Ok(result) => {
+            anyhow::bail!("{}", result.message);
+        }
+        Err(error) => {
+            return Err(error);
+        }
+    }
     // A portal shortcut can run in the long-lived daemon after Settings saves
     // another locale. Resolve this notice from disk rather than startup state.
     #[cfg(target_os = "linux")]
@@ -1103,10 +1266,32 @@ fn cancel() -> Result<()> {
     Ok(())
 }
 
+fn stop_reader_fallback() {
+    if let Ok(ctl) = find_exe("simple-stt-ctl") {
+        let _ = ProcessCommand::new(ctl)
+            .args(["reader-action", "stop"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+    }
+}
+
 fn unload_model() -> Result<()> {
     ensure_service()?;
     let _ = run_ctl(["unload-model"], Duration::from_secs(5), false)?;
     println!("[{APP}] unload requested");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn unload_all_models() -> Result<()> {
+    let aborted = cancel();
+    let speech = unload_model();
+    let reader = simple_stt::reader::action("unload", "");
+    aborted?;
+    speech?;
+    reader?;
     Ok(())
 }
 
@@ -1120,6 +1305,9 @@ fn invalidate_delivery_session() -> Result<()> {
 }
 
 fn shutdown() -> Result<()> {
+    if simple_stt::reader::status().is_some() {
+        let _ = simple_stt::reader::action("shutdown", "");
+    }
     invalidate_delivery_session()?;
     let result = run_ctl(["shutdown"], Duration::from_secs(5), false)?;
     if result.ok {
@@ -1147,7 +1335,12 @@ fn print_shortcut_commands() -> Result<()> {
     let exe = find_exe("simple-stt-linux").unwrap_or_else(|_| std::env::current_exe().unwrap());
     println!("Toggle dictation: {} toggle", exe.display());
     println!("Cancel dictation: {} cancel", exe.display());
-    println!("Retry last dictation: {} retry-delivery", exe.display());
+    println!("Repeat last action: {} repeat", exe.display());
+    println!("Show shortcuts: {} show-shortcuts", exe.display());
+    println!("Read selection:   {} read-selection", exe.display());
+    println!("Read screen:      {} read-region", exe.display());
+    println!("Read along:       {} read-along", exe.display());
+    println!("Copy screen text: {} copy-region", exe.display());
     println!("Switch delivery:  {} cycle-delivery", exe.display());
     println!("Toggle AI cleanup: {} toggle-cleanup", exe.display());
     println!("Unload model:     {} unload-model", exe.display());
@@ -1190,6 +1383,12 @@ fn launch() -> Result<()> {
     {
         settings()
     }
+}
+
+fn show_shortcuts() -> Result<()> {
+    let response = run_ctl(["show-shortcuts"], Duration::from_secs(5), false)?;
+    anyhow::ensure!(response.ok, "{}", response.message);
+    Ok(())
 }
 
 fn configure_shortcuts() -> Result<()> {
@@ -1277,10 +1476,16 @@ async fn portal_shortcuts_loop() -> Result<()> {
         .await?;
     let shortcuts = [
         NewShortcut::new("record", "Record or stop dictation"),
-        NewShortcut::new("cancel", "Cancel dictation"),
+        NewShortcut::new("cancel", "Abort active work"),
         NewShortcut::new("delivery", "Toggle text delivery mode"),
         NewShortcut::new("cleanup", "Toggle AI transcript cleanup"),
         NewShortcut::new("retry", "Retry last dictation"),
+        NewShortcut::new("shortcuts", "Show shortcuts"),
+        NewShortcut::new("read-selection", "Read selection"),
+        NewShortcut::new("read-region", "Read screen"),
+        NewShortcut::new("read-along", "Start read-along"),
+        NewShortcut::new("copy-region", "Copy screen text"),
+        NewShortcut::new("listen-clipboard", "Listen to clipboard"),
     ];
     let request = portal
         .bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default())
@@ -1358,6 +1563,7 @@ async fn portal_shortcuts_loop() -> Result<()> {
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .pending
                     .take();
+                let _ = write_shortcut_state(Vec::new());
                 bail!("GlobalShortcuts portal session closed");
             }
             PortalEvent::Tick => {
@@ -1436,12 +1642,22 @@ fn x11_shortcuts_loop() -> Result<()> {
     let root = connection.setup().roots[screen_index].root;
     enable_x11_detectable_autorepeat(&connection)?;
     let config = AppConfig::load()?;
+    let reader = simple_stt::reader::load().unwrap_or_else(|_| simple_stt::reader::defaults());
     let shortcuts = [
         ("record", config.general.record_hotkey.as_str()),
         ("cancel", config.general.cancel_hotkey.as_str()),
         ("delivery", config.general.toggle_delivery_hotkey.as_str()),
         ("cleanup", config.general.toggle_cleanup_hotkey.as_str()),
         ("retry", config.general.retry_delivery_hotkey.as_str()),
+        ("shortcuts", config.general.show_shortcuts_hotkey.as_str()),
+        ("read-selection", reader.shortcuts.read_selection.as_str()),
+        ("read-region", reader.shortcuts.read_region.as_str()),
+        ("read-along", reader.shortcuts.read_along.as_str()),
+        ("copy-region", reader.shortcuts.copy_region.as_str()),
+        (
+            "listen-clipboard",
+            reader.shortcuts.listen_clipboard.as_str(),
+        ),
     ]
     .into_iter()
     .filter(|(_, chord)| !hotkey_is_none(chord))
@@ -1495,8 +1711,24 @@ fn x11_shortcuts_loop() -> Result<()> {
     )?;
 
     let mut pressed = BTreeMap::new();
+    let mut last_config_check = Instant::now();
     loop {
-        match connection.wait_for_event()? {
+        if last_config_check.elapsed() >= Duration::from_secs(1) {
+            if AppConfig::load()?.general != config.general
+                || simple_stt::reader::load()
+                    .unwrap_or_else(|_| simple_stt::reader::defaults())
+                    .shortcuts
+                    != reader.shortcuts
+            {
+                return Ok(());
+            }
+            last_config_check = Instant::now();
+        }
+        let Some(event) = connection.poll_for_event()? else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        match event {
             Event::KeyPress(event) => {
                 if let Some(shortcut) = shortcuts.iter().find(|item| {
                     item.keycode == event.detail
@@ -1662,11 +1894,8 @@ fn dispatch_shortcut_activation(id: String) {
             return;
         };
         std::thread::spawn(move || {
-            shell_notice("notice.retryRelease", false);
-            if released.recv().is_ok() {
-                if let Err(error) = retry_delivery() {
-                    eprintln!("[{APP}] retry shortcut failed: {error:#}");
-                }
+            if let Err(error) = retry_delivery_with_release(Some(released)) {
+                eprintln!("[{APP}] retry shortcut failed: {error:#}");
             }
         });
         return;
@@ -1718,6 +1947,12 @@ fn handle_portal_activation(id: &str) -> Result<()> {
         "cancel" => cancel(),
         "delivery" => toggle_linux_delivery_mode(),
         "cleanup" => toggle_linux_cleanup(),
+        "shortcuts" => show_shortcuts(),
+        "read-selection" => simple_stt::reader::action("read_selection", "").map(|_| ()),
+        "read-region" => simple_stt::reader::action("read_region", "").map(|_| ()),
+        "read-along" => simple_stt::reader::action("read_along", "").map(|_| ()),
+        "copy-region" => simple_stt::reader::action("copy_region", "").map(|_| ()),
+        "listen-clipboard" => simple_stt::reader::action("listen_clipboard", "").map(|_| ()),
         _ => Ok(()),
     }
 }
@@ -1835,6 +2070,7 @@ fn handle_portal_deactivation(id: &str) -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn toggle_linux_delivery_mode() -> Result<()> {
+    let config_guard = simple_stt::config::lock_config()?;
     let mut config = AppConfig::load()?;
     let modes = config
         .output
@@ -1846,18 +2082,18 @@ fn toggle_linux_delivery_mode() -> Result<()> {
     if modes.is_empty() {
         bail!("No enabled delivery modes are compatible with the selected Linux automation tool");
     }
-    let current = modes.iter().position(|choice| {
-        choice.backend == config.output.linux_automation_backend
-            && choice.mode == config.output.delivery_mode
-    });
+    let current = modes
+        .iter()
+        .position(|choice| choice.mode == config.output.delivery_mode);
     let next = current.map_or(0, |index| (index + 1) % modes.len());
-    let LinuxDeliveryChoice { backend, mode } = modes[next];
-    config.output.linux_automation_backend = backend;
+    let LinuxDeliveryChoice { backend: _, mode } = modes[next];
+    config.output.linux_automation_backend = LinuxAutomationBackend::Auto;
     config.output.delivery_mode = mode;
     if !config.output.enabled_delivery_modes.contains(&mode) {
         config.output.enabled_delivery_modes.push(mode);
     }
     config.save()?;
+    drop(config_guard);
     let _ = run_ctl(["reload-config"], Duration::from_secs(5), false);
     simple_stt::localization::set_language(config.general.ui_language);
     let mode_id = match mode {
@@ -1868,20 +2104,7 @@ fn toggle_linux_delivery_mode() -> Result<()> {
         TextDeliveryMode::PasteCtrlV => "delivery.paste_ctrl_v",
         TextDeliveryMode::PasteCtrlShiftV => "delivery.paste_ctrl_shift_v",
     };
-    let text = simple_stt::localization::format(
-        "notice.linuxDelivery",
-        &[
-            (
-                "backend",
-                &match backend {
-                    LinuxAutomationBackend::Auto => tr("backend.auto"),
-                    LinuxAutomationBackend::Native => tr("backend.native"),
-                    _ => automation_backend_label(backend).to_owned(),
-                },
-            ),
-            ("mode", &tr(mode_id)),
-        ],
-    );
+    let text = tr(mode_id);
     let _ = run_ctl(
         ["notice", "--level", "info", "--text", &text],
         Duration::from_secs(3),
@@ -1893,6 +2116,7 @@ fn toggle_linux_delivery_mode() -> Result<()> {
 
 #[cfg(target_os = "linux")]
 fn toggle_linux_cleanup() -> Result<()> {
+    let config_guard = simple_stt::config::lock_config()?;
     let mut config = AppConfig::load()?;
     config.cleanup.enabled = !config.cleanup.enabled;
     let enabled = config.cleanup.enabled;
@@ -1900,6 +2124,7 @@ fn toggle_linux_cleanup() -> Result<()> {
         config.cleanup.screenshot.enabled = false;
     }
     config.save()?;
+    drop(config_guard);
     let result = run_ctl(["reload-config"], Duration::from_secs(5), false)?;
     anyhow::ensure!(result.ok, "{}", result.message);
     println!(
@@ -1927,7 +2152,7 @@ fn toggle_linux_delivery_mode() -> Result<()> {
     bail!("delivery cycling is only available on Linux")
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(test)]
 fn automation_backend_label(backend: LinuxAutomationBackend) -> &'static str {
     match backend {
         LinuxAutomationBackend::Auto => "Automatic",
@@ -1955,7 +2180,6 @@ fn delivery_mode_label(mode: TextDeliveryMode) -> &'static str {
 fn delivery_mode_supported(backend: LinuxAutomationBackend, mode: TextDeliveryMode) -> bool {
     match backend {
         LinuxAutomationBackend::ClipboardOnly => mode == TextDeliveryMode::Clipboard,
-        LinuxAutomationBackend::Native => mode != TextDeliveryMode::Type,
         _ => true,
     }
 }
@@ -1967,6 +2191,21 @@ fn write_shortcut_state(shortcuts: Vec<(String, String)>) -> Result<()> {
         shortcut_state_file(),
         serde_json::to_string_pretty(&value)? + "\n",
     )?;
+    // Do not stall the portal event loop or race capture startup. Refresh reads
+    // the latest snapshot, so an older retry can never restore stale bindings.
+    std::thread::spawn(|| {
+        for _ in 0..20 {
+            if memory_delivery_command_with_timeout(
+                simple_stt::common::shell_protocol::ShellCommand::RefreshShortcuts,
+                Duration::from_millis(150),
+            )
+            .is_ok()
+            {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
     Ok(())
 }
 
@@ -2176,31 +2415,32 @@ fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result
         return Ok("copied");
     }
     if mode == TextDeliveryMode::Type {
-        if type_text(
+        let delay = typing_delay_ms(
+            config.output.paced_typing_enabled,
+            config.output.typing_speed_wpm,
+        );
+        let typed = type_text(
             text,
             config.output.linux_automation_backend,
-            typing_delay_ms(
-                config.output.paced_typing_enabled,
-                config.output.typing_speed_wpm,
-            ),
-        )? {
+            delay,
+            &is_current,
+        )
+        .inspect_err(|_| {
+            if is_current() {
+                shell_notice("notice.typingStopped", true);
+            }
+        })?;
+        if typed {
             return Ok("typed");
         }
+        shell_notice("notice.typingUnavailable", true);
         if config.output.preserve_clipboard {
-            shell_notice("notice.clipboardPreserveUnavailable", true);
             bail!("typing unavailable; original clipboard preserved and dictation kept for Retry");
         }
         let _clipboard_lock = acquire_clipboard_lock(&is_current)?;
         publish_clipboard(text, false, &is_current)?.detach();
         eprintln!("[{APP}] typing failed; transcript is in the clipboard");
         return Ok("copied");
-    }
-    if config.output.preserve_clipboard
-        && !identity.as_deref().is_some_and(is_terminal_identity)
-        && is_current()
-        && insert_text_without_clipboard(text, &is_current)?
-    {
-        return Ok("inserted directly (clipboard untouched)");
     }
     paste_text(
         text,
@@ -2212,21 +2452,7 @@ fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result
     )
 }
 
-fn insert_text_without_clipboard(text: &str, is_current: &impl Fn() -> bool) -> Result<bool> {
-    let Ok(helper) = find_native_paste_helper() else {
-        return Ok(false);
-    };
-    let mut command = ProcessCommand::new(helper);
-    command.arg("--insert-text");
-    run_clipboard_free_input(
-        command,
-        text,
-        is_current,
-        Duration::from_millis(750),
-        Duration::from_secs(3),
-    )
-}
-
+#[cfg(test)]
 fn run_clipboard_free_input(
     mut command: ProcessCommand,
     text: &str,
@@ -2485,7 +2711,7 @@ fn preserving_wayland_paste(
         simple_stt::common::shell_protocol::DeliveryPhase::Pasting,
     );
     eprintln!("[{APP}] paste stage=shortcut-send key={key:?}");
-    if !is_current() || !send_paste_key(key, backend)? {
+    if !is_current() || !send_paste_key(key, backend, is_current)? {
         bail!(
             "paste shortcut unavailable; original clipboard restored and dictation kept for Retry"
         );
@@ -2629,7 +2855,7 @@ fn paste_text(
     }
     // Key injection has no editor-insertion acknowledgement. Never restore an
     // older payload after a timer: the target may not have read this one yet.
-    let sent = send_paste_key(key, backend);
+    let sent = send_paste_key(key, backend, is_current);
     clipboard.detach();
     if let Some(primary) = primary {
         primary.detach();
@@ -2734,128 +2960,18 @@ fn is_terminal_identity(identity: &str) -> bool {
     TERMINALS.iter().any(|terminal| identity.contains(terminal))
 }
 
-fn send_paste_key(key: PasteKey, backend: LinuxAutomationBackend) -> Result<bool> {
-    let automatic = automatic_backend(false);
-    let allowed = |candidate| {
-        backend == candidate || (backend == LinuxAutomationBackend::Auto && automatic == candidate)
+fn send_paste_key(
+    key: PasteKey,
+    _backend: LinuxAutomationBackend,
+    current: &impl Fn() -> bool,
+) -> Result<bool> {
+    let key = match key {
+        PasteKey::ShiftInsert => "Shift+Insert",
+        PasteKey::CtrlShiftV => "Ctrl+Shift+V",
+        PasteKey::CtrlV => "Ctrl+V",
     };
-    if allowed(LinuxAutomationBackend::Native) {
-        if let Ok(helper) = find_native_paste_helper() {
-            if run_native_paste(&helper, key) {
-                return Ok(true);
-            }
-        }
-    }
-    if allowed(LinuxAutomationBackend::Ydotool) && ydotool_ready() {
-        let args = match key {
-            PasteKey::ShiftInsert => vec!["key", "42:1", "110:1", "110:0", "42:0"],
-            PasteKey::CtrlShiftV => vec!["key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"],
-            PasteKey::CtrlV => vec!["key", "29:1", "47:1", "47:0", "29:0"],
-        };
-        if run_paste_helper(ProcessCommand::new("ydotool").args(args)) {
-            return Ok(true);
-        }
-    }
-    if allowed(LinuxAutomationBackend::Wtype)
-        && command_exists("wtype")
-        && std::env::var_os("WAYLAND_DISPLAY").is_some()
-    {
-        let args = match key {
-            PasteKey::ShiftInsert => vec!["-M", "shift", "-k", "Insert", "-m", "shift"],
-            PasteKey::CtrlShiftV => vec![
-                "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl",
-            ],
-            PasteKey::CtrlV => vec!["-M", "ctrl", "-k", "v", "-m", "ctrl"],
-        };
-        if run_paste_helper(ProcessCommand::new("wtype").args(args)) {
-            return Ok(true);
-        }
-    }
-    if allowed(LinuxAutomationBackend::Xdotool)
-        && command_exists("xdotool")
-        && std::env::var_os("DISPLAY").is_some()
-    {
-        let key = match key {
-            PasteKey::ShiftInsert => "shift+Insert",
-            PasteKey::CtrlShiftV => "ctrl+shift+v",
-            PasteKey::CtrlV => "ctrl+v",
-        };
-        if run_paste_helper(ProcessCommand::new("xdotool").args(["key", "--clearmodifiers", key])) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn run_paste_helper(command: &mut ProcessCommand) -> bool {
-    simple_stt::common::clipboard::output_bounded(command, Duration::from_secs(3))
-        .is_ok_and(|output| output.status.success())
-}
-
-fn run_native_paste(helper: &Path, key: PasteKey) -> bool {
-    let mut command = ProcessCommand::new(helper);
-    let portal = std::env::var_os("WAYLAND_DISPLAY").is_some();
-    let restore_path = AppConfig::state_dir().join("native-paste-restore-token");
-    if portal {
-        command.arg("--portal");
-        if let Ok(token) = fs::read_to_string(&restore_path) {
-            let token = token.trim();
-            if !token.is_empty() {
-                command.arg("--restore-token").arg(token);
-            }
-        }
-    }
-    match key {
-        PasteKey::ShiftInsert => {
-            command.arg("--shift-insert");
-        }
-        PasteKey::CtrlShiftV => {
-            command.arg("--terminal");
-        }
-        PasteKey::CtrlV => {}
-    }
-    command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-    let started = Instant::now();
-    let Ok(output) =
-        simple_stt::common::clipboard::output_bounded(&mut command, Duration::from_secs(12))
-    else {
-        return false;
-    };
-    eprintln!(
-        "[{APP}] paste native portal={portal} status={} elapsed_ms={}",
-        output.status,
-        started.elapsed().as_millis()
-    );
-    if !output.status.success() {
-        return false;
-    }
-    if portal {
-        if let Ok(token) = String::from_utf8(output.stdout) {
-            let token = token.trim();
-            if !token.is_empty() {
-                if let Some(parent) = restore_path.parent() {
-                    let _ = fs::create_dir_all(parent);
-                }
-                let _ = write_private_restore_token(&restore_path, token);
-            }
-        }
-    }
-    true
-}
-
-fn write_private_restore_token(path: &Path, token: &str) -> std::io::Result<()> {
-    use std::io::Write;
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut options = fs::OpenOptions::new();
-    options.create(true).truncate(true).write(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(path)?;
-    file.write_all(token.as_bytes())
+    simple_stt::reader::desktop_input(serde_json::json!({"kind":"key","key":key}), current)?;
+    Ok(true)
 }
 
 fn typing_delay_ms(paced: bool, words_per_minute: u64) -> u64 {
@@ -2866,98 +2982,50 @@ fn typing_delay_ms(paced: bool, words_per_minute: u64) -> u64 {
     }
 }
 
-fn type_text(text: &str, backend: LinuxAutomationBackend, delay_ms: u64) -> Result<bool> {
-    let automatic = automatic_backend(true);
-    let allowed = |candidate| {
-        backend == candidate || (backend == LinuxAutomationBackend::Auto && automatic == candidate)
-    };
-    if allowed(LinuxAutomationBackend::Ydotool) && ydotool_ready() {
-        let delay = delay_ms.to_string();
-        if run_quiet(ProcessCommand::new("ydotool").args([
-            "type",
-            "--key-delay",
-            &delay,
-            "--",
-            text,
-        ])) {
-            return Ok(true);
-        }
-    }
-    if allowed(LinuxAutomationBackend::Wtype)
-        && command_exists("wtype")
-        && std::env::var_os("WAYLAND_DISPLAY").is_some()
-    {
-        let delay = delay_ms.to_string();
-        if run_quiet(ProcessCommand::new("wtype").args(["-d", &delay, "--", text])) {
-            return Ok(true);
-        }
-    }
-    if allowed(LinuxAutomationBackend::Xdotool)
-        && command_exists("xdotool")
-        && std::env::var_os("DISPLAY").is_some()
-    {
-        let delay = delay_ms.to_string();
-        if run_quiet(ProcessCommand::new("xdotool").args([
-            "type",
-            "--clearmodifiers",
-            "--delay",
-            &delay,
-            "--",
-            text,
-        ])) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+fn type_text(
+    text: &str,
+    _backend: LinuxAutomationBackend,
+    delay_ms: u64,
+    current: &impl Fn() -> bool,
+) -> Result<bool> {
+    simple_stt::reader::desktop_input(
+        serde_json::json!({"kind":"text","text":text,"delay_ms":delay_ms}),
+        current,
+    )?;
+    Ok(true)
 }
 
-fn automatic_backend(for_typing: bool) -> LinuxAutomationBackend {
-    let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-    let desktop = std::env::var("XDG_CURRENT_DESKTOP")
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let native = !for_typing && find_native_paste_helper().is_ok();
-    let ydotool = ydotool_ready();
-    let wtype = wayland && command_exists("wtype");
-    let xdotool = !wayland && command_exists("xdotool");
-
-    if !wayland && xdotool {
-        return LinuxAutomationBackend::Xdotool;
-    }
-    if wayland && (desktop.contains("kde") || desktop.contains("plasma")) {
-        if native {
-            return LinuxAutomationBackend::Native;
+/// Once a child starts it may have typed a prefix, so failures and cancellation
+/// must never fall back to another delivery method or replay the full text.
+#[cfg(test)]
+fn run_typing_child(command: &mut ProcessCommand, is_current: &impl Fn() -> bool) -> Result<()> {
+    anyhow::ensure!(is_current(), "dictation superseded before typing");
+    let mut child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("starting typing backend")?;
+    loop {
+        if !is_current() {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("dictation superseded during typing; text may be partially delivered");
         }
-        if ydotool {
-            return LinuxAutomationBackend::Ydotool;
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                bail!("typing backend exited with {status}; text may be partially delivered")
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error)
+                    .context("waiting for typing backend; text may be partially delivered");
+            }
         }
     }
-    if wayland && desktop.contains("gnome") && ydotool {
-        return LinuxAutomationBackend::Ydotool;
-    }
-    if wayland && wtype {
-        return LinuxAutomationBackend::Wtype;
-    }
-    if ydotool {
-        return LinuxAutomationBackend::Ydotool;
-    }
-    if native {
-        return LinuxAutomationBackend::Native;
-    }
-    if xdotool {
-        return LinuxAutomationBackend::Xdotool;
-    }
-    LinuxAutomationBackend::ClipboardOnly
-}
-
-fn ydotool_ready() -> bool {
-    command_exists("ydotool")
-        && ProcessCommand::new("pidof")
-            .arg("ydotoold")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
 }
 
 fn find_native_paste_helper() -> Result<PathBuf> {
@@ -3217,14 +3285,6 @@ fn command_output(cmd: &mut ProcessCommand) -> Option<String> {
         })
 }
 
-fn run_quiet(cmd: &mut ProcessCommand) -> bool {
-    cmd.stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
-}
-
 fn data_dir() -> PathBuf {
     AppConfig::local_data_dir()
 }
@@ -3288,6 +3348,100 @@ fn hotkey_backend_state_file() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn read_along_cli_command_is_available() {
+        assert!(super::Args::try_parse_from(["simple-stt-linux", "read-along"]).is_ok());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn abort_terminates_and_reaps_the_typing_child() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let pid_file = directory.path().join("child.pid");
+        let child_file = pid_file.clone();
+        let current = Arc::new(AtomicBool::new(true));
+        let flag = Arc::clone(&current);
+        let runner = std::thread::spawn(move || {
+            let mut command = std::process::Command::new("sh");
+            command
+                .args(["-c", "printf '%s' \"$$\" > \"$1\"; exec sleep 30", "sh"])
+                .arg(child_file);
+            super::run_typing_child(&mut command, &|| flag.load(Ordering::SeqCst))
+        });
+        let mut pid = None;
+        for _ in 0..300 {
+            pid = std::fs::read_to_string(&pid_file)
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok());
+            if pid.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        current.store(false, Ordering::SeqCst);
+        let result = runner.join().unwrap();
+        let pid = pid.expect("child did not start");
+        assert!(result.is_err());
+        assert!(
+            !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+            "child must be reaped"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn failed_typing_after_partial_output_is_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("attempted");
+        let mut command = std::process::Command::new("sh");
+        command
+            .args(["-c", "printf typed > \"$1\"; exit 7", "sh"])
+            .arg(&marker);
+        let result = super::run_typing_child(&mut command, &|| true);
+        assert!(result.is_err());
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "typed");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn tray_groups_combined_actions_and_has_one_abort() {
+        use ksni::{menu::MenuItem, Tray};
+        let tray = super::LinuxTray {
+            locale: super::Locale::En,
+        };
+        let menu = tray.menu();
+        let labels: Vec<_> = menu
+            .iter()
+            .map(|item| match item {
+                MenuItem::Standard(item) => item.label.as_str(),
+                MenuItem::Separator => "|",
+                _ => panic!("unexpected tray item"),
+            })
+            .collect();
+        assert_eq!(labels.len(), 11);
+        assert_eq!(
+            &labels[1..],
+            &[
+                "|",
+                "Read selection",
+                "Read screen",
+                "Start read-along",
+                "Copy screen text",
+                "Abort",
+                "|",
+                "Settings",
+                "Unload all models",
+                "Close Simple STT"
+            ]
+        );
+        assert!(matches!(labels[0], "Start recording" | "Stop recording"));
+    }
     #[cfg(target_os = "linux")]
     #[test]
     fn immediate_transcript_delivery_waits_for_record_release() {
@@ -3638,7 +3792,10 @@ root.after(150,ready);root.mainloop()
     fn typing_speed_matches_words_per_minute() {
         assert_eq!(typing_delay_ms(true, 60), 200);
         assert_eq!(typing_delay_ms(true, 450), 26);
+        assert_eq!(typing_delay_ms(true, 850), 14);
+        assert_eq!(typing_delay_ms(true, 1650), 7);
         assert_eq!(typing_delay_ms(false, 60), 0);
+        assert_eq!(typing_delay_ms(false, 850), 0);
     }
 
     #[test]
@@ -3647,7 +3804,7 @@ root.after(150,ready);root.mainloop()
             LinuxAutomationBackend::Auto,
             TextDeliveryMode::Type
         ));
-        assert!(!delivery_mode_supported(
+        assert!(delivery_mode_supported(
             LinuxAutomationBackend::Native,
             TextDeliveryMode::Type
         ));

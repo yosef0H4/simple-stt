@@ -1,12 +1,11 @@
 import type { FieldSpec, Page, DeliveryMode } from "./types";
-export const pages: { id: Page; name: string; icon: string }[] = [
-  { id: "general", name: "ui.general.9239ee", icon: "general" },
-  { id: "audio", name: "ui.recognition.343bc8", icon: "audio" },
-  { id: "models", name: "ui.models.f3798f", icon: "models" },
-  { id: "output", name: "ui.output.4bed33", icon: "output" },
-  { id: "cleanup", name: "ui.ai_cleanup.05cb5b", icon: "cleanup" },
-  { id: "advanced", name: "ui.advanced.4d0647", icon: "advanced" },
-  { id: "config", name: "ui.config.885114", icon: "config" },
+export const pages: { id: Page; name: string; icon: string; description: string }[] = [
+  {id:"general",name:"ui.general.9239ee",icon:"general",description:"settings.general_hint"},
+  {id:"audio",name:"settings.dictation",icon:"audio",description:"settings.dictation_hint"},
+  {id:"reading",name:"settings.reading",icon:"text",description:"settings.reading_hint"},
+  {id:"models",name:"settings.models",icon:"models",description:"settings.models_hint"},
+  {id:"cleanup",name:"ui.text_cleanup.52f093",icon:"cleanup",description:"settings.cleanup_hint"},
+  {id:"advanced",name:"settings.system",icon:"system",description:"settings.system_hint"},
 ];
 export const deliveryOptions: [DeliveryMode, string][] = [
   ["smart_paste", "ui.smart_paste.883633"],
@@ -17,6 +16,7 @@ export const deliveryOptions: [DeliveryMode, string][] = [
   ["paste_ctrl_v", "ui.ctrl_v.652c7d"],
 ];
 export const fields: Record<string, FieldSpec> = {
+  shortcutReminders: { path: "general.shortcut_reminders", label: "ui.shortcut_reminders", type: "checkbox", help: "ui.shortcut_reminders_help" },
   enabled: { path: "general.enabled", label: "ui.simple_stt.d84a2c", type: "checkbox" },
   shortcutSystem: {
     path: "general.linux_hotkey_backend",
@@ -63,10 +63,19 @@ export const fields: Record<string, FieldSpec> = {
       ["dark", "ui.dark.ae1ef0"],
     ],
   },
+  stopGrace: {
+    path: "audio.stop_grace_ms",
+    label: "ui.stop_grace",
+    type: "range",
+    min: 0,
+    max: 10000,
+    step: 250,
+    help: "ui.stop_grace_help",
+  },
   gain: {
     path: "audio.gain",
     label: "ui.gain.96dd91",
-    type: "number",
+    type: "range",
     min: 0,
     max: 10,
     step: 0.1,
@@ -78,7 +87,7 @@ export const fields: Record<string, FieldSpec> = {
     type: "select",
     options: [
       ["auto", "ui.automatic.ac9041"],
-      ["gpu", "ui.gpu_vulkan.7c5e57"],
+      ["gpu", "ui.gpu_backend"],
       ["cpu", "ui.cpu.ff221d"],
     ],
   },
@@ -86,14 +95,14 @@ export const fields: Record<string, FieldSpec> = {
     path: "output.paced_typing_enabled",
     label: "ui.gradual_typing.e05780",
     type: "checkbox",
-    help: "ui.turn_off_to_insert_the.e880c8",
+    help: "typing.speed_help",
   },
   speed: {
     path: "output.typing_speed_wpm",
     label: "ui.speed.2d2cb0",
     type: "range",
     min: 50,
-    max: 850,
+    max: 1650,
     step: 1,
     suffix: "ui.wpm.3fc2c6",
   },
@@ -132,7 +141,7 @@ export const fields: Record<string, FieldSpec> = {
   timeout: {
     path: "cleanup.timeout_ms",
     label: "ui.timeout_ms.8b6678",
-    type: "number",
+    type: "range",
     min: 15000,
     max: 120000,
     help: "ui.on_failure_or_timeout_the.43084f",
@@ -140,7 +149,7 @@ export const fields: Record<string, FieldSpec> = {
   tokens: {
     path: "cleanup.max_output_tokens",
     label: "ui.output_limit.63e1b0",
-    type: "number",
+    type: "range",
     min: 64,
     max: 32768,
     help: "ui.maximum_generated_tokens.bb5534",
@@ -169,14 +178,14 @@ export const fields: Record<string, FieldSpec> = {
   imageSize: {
     path: "cleanup.screenshot.max_edge_pixels",
     label: "ui.image_size_px.1bc868",
-    type: "number",
+    type: "range",
     min: 320,
     max: 4096,
   },
   quality: {
     path: "cleanup.screenshot.jpeg_quality",
     label: "ui.jpeg_quality.e85408",
-    type: "number",
+    type: "range",
     min: 20,
     max: 100,
   },
@@ -189,15 +198,18 @@ export const fields: Record<string, FieldSpec> = {
   idle: {
     path: "speech.idle_worker_timeout_secs",
     label: "ui.worker_idle_sec.3e9c4b",
-    type: "number",
-    min: 0,
+    type: "range",
+    min: 1,
+    max: 3600,
     help: "ui.worker_exit_releases_model_ram.28bfee",
   },
   grace: {
     path: "speech.worker_shutdown_grace_ms",
     label: "ui.shutdown_grace_ms.ced86b",
-    type: "number",
-    min: 0,
+    type: "range",
+    min: 250,
+    max: 30000,
+    step: 250,
   },
   logs: {
     path: "diagnostics.log_level",
@@ -235,26 +247,27 @@ export const hotkeys = [
   ["general.toggle_delivery_hotkey", "ui.switch_delivery.02b21d"],
   ["general.toggle_cleanup_hotkey", "ui.toggle_ai_cleanup.c7e3d1"],
   ["general.retry_delivery_hotkey", "ui.retry_last_dictation.a48897"],
+  ["general.show_shortcuts_hotkey", "ui.show_shortcuts"],
 ] as const;
 const pageFor = (path: string): Page =>
-  path.startsWith("diagnostics.") ||
-  [
-    "speech.runtime_dir",
-    "speech.model_dir",
-    "speech.idle_worker_timeout_secs",
-    "speech.worker_shutdown_grace_ms",
-  ].includes(path)
-    ? "advanced"
-    : path.startsWith("speech.") || path.startsWith("audio.")
-      ? "audio"
-      : path.startsWith("general.")
-        ? "general"
-        : path.startsWith("output.")
-          ? "output"
-          : "cleanup";
+ path.startsWith("diagnostics.") || ["speech.idle_worker_timeout_secs","speech.worker_shutdown_grace_ms"].includes(path) ? "advanced" :
+ path.startsWith("speech.") || ["cleanup.provider","cleanup.openai_compatible.base_url"].includes(path) ? "models" :
+ path.startsWith("audio.") || path.startsWith("output.") || path==="general.recording_mode" ? "audio" :
+ path.startsWith("general.") ? "general" : "cleanup";
 export const searchEntries = [
+ {path:"tts.voice",label:"reading.voice",page:"models" as Page,aliases:"voice accent speaker language صوت نبرة لغة"},
+ {path:"tts.steps",label:"module.steps",page:"models" as Page,aliases:"Supertonic quality synthesis جودة"},
+ {path:"read_along.delay_ms",label:"reading.read_along_delay",page:"reading" as Page,aliases:"read along page advance space screenshot delay قراءة متتابعة صفحة"},
+ {path:"reading.clean_text",label:"module.clean_text",page:"reading" as Page,aliases:"asterisk markdown spoken text cleaning نجمة تنظيف النص"},
+ {path:"reading.speed",label:"settings.reading_speed",page:"reading" as Page,aliases:"narration speed rate سرعة القراءة"},
+ {path:"reader-server",label:"reading.server",page:"advanced" as Page,aliases:"host headless OpenAI API token خادم رمز"},
+
+  { path: "tts.edit-language", label: "reading.speech", page: "models" as Page, aliases: "TTS read aloud Kokoro Supertonic تحويل النص إلى كلام قراءة صوتية" },
+  { path: "ocr.single.model", label: "reading.ocr", page: "models" as Page, aliases: "OCR Paddle PaddleOCR screenshot image text استخراج النص صورة" },
+  { path: "selection_copy.shortcut", label: "reading.copy_title", page: "reading" as Page, aliases: "copy selection clipboard نسخ تحديد حافظة" },
+  { path: "model-search", label: "assets.title", page: "models" as Page, aliases: "download runtime model installed recommended NVIDIA CUDA Vulkan voice recognition read aloud image text تنزيل نماذج بيئات مثبت موصى إنفيديا" },
   ...Object.values(fields).map((f) => ({ ...f, page: pageFor(f.path) })),
-  ...hotkeys.map(([path, label]) => ({ path, label, page: "general" as Page })),
+  ...hotkeys.map(([path, label]) => ({ path, label, page: "audio" as Page })),
   {
     path: "general.ui_language",
     label: "ui.language.89b86a",
@@ -263,7 +276,7 @@ export const searchEntries = [
   {
     path: "speech.selection_mode",
     label: "ui.model_selection_keyboard_languages.d7d7f8",
-    page: "audio" as Page,
+    page: "models" as Page,
   },
   {
     path: "audio.preferred_device_id",
@@ -273,12 +286,12 @@ export const searchEntries = [
   {
     path: "output.app_overrides",
     label: "ui.app_overrides.9e577a",
-    page: "output" as Page,
+    page: "audio" as Page,
   },
   {
     path: "output.linux_delivery_cycle",
     label: "ui.delivery_tools_paste.b60d4c",
-    page: "output" as Page,
+    page: "audio" as Page,
   },
   {
     path: "cleanup.screenshot.excluded_apps",
@@ -288,7 +301,7 @@ export const searchEntries = [
   {
     path: "cleanup.openai_compatible.model",
     label: "ui.cleanup_model.eddd54",
-    page: "cleanup" as Page,
+    page: "models" as Page,
   },
 ];
 export function fuzzyScore(query: string, text: string): number {

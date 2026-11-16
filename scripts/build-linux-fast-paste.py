@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build resources/bin/linux-fast-paste when Linux development headers exist.
 
-This script is best-effort: if optional XTest/GIO/AT-SPI/uinput headers are not
+This script is best-effort: if optional X11/GIO/AT-SPI headers are not
 installed, it prints a clear warning and exits 0 so Rust tests are not blocked.
 """
 from __future__ import annotations
@@ -69,13 +69,11 @@ def main() -> int:
     if not cc:
         print("[linux-fast-paste] no C compiler found; skipping")
         return 0
-    if not (pkg_exists("x11") and pkg_exists("xtst")):
-        print("[linux-fast-paste] libx11/libxtst development packages missing; skipping native helper")
+    if not pkg_exists("x11"):
+        print("[linux-fast-paste] libx11 development packages missing; skipping native helper")
         return 0
 
-    flags = ["-O2", str(SRC), "-o", str(OUT), *pkg_flags("x11"), *pkg_flags("xtst")]
-    if can_include("linux/uinput.h"):
-        flags.append("-DHAVE_UINPUT")
+    flags = ["-O2", str(SRC), "-o", str(OUT), *pkg_flags("x11")]
     if pkg_exists("gio-2.0"):
         flags.extend(["-DHAVE_GIO", *pkg_flags("gio-2.0")])
     if pkg_exists("atspi-2"):
@@ -89,7 +87,7 @@ def main() -> int:
     print("[linux-fast-paste] compiling", cc, " ".join(flags))
     proc = subprocess.run([cc, *flags])
     if proc.returncode != 0:
-        print("[linux-fast-paste] compile failed; automatic paste will use wl-copy/wtype/ydotool/xdotool fallbacks")
+        print("[linux-fast-paste] compile failed; read-only desktop helper unavailable; input still requires the portal")
         return 0
     OUT.chmod(0o755)
     HASH.write_text(digest + "\n")

@@ -91,6 +91,9 @@ The shell now owns this behavior and sends literal Unicode with AHK `SendText()`
 
 ## Old model behavior
 
+The historical behavior below is not the initial setup of the current app:
+new installations start with no selected dictation model or native runtime.
+
 The monolith loaded `parakeet.dll` and the selected GGUF model directly in its own resident process. The idle watcher requested `UnloadParakeetContext` every five seconds once the configured timeout had elapsed. This could free native context and VRAM while leaving allocator/process RAM resident.
 
 The new guarantee is stronger: only `simple-stt-infer.exe` loads Parakeet. Cleanup is verified by worker process exit rather than trusting DLL unload.
@@ -147,4 +150,33 @@ external\\parakeet-runtime\\models\\tdt_ctc-110m-q8_0.gguf
 external\\parakeet-runtime\\models\\lemura-arabic-asr-lite-q8_0.gguf
 ```
 
-A Windows target, AutoHotkey v2 for development, Cargo/Rust, CPAL-compatible microphone device, and the Vulkan Parakeet runtime are required for Windows end-to-end validation. Linux manual-language operation uses the matching Linux Vulkan runtime and the same model directory.
+A Windows target, AutoHotkey v2 for development, Cargo/Rust, CPAL-compatible microphone device, and the Vulkan Parakeet runtime are required for Windows end-to-end validation. Linux dictation requires an installed CUDA or Vulkan runtime and an assigned model.
+
+## Shortcut reminders
+
+Assigned shortcuts appear as a compact localized list beneath active overlay
+states and notices. General → Shortcuts → Shortcut reminders disables this list
+(default: on). Show shortcuts displays the list for eight seconds independently
+of the toggle and leaves recording/delivery running. Assign its shortcut in the
+same Settings group; KDE/Wayland assignments remain desktop-owned, while native
+X11 and Windows expose the usual shortcut recorder. Windows defaults to
+CapsLock+H and X11 to Meta+Ctrl+H. Unassigned actions are omitted. Linux uses
+registered portal/X11 trigger descriptions, never suggested config defaults;
+compositor command bindings are not discoverable and are not invented.
+
+Retry registers a delivery session before waiting for shortcut release. The
+overlay keeps “Release keys” visible while the shortcut is held, then shows the
+effective Typing/Pasting state. Completion and failure clear the active state;
+late progress or completion cannot replace newer work.
+
+Overlay shortcuts use separate keycaps, such as [Meta][Ctrl][.], with standard
+Unicode emoji for recording, cancel, delivery, cleanup, retry and shortcut help.
+The same icon text feeds Linux and Windows tooltips. Linux uses the desktop's
+emoji font and draws only keycap outlines; Windows retains native Common
+Controls styling and bracketed notation. Keycaps stay together when wrapping;
+keyboard notation stays left-to-right in Arabic. The recording shortcut uses
+🔴, while the waveform header keeps its microphone.
+
+The Linux base package leaves speech/OCR runtime and model installation to Settings → Downloads; it bundles the compressed fastText language-identification model. CUDA/Vulkan dictation and the integrated Kokoro/Supertonic/PaddleOCR reading routes use separate optional assets. Dictation defaults to keyboard-language routing, reading defaults to automatic text-language routing, and OCR defaults to a single Paddle selection. Reading settings use the existing explicit Save bar; the main shell owns reading shortcuts and tray actions. Reading workers, API providers, OCR, clipboard listening, chunk navigation and cancellation are adapted from Simple TTS under `reader/crates/`, without depending on that checkout.
+
+Mode-based assignments show one editor for the selected language, with explicit assignments only and no general fallback. Voice speed is local to the assignment; background timeouts remain shared per module. The default recording finish delay is 500 ms. Normal completed work stays warm until its configured independent idle timeout; memory estimates do not evict a just-used worker. The local reading tooltip shows the current prepared spoken passage, while notification privacy remains separate.

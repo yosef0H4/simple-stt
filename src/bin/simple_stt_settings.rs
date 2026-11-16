@@ -11,7 +11,7 @@ use simple_stt::common::shell_protocol::{
 use simple_stt::config::AppConfig;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Ipv4Addr, TcpListener, TcpStream};
+use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::process::Command;
@@ -34,8 +34,17 @@ struct Args {
     state_file: Option<PathBuf>,
     #[arg(long)]
     service_token: Option<String>,
-    #[arg(long, hide = true)]
+    #[arg(long)]
     no_browser: bool,
+    /// Explicitly expose browser administration. The default remains loopback only.
+    #[arg(long, default_value = "127.0.0.1:0")]
+    listen: SocketAddr,
+    /// Browser origin, e.g. http://server:8765. Required for non-loopback listeners.
+    #[arg(long)]
+    public_url: Option<String>,
+    /// Read the administration token from a file instead of generating a session token.
+    #[arg(long)]
+    token_file: Option<PathBuf>,
 }
 
 #[derive(Clone)]
@@ -45,6 +54,8 @@ struct CaptureConnection {
 }
 
 struct AppState {
+    build_id: String,
+    assets: simple_stt::assets::Manager,
     web_token: String,
     origin: String,
     capture: Option<CaptureConnection>,
@@ -82,9 +93,12 @@ struct CleanupActionRequest {
 
 #[derive(Serialize, Deserialize)]
 struct SettingsSession {
+    instance_id: String,
+    build_id: String,
     pid: u32,
     origin: String,
     token: String,
+    remote_admin: bool,
 }
 
 // Keep this file in place: unlinking a locked file would let another launcher
@@ -97,10 +111,13 @@ struct SettingsInstance {
 impl Drop for SettingsInstance {
     fn drop(&mut self) {
         if let Some(owned) = &self.session {
-            if let Ok(bytes) = fs::read(settings_session_path()) {
+            if let Ok(bytes) = fs::read(settings_session_path(&owned.instance_id)) {
                 if let Ok(current) = serde_json::from_slice::<SettingsSession>(&bytes) {
-                    if current.pid == owned.pid && current.token == owned.token {
-                        let _ = fs::remove_file(settings_session_path());
+                    if current.instance_id == owned.instance_id
+                        && current.pid == owned.pid
+                        && current.token == owned.token
+                    {
+                        let _ = fs::remove_file(settings_session_path(&current.instance_id));
                     }
                 }
             }
@@ -122,7 +139,48 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::parse();
-    let mut instance = match settings_launch()? {
+    let remote =
+        !args.listen.ip().is_loopback() || args.public_url.is_some() || args.token_file.is_some();
+    anyhow::ensure!(
+        args.public_url.is_some() == args.token_file.is_some(),
+        "--public-url and --token-file must be provided together"
+    );
+    anyhow::ensure!(
+        args.listen.ip().is_loopback() || args.public_url.is_some(),
+        "remote administration requires --public-url and --token-file"
+    );
+    anyhow::ensure!(
+        !remote || args.listen.port() != 0,
+        "remote administration requires an explicit --listen port"
+    );
+    let public_origin = args
+        .public_url
+        .as_deref()
+        .map(validate_public_origin)
+        .transpose()?;
+    let web_token = if let Some(path) = &args.token_file {
+        let value = fs::read_to_string(path).context("reading administration token file")?;
+        let value = value.trim();
+        anyhow::ensure!(
+            (32..=512).contains(&value.len()) && !value.chars().any(char::is_whitespace),
+            "administration token must contain 32 to 512 non-whitespace bytes"
+        );
+        value.to_owned()
+    } else {
+        random_token()
+    };
+    let build_id = executable_build_id()?;
+    let instance_id = if remote {
+        format!(
+            "{build_id}-remote-{}",
+            hash_bytes(
+                format!("{}|{}", args.listen, public_origin.as_deref().unwrap_or("")).as_bytes()
+            )
+        )
+    } else {
+        build_id.clone()
+    };
+    let mut instance = match settings_launch(&instance_id)? {
         SettingsLaunch::Start(instance) => instance,
         SettingsLaunch::Reuse(url) => {
             if !args.no_browser {
@@ -132,17 +190,18 @@ fn run() -> Result<()> {
             return Ok(());
         }
     };
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    let listener = TcpListener::bind(args.listen)?;
     let address = listener.local_addr()?;
+    let origin = public_origin.unwrap_or_else(|| format!("http://{address}"));
     let server = Server::from_listener(listener, None)
         .map_err(|error| anyhow::anyhow!("starting settings server: {error}"))?;
-    let web_token = random_token();
-    let origin = format!("http://127.0.0.1:{}", address.port());
     let capture = match (args.state_file, args.service_token) {
         (Some(state_file), Some(token)) => Some(CaptureConnection { state_file, token }),
         _ => None,
     };
     let state = Arc::new(AppState {
+        build_id: build_id.clone(),
+        assets: simple_stt::assets::Manager::default(),
         web_token: web_token.clone(),
         origin: origin.clone(),
         capture,
@@ -151,11 +210,35 @@ fn run() -> Result<()> {
         config_lock: Mutex::new(()),
         cleanup_auth_status: Arc::new(Mutex::new(json!({"state":"idle"}))),
     });
-    let url = format!("{origin}/#token={web_token}");
+    let weak_state = Arc::downgrade(&state);
+    state.assets.set_completion_hook(Arc::new(move |id| {
+        match simple_stt::modules::persist_auto_select(id) {
+            Ok(changes) => {
+                if changes.stt {
+                    if let Some(state) = weak_state.upgrade() {
+                        let _ = capture_request(&state, ShellCommand::ReloadConfig);
+                    }
+                }
+                changes.stt || changes.reader
+            }
+            Err(error) => {
+                eprintln!("automatic selection after download failed: {error:#}");
+                false
+            }
+        }
+    }));
+    let url = if remote || args.token_file.is_some() {
+        format!("{origin}/")
+    } else {
+        format!("{origin}/#token={web_token}")
+    };
     let session = SettingsSession {
+        instance_id: instance_id.clone(),
+        build_id,
         pid: std::process::id(),
         origin: origin.clone(),
         token: web_token.clone(),
+        remote_admin: remote,
     };
     write_session(&session)?;
     instance.session = Some(session);
@@ -164,7 +247,7 @@ fn run() -> Result<()> {
         open_url(&url)?;
     }
     while !state.closing.load(Ordering::Relaxed) {
-        if state.last_activity.lock().expect("activity lock").elapsed() > IDLE_TIMEOUT {
+        if !remote && state.last_activity.lock().expect("activity lock").elapsed() > IDLE_TIMEOUT {
             break;
         }
         if let Some(request) = server.recv_timeout(Duration::from_millis(500))? {
@@ -220,6 +303,123 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
     validate_origin(request, state)?;
     match (request.method(), path) {
         (&Method::Get, "/api/state") => state_response(state),
+        (&Method::Get, "/api/modules") => Ok(json_response(
+            StatusCode(200),
+            &simple_stt::modules::inventory(&AppConfig::load()?),
+            state,
+        )),
+        (&Method::Get, "/api/assets") => {
+            let catalog = simple_stt::assets::catalog();
+            let assets = catalog.iter().map(|asset|json!({"id":asset.id,"label":asset.label,"kind":asset.kind,
+                "bytes":asset.bytes + asset.dependencies.iter().filter_map(|id|catalog.iter().find(|a|a.id==*id)).filter(|a|!simple_stt::assets::installed_at(&simple_stt::assets::root(),a)).map(|a|a.bytes).sum::<u64>(),
+                "installed":simple_stt::assets::installed_at(&simple_stt::assets::root(),asset),
+                "available":simple_stt::assets::available(asset),"directory":simple_stt::assets::directory(&asset.id),"dependencies":asset.dependencies})).collect::<Vec<_>>();
+            Ok(json_response(
+                StatusCode(200),
+                &json!({"assets":assets,"progress":state.assets.status(),"jobs":state.assets.jobs(),"selection_revision":state.assets.selection_revision()}),
+                state,
+            ))
+        }
+        (&Method::Post, "/api/asset-action") => {
+            let action: Value = serde_json::from_slice(&read_body(request)?)?;
+            let id = action["id"].as_str().unwrap_or("");
+            match action["action"].as_str().unwrap_or("") {
+                "install" => state.assets.start(id)?,
+                "cancel" => state.assets.cancel(id),
+                "remove" => {
+                    let reader = simple_stt::reader::load()?;
+                    anyhow::ensure!(
+                        !simple_stt::assets::assigned(id, &AppConfig::load()?, &reader),
+                        "Remove this asset from saved model and runtime assignments before deleting it"
+                    );
+                    state.assets.remove(id)?;
+                }
+                _ => anyhow::bail!("Unknown asset action"),
+            }
+            Ok(json_response(StatusCode(200), &json!({"ok":true}), state))
+        }
+        (&Method::Get, "/api/reader") => Ok(json_response(
+            StatusCode(200),
+            &simple_stt::reader::state()?,
+            state,
+        )),
+        (&Method::Get, "/api/reader-status") => Ok(json_response(
+            StatusCode(200),
+            &json!({"status":simple_stt::reader::status()}),
+            state,
+        )),
+        (&Method::Post, "/api/reader-save") => {
+            let payload: Value = serde_json::from_slice(&read_body(request)?)?;
+            let config: reader_core::AppConfig = serde_json::from_value(payload["config"].clone())?;
+            let expected = payload["expected_revision"]
+                .as_u64()
+                .context("Missing reading revision")?;
+            let previous = simple_stt::reader::load()?;
+            let online = simple_stt::reader::status().is_some();
+            let config = simple_stt::reader::store().save(config, expected)?;
+            if online && previous.server != config.server {
+                simple_stt::reader::action("server_stop", "")?;
+                if config.server.enabled {
+                    simple_stt::reader::action("server_start", "")?;
+                }
+            }
+            let _ = capture_request(state, ShellCommand::ReloadConfig);
+            Ok(json_response(
+                StatusCode(200),
+                &json!({"config":config}),
+                state,
+            ))
+        }
+        (&Method::Post, "/api/reader-action") => {
+            let payload: Value = serde_json::from_slice(&read_body(request)?)?;
+            let name = payload["action"]
+                .as_str()
+                .context("Missing reading action")?;
+            let message = simple_stt::reader::action(name, payload["text"].as_str().unwrap_or(""))?;
+            Ok(json_response(
+                StatusCode(200),
+                &json!({"message":message}),
+                state,
+            ))
+        }
+        (&Method::Post, "/api/reader-server-key") => {
+            let key = reader_core::secrets::server_key()?
+                .context("Start the local API before showing its token")?;
+            Ok(json_response(StatusCode(200), &json!({"token":key}), state))
+        }
+        (&Method::Post, "/api/reader-secrets") => {
+            let payload: Value = serde_json::from_slice(&read_body(request)?)?;
+            if let Some(key) = payload["stt"].as_str().filter(|k| !k.trim().is_empty()) {
+                secrets::set_stt_api_key(key)?;
+            }
+            if payload["clear_stt"].as_bool() == Some(true) {
+                secrets::delete_stt_api_key()?;
+            }
+            if let Some(key) = payload["speech"].as_str().filter(|k| !k.trim().is_empty()) {
+                reader_core::secrets::set_speech_key(key)?;
+            }
+            if let Some(key) = payload["ocr"].as_str().filter(|k| !k.trim().is_empty()) {
+                reader_core::secrets::set_ocr_key(key)?;
+            }
+            if payload["clear_speech"].as_bool() == Some(true) {
+                reader_core::secrets::delete_speech_key()?;
+            }
+            if payload["clear_ocr"].as_bool() == Some(true) {
+                reader_core::secrets::delete_ocr_key()?;
+            }
+            Ok(json_response(StatusCode(200), &json!({"ok":true}), state))
+        }
+        (&Method::Post, "/api/provider-discovery") => {
+            let discovery: simple_stt::provider_discovery::DiscoveryRequest =
+                serde_json::from_slice(&read_body(request)?)?;
+            let saved = saved_discovery_key(&discovery)?;
+            let result = simple_stt::provider_discovery::discover(&discovery, saved)?;
+            Ok(json_response(
+                StatusCode(200),
+                &serde_json::to_value(result)?,
+                state,
+            ))
+        }
         (&Method::Get, "/api/keyboard-languages") => Ok(json_response(
             StatusCode(200),
             &serde_json::to_value(simple_stt::capture::input_language::keyboard_languages())?,
@@ -227,7 +427,7 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
         )),
         (&Method::Get, "/api/health") => Ok(json_response(
             StatusCode(200),
-            &json!({"ok": !state.closing.load(Ordering::Relaxed), "pid":std::process::id()}),
+            &json!({"ok": !state.closing.load(Ordering::Relaxed), "pid":std::process::id(), "build_id":state.build_id}),
             state,
         )),
         (&Method::Get, "/api/defaults") => Ok(json_response(
@@ -248,14 +448,6 @@ fn handle(request: &mut Request, state: &AppState) -> Result<Response<std::io::C
             ))
         }
         (&Method::Post, "/api/save") => save_response(request, state),
-        (&Method::Post, "/api/model-setup") => {
-            let choice: simple_stt::model_setup::ModelSetupChoice =
-                serde_json::from_slice(&read_body(request)?)?;
-            let _config_guard = state.config_lock.lock().expect("config lock");
-            let config = AppConfig::load()?;
-            simple_stt::model_setup::accept_choice(&AppConfig::local_data_dir(), &config, choice)?;
-            Ok(json_response(StatusCode(200), &json!({"ok":true}), state))
-        }
         (&Method::Post, "/api/action") => action_response(request, state),
         (&Method::Post, "/api/cleanup-action") => cleanup_action_response(request, state),
         (&Method::Post, "/api/platform-action") => platform_action(request, state),
@@ -354,29 +546,6 @@ fn locate_hotkey_recorder() -> Result<(PathBuf, PathBuf)> {
     Ok((runtime, script))
 }
 
-fn model_setup_state(config: &AppConfig) -> Result<Value> {
-    let models = simple_stt::models::catalog_for_config(config);
-    let recommended = simple_stt::model_setup::recommended_files(config)?;
-    let missing = [
-        recommended.english_file.as_str(),
-        recommended.arabic_file.as_str(),
-    ]
-    .iter()
-    .any(|file| {
-        !models
-            .iter()
-            .any(|model| model.file == *file && model.installed)
-    });
-    let (show, pending) =
-        simple_stt::model_setup::prompt_state(&AppConfig::local_data_dir(), missing)?;
-    Ok(json!({
-        "show": show,
-        "pending": pending,
-        "english_file": recommended.english_file,
-        "arabic_file": recommended.arabic_file
-    }))
-}
-
 fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
     let config_guard = state.config_lock.lock().expect("config lock");
     let path = AppConfig::config_path();
@@ -401,21 +570,12 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             ))
         }
     };
-    let setup_outcome = simple_stt::model_setup::finalize_pending(
-        &AppConfig::local_data_dir(),
-        &path,
-        &mut config,
-    )?;
-    if setup_outcome == simple_stt::model_setup::FinalizeOutcome::Applied {
-        let _ = capture_request(state, ShellCommand::ReloadConfig);
-    }
     cleanup::apply_development_env(&mut config.cleanup);
     raw = fs::read(&path)?;
     let models = simple_stt::models::catalog_for_config(&config)
         .into_iter()
         .map(|model| json!({"family":model.family,"quant":model.quant,"file":model.file,"size_mb":model.size_mb,"recommended":model.recommended,"installed":model.installed,"languages":model.languages,"download_url":model.download_url}))
         .collect::<Vec<_>>();
-    let model_setup = model_setup_state(&config)?;
     drop(config_guard);
     let service_online = capture_request(state, ShellCommand::Ping).is_ok();
     let microphones = if service_online {
@@ -450,6 +610,7 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "config_hash":hash_bytes(&raw),
             "config_path":AppConfig::config_path(),
             "resolved_runtime_dir":config.parakeet_runtime_dir_path(),
+            "runtime_ready":simple_stt::config::parakeet_native_library_candidates(&config.parakeet_runtime_dir_path()).iter().any(|p|p.is_file()),
             "resolved_model_dir":config.model_dir_path(),
             "ui_localization":simple_stt::localization::state(config.general.ui_language),
             "platform":if cfg!(windows){"windows"}else if cfg!(target_os="linux"){"linux"}else{"other"},
@@ -460,8 +621,8 @@ fn state_response(state: &AppState) -> Result<Response<std::io::Cursor<Vec<u8>>>
             "microphones":microphones,
             "keyboard_languages":simple_stt::capture::input_language::keyboard_languages(),
             "models":models,
-            "model_setup":model_setup
-            ,"cleanup": {
+
+            "cleanup": {
                 "compatible_key_saved": compatible_key_saved,
                 "chatgpt_connected": chatgpt_connected,
                 "auth_status": cleanup_auth_status,
@@ -581,13 +742,6 @@ fn linux_automation_state() -> Value {
             .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(name).is_file()))
     };
     let wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-    let ydotool_daemon = Command::new("pidof")
-        .arg("ydotoold")
-        .output()
-        .is_ok_and(|output| output.status.success());
-    let native = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("resources/bin/linux-fast-paste")
-        .is_file();
     let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
     let release_value = |key: &str| {
         os_release
@@ -599,37 +753,14 @@ fn linux_automation_state() -> Value {
             .unwrap_or_default()
     };
     let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_else(|_| "Unknown desktop".into());
-    let desktop_lower = desktop.to_ascii_lowercase();
-    let recommended = if !wayland && exists("xdotool") {
-        "xdotool"
-    } else if wayland
-        && (desktop_lower.contains("kde") || desktop_lower.contains("plasma"))
-        && native
-    {
-        "native"
-    } else if wayland && desktop_lower.contains("gnome") && ydotool_daemon {
-        "ydotool"
-    } else if wayland && exists("wtype") {
-        "wtype"
-    } else if ydotool_daemon {
-        "ydotool"
-    } else if native {
-        "native"
-    } else {
-        "clipboard_only"
-    };
     json!({
         "session": if wayland { "Wayland" } else { "X11" },
         "desktop": desktop,
         "distro": release_value("PRETTY_NAME"),
         "distro_id": release_value("ID"),
         "wl_clipboard": exists("wl-copy") && exists("wl-paste"),
-        "wtype": exists("wtype"),
-        "ydotool": exists("ydotool"),
-        "ydotool_daemon": ydotool_daemon,
-        "xdotool": exists("xdotool"),
-        "native": native,
-        "recommended": recommended,
+        "recommended": "portal",
+        "portal": true,
         "start_command": "systemctl --user start simple-stt-linux.service",
         "stop_command": "simple-stt-linux shutdown"
     })
@@ -655,6 +786,7 @@ fn save_response(
     state: &AppState,
 ) -> Result<Response<std::io::Cursor<Vec<u8>>>> {
     let _config_guard = state.config_lock.lock().expect("config lock");
+    let _shared_guard = simple_stt::config::lock_config()?;
     let body: SaveRequest = serde_json::from_slice(&read_body(request)?)?;
     let path = AppConfig::config_path();
     let current = fs::read(&path).unwrap_or_default();
@@ -667,6 +799,7 @@ fn save_response(
     config.validate()?;
     config.save()?;
     let raw = fs::read(path)?;
+    drop(_shared_guard);
     let reloaded = capture_request(state, ShellCommand::ReloadConfig).is_ok();
     Ok(json_response(
         StatusCode(200),
@@ -683,6 +816,9 @@ fn action_response(
     let command = match body.action.as_str() {
         "refresh_models" => ShellCommand::RefreshModels,
         "download_model" => ShellCommand::DownloadModel {
+            filename: body.filename,
+        },
+        "cancel_model_download" => ShellCommand::CancelModelDownload {
             filename: body.filename,
         },
         "remove_model" => ShellCommand::RemoveModel {
@@ -765,6 +901,10 @@ fn platform_action(
                 .parent()
                 .context("config has no parent")?,
         )?,
+        "show_shortcuts" => {
+            let response = capture_request(state, ShellCommand::ShowShortcuts)?;
+            anyhow::ensure!(response.ok, "{}", response.message);
+        }
         "configure_shortcuts" => configure_shortcuts()?,
         "sync_shortcuts" => configure_shortcuts()?,
         _ => anyhow::bail!("unsupported platform action"),
@@ -903,6 +1043,35 @@ fn parse_indexed_values(response: &ShellResponse, prefix: &str) -> Vec<Value> {
         .collect()
 }
 
+fn saved_discovery_key(
+    request: &simple_stt::provider_discovery::DiscoveryRequest,
+) -> Result<Option<String>> {
+    let configured = match request.feature.as_str() {
+        "stt" => AppConfig::load()?.speech.remote_openai_compatible.base_url,
+        "cleanup" => AppConfig::load()?.cleanup.openai_compatible.base_url,
+        "tts" => match simple_stt::reader::load()?.speech.provider {
+            reader_core::SpeechProvider::OpenAiCompatible { base_url, .. } => base_url,
+            _ => String::new(),
+        },
+        "ocr" => match simple_stt::reader::load()?.ocr.provider {
+            reader_core::OcrProvider::OpenAiCompatible { base_url, .. } => base_url,
+            _ => String::new(),
+        },
+        _ => String::new(),
+    };
+    let same = |a: &str, b: &str| a.trim().trim_end_matches('/') == b.trim().trim_end_matches('/');
+    if !same(&configured, &request.base_url) {
+        return Ok(None);
+    }
+    Ok(match request.feature.as_str() {
+        "stt" => secrets::stt_api_key()?,
+        "cleanup" => secrets::compatible_api_key()?,
+        "tts" => reader_core::secrets::speech_key()?,
+        "ocr" => reader_core::secrets::ocr_key()?,
+        _ => None,
+    })
+}
+
 fn read_body(request: &mut Request) -> Result<Vec<u8>> {
     let length = request.body_length().unwrap_or(0);
     anyhow::ensure!(length <= MAX_BODY, "request body is too large");
@@ -916,7 +1085,10 @@ fn read_body(request: &mut Request) -> Result<Vec<u8>> {
 }
 
 fn authenticate(request: &Request, state: &AppState) -> Result<()> {
-    let token = header(request, "X-Simple-STT-Token").unwrap_or_default();
+    let token = header(request, "Authorization")
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .or_else(|| header(request, "X-Simple-STT-Token"))
+        .unwrap_or_default();
     anyhow::ensure!(
         constant_time_eq(token.as_bytes(), state.web_token.as_bytes()),
         "unauthorized"
@@ -925,21 +1097,51 @@ fn authenticate(request: &Request, state: &AppState) -> Result<()> {
 }
 
 fn validate_host(request: &Request, state: &AppState) -> Result<()> {
-    let expected = state.origin.trim_start_matches("http://");
-    anyhow::ensure!(
-        header(request, "Host") == Some(expected),
-        "invalid Host header"
-    );
+    let hosts = request
+        .headers()
+        .iter()
+        .filter(|header| header.field.equiv("Host"))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(hosts.len() == 1, "missing or multiple Host headers");
+    let expected = state
+        .origin
+        .strip_prefix("http://")
+        .or_else(|| state.origin.strip_prefix("https://"))
+        .context("invalid configured origin")?;
+    anyhow::ensure!(hosts[0].value.as_str() == expected, "invalid Host header");
     Ok(())
 }
 
 fn validate_origin(request: &Request, state: &AppState) -> Result<()> {
-    if let Some(origin) = header(request, "Origin") {
-        anyhow::ensure!(origin == state.origin, "invalid Origin header");
+    let origins = request
+        .headers()
+        .iter()
+        .filter(|header| header.field.equiv("Origin"))
+        .collect::<Vec<_>>();
+    anyhow::ensure!(origins.len() <= 1, "multiple Origin headers");
+    if let Some(origin) = origins.first() {
+        anyhow::ensure!(
+            origin.value.as_str() == state.origin,
+            "invalid Origin header"
+        );
     }
     Ok(())
 }
 
+fn validate_public_origin(value: &str) -> Result<String> {
+    let url = url::Url::parse(value).context("invalid --public-url")?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "--public-url must be an HTTP(S) origin without credentials, path, query or fragment"
+    );
+    Ok(url.origin().ascii_serialization())
+}
 fn header<'a>(request: &'a Request, name: &'static str) -> Option<&'a str> {
     request
         .headers()
@@ -997,12 +1199,33 @@ fn random_token() -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn settings_session_path() -> PathBuf {
-    AppConfig::state_dir().join("settings-session.json")
+// The running image may have been replaced by the package manager. On Linux,
+// /proc/self/exe identifies the image actually loaded, even after unlink/rename.
+fn executable_build_id() -> Result<String> {
+    use sha2::{Digest, Sha256};
+    #[cfg(target_os = "linux")]
+    let path = PathBuf::from("/proc/self/exe");
+    #[cfg(not(target_os = "linux"))]
+    let path = std::env::current_exe()?;
+    let mut file = fs::File::open(path).context("reading Settings build identity")?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 32 * 1024];
+    loop {
+        let count = file.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn settings_session_path(instance_id: &str) -> PathBuf {
+    AppConfig::state_dir().join(format!("settings-session-{instance_id}.json"))
 }
 
 fn write_session(session: &SettingsSession) -> Result<()> {
-    let path = settings_session_path();
+    let path = settings_session_path(&session.instance_id);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1010,7 +1233,7 @@ fn write_session(session: &SettingsSession) -> Result<()> {
     Ok(())
 }
 
-fn settings_launch() -> Result<SettingsLaunch> {
+fn settings_launch(instance_id: &str) -> Result<SettingsLaunch> {
     let directory = AppConfig::state_dir();
     fs::create_dir_all(&directory)?;
     let lock = fs::OpenOptions::new()
@@ -1018,13 +1241,14 @@ fn settings_launch() -> Result<SettingsLaunch> {
         .truncate(false)
         .read(true)
         .write(true)
-        .open(directory.join("settings-instance.lock"))?;
+        .open(directory.join(format!("settings-instance-{instance_id}.lock")))?;
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match lock.try_lock() {
             Ok(()) => {
-                // Also reuse a server from an older build without a lock.
-                if let Some(url) = reusable_session_url() {
+                // Reuse only this exact instance. Keep older pages alive so an
+                // upgrade never silently discards their unsaved browser drafts.
+                if let Some(url) = reusable_session_url(instance_id) {
                     return Ok(SettingsLaunch::Reuse(url));
                 }
                 return Ok(SettingsLaunch::Start(SettingsInstance {
@@ -1033,7 +1257,7 @@ fn settings_launch() -> Result<SettingsLaunch> {
                 }));
             }
             Err(fs::TryLockError::WouldBlock) => {
-                if let Some(url) = reusable_session_url() {
+                if let Some(url) = reusable_session_url(instance_id) {
                     return Ok(SettingsLaunch::Reuse(url));
                 }
                 anyhow::ensure!(
@@ -1047,13 +1271,16 @@ fn settings_launch() -> Result<SettingsLaunch> {
     }
 }
 
-fn reusable_session_url() -> Option<String> {
+fn reusable_session_url(instance_id: &str) -> Option<String> {
     let session: SettingsSession =
-        serde_json::from_slice(&fs::read(settings_session_path()).ok()?).ok()?;
+        serde_json::from_slice(&fs::read(settings_session_path(instance_id)).ok()?).ok()?;
+    if session.instance_id != instance_id {
+        return None;
+    }
     let origin = reqwest::Url::parse(&session.origin).ok()?;
     if origin.scheme() != "http"
-        || origin.host_str() != Some("127.0.0.1")
-        || origin.port().is_none()
+        || (!session.remote_admin && origin.host_str() != Some("127.0.0.1"))
+        || (!session.remote_admin && origin.port().is_none())
         || origin.path() != "/"
         || !origin.username().is_empty()
         || origin.password().is_some()
@@ -1076,8 +1303,15 @@ fn reusable_session_url() -> Option<String> {
         return None;
     }
     let health: Value = response.json().ok()?;
-    if health["ok"] == true && health["pid"].as_u64() == Some(u64::from(session.pid)) {
-        Some(format!("{}/#token={}", session.origin, session.token))
+    if health["ok"] == true
+        && health["pid"].as_u64() == Some(u64::from(session.pid))
+        && health["build_id"].as_str() == Some(session.build_id.as_str())
+    {
+        if session.remote_admin {
+            Some(format!("{}/", session.origin))
+        } else {
+            Some(format!("{}/#token={}", session.origin, session.token))
+        }
     } else {
         None
     }

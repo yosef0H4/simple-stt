@@ -1,0 +1,1565 @@
+[
+  {
+    "id": "parakeet-vulkan",
+    "label": "Parakeet · VULKAN",
+    "kind": "dictation",
+    "platform": "linux-x86_64",
+    "url": "https://github.com/mudler/parakeet.cpp/releases/download/v0.5.0/parakeet-v0.5.0-lib-linux-vulkan-x64.tar.gz",
+    "sha256": "a8e7a5af6ef82088a71b0e34708c31bf6ab9f69624bcd2cff2ad7e8c11e7e494",
+    "bytes": 18482077,
+    "format": "tar_gz",
+    "strip": 1,
+    "required": [
+      "libparakeet.so"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "parakeet-cuda",
+    "label": "Parakeet · CUDA",
+    "kind": "dictation",
+    "platform": "linux-x86_64",
+    "url": "https://github.com/mudler/parakeet.cpp/releases/download/v0.5.0/parakeet-v0.5.0-lib-linux-cuda-x64.tar.gz",
+    "sha256": "976d55f45d04f64dc53d6d7815f48abf906f52c70db90a66ab8accff3f1028fe",
+    "bytes": 563569811,
+    "format": "tar_gz",
+    "strip": 1,
+    "required": [
+      "libparakeet.so"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "sherpa-cpu",
+    "label": "Sherpa ONNX · CPU",
+    "kind": "reading",
+    "platform": "linux-x86_64",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-linux-x64-shared-lib.tar.bz2",
+    "sha256": "3892d184be41027e18165e67f549cd4e4cdd8dcd73ac5579e97afd55e14e30b6",
+    "bytes": 9816899,
+    "format": "tar_bz2",
+    "strip": 1,
+    "required": [
+      "lib/libsherpa-onnx-c-api.so"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "sherpa-cuda",
+    "label": "Sherpa ONNX · CUDA",
+    "kind": "reading",
+    "platform": "linux-x86_64",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-13.x-cudnn-9.x-onnxruntime1.28.2-linux-x64-gpu.tar.bz2",
+    "sha256": "7eddaee14a42d143ec995ed68e9ec3623dd6ca9d22076139d4c0879c3121c819",
+    "bytes": 254858007,
+    "format": "tar_bz2",
+    "strip": 1,
+    "required": [
+      "lib/libsherpa-onnx-c-api.so"
+    ],
+    "dependencies": [
+      "cuda-cudnn",
+      "cuda-cublas",
+      "cuda-nvrtc"
+    ]
+  },
+  {
+    "id": "kokoro",
+    "label": "Kokoro · English",
+    "kind": "voice",
+    "platform": "all",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2",
+    "sha256": "60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4",
+    "bytes": 349886476,
+    "format": "tar_bz2",
+    "strip": 1,
+    "required": [
+      "model.onnx",
+      "voices.bin",
+      "tokens.txt",
+      "lexicon-us-en.txt",
+      "lexicon-gb-en.txt",
+      "espeak-ng-data"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "cuda-cudnn",
+    "label": "nvidia-cudnn-cu13",
+    "kind": "dependency",
+    "platform": "linux-x86_64",
+    "url": "https://files.pythonhosted.org/packages/af/75/96ea5c5368eb595c39d629cde08a66227a864e71ccb0e593add2612bb952/nvidia_cudnn_cu13-9.27.0.42-py3-none-manylinux_2_27_x86_64.whl",
+    "sha256": "9677e76f21862eb5da7ee5ed69d544738b2d8b5c3ce7e5ec125c5592e6cdbdc8",
+    "bytes": 536771498,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cudnn/lib/libcudnn.so.9"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "cuda-cublas",
+    "label": "nvidia-cublas",
+    "kind": "dependency",
+    "platform": "linux-x86_64",
+    "url": "https://files.pythonhosted.org/packages/eb/1b/adc70acf3fde509b1f0ca29d1c0e8d9b00aaecd871f8cf877257c8b68d9c/nvidia_cublas-13.8.1.7-py3-none-manylinux_2_27_x86_64.whl",
+    "sha256": "c11a27fd4379510e5b1f84b367a2514d1e52fe5cc13442117a0e0a1addee3cf2",
+    "bytes": 439315821,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cu13/lib/libcublas.so.13",
+      "nvidia/cu13/lib/libcublasLt.so.13"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "cuda-nvrtc",
+    "label": "nvidia-cuda-nvrtc",
+    "kind": "dependency",
+    "platform": "linux-x86_64",
+    "url": "https://files.pythonhosted.org/packages/56/9c/1342ebb460ce2afd014ec5a002adc99108e3c53a6b70f399cf64dd1f267d/nvidia_cuda_nvrtc-13.4.92-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl",
+    "sha256": "5ce8c97b00b232c4f50c8c4b5a3b68cafee08bdb82ea86f2052ff01d03194f4a",
+    "bytes": 53301733,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cu13/lib/libnvrtc.so.13",
+      "nvidia/cu13/lib/libnvrtc-builtins.so.13.4"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det",
+    "label": "paddle-det",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_det.onnx",
+    "sha256": "1eb7b4f7ab657ebd1c66d5f79bca7497f29768a2e3c15e52daecbba1a8e4a039",
+    "bytes": 4826518,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv5_mobile_det.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-dict",
+    "label": "paddle-dict",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_arabic_dict.txt",
+    "sha256": "7f92f7dbb9b75a4787a83bfb4f6d14a8ab515525130c9d40a9036f61cf6999e9",
+    "bytes": 2369,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_arabic_dict.txt",
+    "required": [
+      "ppocrv5_arabic_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-ar-en",
+    "label": "PaddleOCR · Arabic + English",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/arabic_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "2768206d9a0ce48eba45b59619184e18161dde8f44115f029920ca17a9dc0384",
+    "bytes": 8026538,
+    "format": "file",
+    "strip": 0,
+    "filename": "arabic_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_arabic_dict.txt",
+      "arabic_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_arabic_dict.txt": "paddle-dict/ppocrv5_arabic_dict.txt"
+    }
+  },
+  {
+    "id": "supertonic3",
+    "label": "Supertonic 3 · multilingual",
+    "kind": "voice",
+    "platform": "all",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+    "sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+    "bytes": 128774318,
+    "format": "tar_bz2",
+    "strip": 1,
+    "required": [
+      "duration_predictor.int8.onnx",
+      "text_encoder.int8.onnx",
+      "vector_estimator.int8.onnx",
+      "vocoder.int8.onnx",
+      "tts.json",
+      "unicode_indexer.bin",
+      "voice.bin"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "sherpa-cpu-windows",
+    "label": "Sherpa ONNX · CPU",
+    "kind": "reading",
+    "platform": "windows-x86_64",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-win-x64-shared-MT-Release-lib.tar.bz2",
+    "sha256": "b8eedf41bd6d3779218887b48367bb7a3ece5aaa7667f01f69ee823a12b0a9e7",
+    "bytes": 8032957,
+    "format": "tar_bz2",
+    "strip": 1,
+    "required": [
+      "lib/sherpa-onnx-c-api.dll",
+      "lib/onnxruntime.dll",
+      "lib/onnxruntime_providers_shared.dll"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det-pp-ocrv4-mobile-det",
+    "label": "pp-ocrv4_mobile_det.onnx",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_mobile_det.onnx",
+    "sha256": "ab2a50dcd2c340852f2d0fbfa547d5eec79a0d04a774eb0b622d96d0d9d2ceeb",
+    "bytes": 4826518,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv4_mobile_det.onnx",
+    "required": [
+      "pp-ocrv4_mobile_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det-pp-ocrv4-server-det",
+    "label": "pp-ocrv4_server_det.onnx",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_server_det.onnx",
+    "sha256": "5b676249ca4d1653675b249f134cb483ada721ac70d8013ddab09db7bcf26c1f",
+    "bytes": 113442336,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv4_server_det.onnx",
+    "required": [
+      "pp-ocrv4_server_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det-pp-ocrv5-server-det",
+    "label": "pp-ocrv5_server_det.onnx",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_server_det.onnx",
+    "sha256": "9a910baffbefb807ff2f7bfaa72910e3e470bd17014d798386d87bb46f442839",
+    "bytes": 88116836,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv5_server_det.onnx",
+    "required": [
+      "pp-ocrv5_server_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det-pp-ocrv6-tiny-det",
+    "label": "pp-ocrv6_tiny_det.onnx",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_tiny_det.onnx",
+    "sha256": "193bab7a04fca699a6c82e6abb5b81bdb28177f0abd4062552b04908dafb19f8",
+    "bytes": 1780590,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv6_tiny_det.onnx",
+    "required": [
+      "pp-ocrv6_tiny_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det-pp-ocrv6-small-det",
+    "label": "pp-ocrv6_small_det.onnx",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_small_det.onnx",
+    "sha256": "d73e0058b7a8086bbd57f3d10b8bcd4ff95363f67e06e2762b5e814fe9c9410e",
+    "bytes": 9880512,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv6_small_det.onnx",
+    "required": [
+      "pp-ocrv6_small_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-det-pp-ocrv6-medium-det",
+    "label": "pp-ocrv6_medium_det.onnx",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_medium_det.onnx",
+    "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1",
+    "bytes": 62032837,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv6_medium_det.onnx",
+    "required": [
+      "pp-ocrv6_medium_det.onnx"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-dict-ppocr-keys-v1",
+    "label": "ppocr_keys_v1.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocr_keys_v1.txt",
+    "sha256": "a1c84d9bdb9ab29043c58896224d32941783eb821629618416dcb08f12886492",
+    "bytes": 26250,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocr_keys_v1.txt",
+    "required": [
+      "ppocr_keys_v1.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv3_mobile_rec.onnx",
+    "sha256": "8febeeba4792aed934be20ffffa6f050d717da059084cc294d4a88ee35130599",
+    "bytes": 10675943,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv4_mobile_det.onnx",
+      "ppocr_keys_v1.txt",
+      "pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv4-mobile-det",
+      "paddle-dict-ppocr-keys-v1"
+    ],
+    "components": {
+      "pp-ocrv4_mobile_det.onnx": "paddle-det-pp-ocrv4-mobile-det/pp-ocrv4_mobile_det.onnx",
+      "ppocr_keys_v1.txt": "paddle-dict-ppocr-keys-v1/ppocr_keys_v1.txt"
+    }
+  },
+  {
+    "id": "paddle-pp-ocrv4-mobile-rec",
+    "label": "PaddleOCR v4 · Mobile · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_mobile_rec.onnx",
+    "sha256": "5d54b59bac0f49d4561f0462630d8a6822b5b495db064f58096fd3d2392fbc4e",
+    "bytes": 10870526,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv4_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv4_mobile_det.onnx",
+      "ppocr_keys_v1.txt",
+      "pp-ocrv4_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv4-mobile-det",
+      "paddle-dict-ppocr-keys-v1"
+    ],
+    "components": {
+      "pp-ocrv4_mobile_det.onnx": "paddle-det-pp-ocrv4-mobile-det/pp-ocrv4_mobile_det.onnx",
+      "ppocr_keys_v1.txt": "paddle-dict-ppocr-keys-v1/ppocr_keys_v1.txt"
+    }
+  },
+  {
+    "id": "paddle-pp-ocrv4-server-rec",
+    "label": "PaddleOCR v4 · Server · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_server_rec.onnx",
+    "sha256": "70939bcaabb8700dd9627ab7a38acbbbb8eea589cf27aef565f2343921a502c8",
+    "bytes": 90538610,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv4_server_rec.onnx",
+    "required": [
+      "pp-ocrv4_server_det.onnx",
+      "ppocr_keys_v1.txt",
+      "pp-ocrv4_server_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv4-server-det",
+      "paddle-dict-ppocr-keys-v1"
+    ],
+    "components": {
+      "pp-ocrv4_server_det.onnx": "paddle-det-pp-ocrv4-server-det/pp-ocrv4_server_det.onnx",
+      "ppocr_keys_v1.txt": "paddle-dict-ppocr-keys-v1/ppocr_keys_v1.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv4-doc-dict",
+    "label": "ppocrv4_doc_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv4_doc_dict.txt",
+    "sha256": "a5bc3887c43c901e5a3f97b13ffadf1c5754ede7cc8c9f5abe22e875a7c48372",
+    "bytes": 62346,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv4_doc_dict.txt",
+    "required": [
+      "ppocrv4_doc_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-pp-ocrv4-server-rec-doc",
+    "label": "PaddleOCR v4 · Server Document · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv4_server_rec_doc.onnx",
+    "sha256": "1c64b0b01d5e03b931608ee366efeca868a6fd1b8015bd8f4f9a1fff43708ae3",
+    "bytes": 94897514,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv4_server_rec_doc.onnx",
+    "required": [
+      "pp-ocrv4_server_det.onnx",
+      "ppocrv4_doc_dict.txt",
+      "pp-ocrv4_server_rec_doc.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv4-server-det",
+      "paddle-dict-ppocrv4-doc-dict"
+    ],
+    "components": {
+      "pp-ocrv4_server_det.onnx": "paddle-det-pp-ocrv4-server-det/pp-ocrv4_server_det.onnx",
+      "ppocrv4_doc_dict.txt": "paddle-dict-ppocrv4-doc-dict/ppocrv4_doc_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-dict",
+    "label": "ppocrv5_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_dict.txt",
+    "sha256": "d1979e9f794c464c0d2e0b70a7fe14dd978e9dc644c0e71f14158cdf8342af1b",
+    "bytes": 74012,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_dict.txt",
+    "required": [
+      "ppocrv5_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_mobile_rec.onnx",
+    "sha256": "243a0f06d826761323e9045e9b113ab2c191c3aa50565585e628300b8eda0224",
+    "bytes": 16562373,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_dict.txt",
+      "pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_dict.txt": "paddle-dict-ppocrv5-dict/ppocrv5_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-pp-ocrv5-server-rec",
+    "label": "PaddleOCR v5 · Server · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/pp-ocrv5_server_rec.onnx",
+    "sha256": "4bfffad2c62eb1340250455856978fb9fb19cb4776b264ae3c2f91c35fbb40b4",
+    "bytes": 84502992,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv5_server_rec.onnx",
+    "required": [
+      "pp-ocrv5_server_det.onnx",
+      "ppocrv5_dict.txt",
+      "pp-ocrv5_server_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv5-server-det",
+      "paddle-dict-ppocrv5-dict"
+    ],
+    "components": {
+      "pp-ocrv5_server_det.onnx": "paddle-det-pp-ocrv5-server-det/pp-ocrv5_server_det.onnx",
+      "ppocrv5_dict.txt": "paddle-dict-ppocrv5-dict/ppocrv5_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-ch-svtrv2-rec",
+    "label": "PaddleOCR · SVTRv2 · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ch_svtrv2_rec.onnx",
+    "sha256": "3fadaeecebd49d4df4f96155875be393e66161befc26258d3e62ee9968efd648",
+    "bytes": 84196641,
+    "format": "file",
+    "strip": 0,
+    "filename": "ch_svtrv2_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocr_keys_v1.txt",
+      "ch_svtrv2_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocr-keys-v1"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocr_keys_v1.txt": "paddle-dict-ppocr-keys-v1/ppocr_keys_v1.txt"
+    }
+  },
+  {
+    "id": "paddle-ch-repsvtr-rec",
+    "label": "PaddleOCR · RepSVTR · Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ch_repsvtr_rec.onnx",
+    "sha256": "6e7d40f0e3c4c16443c9efe7265bb9788ee3461fd6f26b41990524fbaae7ec5d",
+    "bytes": 25371710,
+    "format": "file",
+    "strip": 0,
+    "filename": "ch_repsvtr_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocr_keys_v1.txt",
+      "ch_repsvtr_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocr-keys-v1"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocr_keys_v1.txt": "paddle-dict-ppocr-keys-v1/ppocr_keys_v1.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-arabic-dict",
+    "label": "arabic_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/arabic_dict.txt",
+    "sha256": "637c27c88512c22089bef927b34ada08f748dc132ac70facd68d8202384c2726",
+    "bytes": 405,
+    "format": "file",
+    "strip": 0,
+    "filename": "arabic_dict.txt",
+    "required": [
+      "arabic_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-arabic-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Arabic",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/arabic_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "7012a52bfe7ed9910bef1c74e295d8c3456175aa9b4e9015271892ced559687a",
+    "bytes": 8995821,
+    "format": "file",
+    "strip": 0,
+    "filename": "arabic_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "arabic_dict.txt",
+      "arabic_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-arabic-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "arabic_dict.txt": "paddle-dict-arabic-dict/arabic_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-chinese-cht-dict",
+    "label": "chinese_cht_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/chinese_cht_dict.txt",
+    "sha256": "832551fee1f2fbc97508772d81ebdc8dba12c00de97a35c71c9ddf43ddac1a83",
+    "bytes": 33443,
+    "format": "file",
+    "strip": 0,
+    "filename": "chinese_cht_dict.txt",
+    "required": [
+      "chinese_cht_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-chinese-cht-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Traditional Chinese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/chinese_cht_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "535ec8a5d0207f34b4cc6cca28c0903991df0ec6ecb8bd7eea2f16f4468afc2b",
+    "bytes": 11143425,
+    "format": "file",
+    "strip": 0,
+    "filename": "chinese_cht_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "chinese_cht_dict.txt",
+      "chinese_cht_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-chinese-cht-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "chinese_cht_dict.txt": "paddle-dict-chinese-cht-dict/chinese_cht_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-cyrillic-dict",
+    "label": "cyrillic_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/cyrillic_dict.txt",
+    "sha256": "369a82c6c8c479784a5d726448b83b1eafb5fef0a4129a5eaa3929625ddcd132",
+    "bytes": 410,
+    "format": "file",
+    "strip": 0,
+    "filename": "cyrillic_dict.txt",
+    "required": [
+      "cyrillic_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-cyrillic-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Cyrillic",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/cyrillic_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "6ab2b46cee27755f82cacd86a73706f00146f1938aa5c74549a4fb2d1f94ae9c",
+    "bytes": 8996341,
+    "format": "file",
+    "strip": 0,
+    "filename": "cyrillic_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "cyrillic_dict.txt",
+      "cyrillic_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-cyrillic-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "cyrillic_dict.txt": "paddle-dict-cyrillic-dict/cyrillic_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-cyrillic-dict",
+    "label": "ppocrv5_cyrillic_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_cyrillic_dict.txt",
+    "sha256": "db40aa52ceb112055be80c694afdf655d5d2c4f7873704524cc16a447ca913ba",
+    "bytes": 2781,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_cyrillic_dict.txt",
+    "required": [
+      "ppocrv5_cyrillic_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-cyrillic-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Cyrillic",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/cyrillic_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "a18d96d7c8d73d90f2ed056549caa1de3a8e6cb744cccba16cd593ea8cd2d569",
+    "bytes": 8076390,
+    "format": "file",
+    "strip": 0,
+    "filename": "cyrillic_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_cyrillic_dict.txt",
+      "cyrillic_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-cyrillic-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_cyrillic_dict.txt": "paddle-dict-ppocrv5-cyrillic-dict/ppocrv5_cyrillic_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-devanagari-dict",
+    "label": "devanagari_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/devanagari_dict.txt",
+    "sha256": "b5f1be6d8bbff1a19fb96c5d4ca96a423380234bb7d2ce0e07b5838adb4d18ea",
+    "bytes": 508,
+    "format": "file",
+    "strip": 0,
+    "filename": "devanagari_dict.txt",
+    "required": [
+      "devanagari_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-devanagari-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Devanagari",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/devanagari_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "97bc713646ae30442d536b47c3f0d65ad249dbc8006a7beff66825f7df691405",
+    "bytes": 8997381,
+    "format": "file",
+    "strip": 0,
+    "filename": "devanagari_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "devanagari_dict.txt",
+      "devanagari_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-devanagari-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "devanagari_dict.txt": "paddle-dict-devanagari-dict/devanagari_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-devanagari-dict",
+    "label": "ppocrv5_devanagari_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_devanagari_dict.txt",
+    "sha256": "09c7440bfc5477e5c41052304b6b185aff8c4a5e8b2b4c23c1c706f6fe1ee9fc",
+    "bytes": 1943,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_devanagari_dict.txt",
+    "required": [
+      "ppocrv5_devanagari_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-devanagari-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Devanagari",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/devanagari_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "b3d50774dfbec6ae02249ff79a925431a4381c8c6f86d342ff6e7b63e5fefa77",
+    "bytes": 7939902,
+    "format": "file",
+    "strip": 0,
+    "filename": "devanagari_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_devanagari_dict.txt",
+      "devanagari_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-devanagari-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_devanagari_dict.txt": "paddle-dict-ppocrv5-devanagari-dict/ppocrv5_devanagari_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-el-dict",
+    "label": "ppocrv5_el_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_el_dict.txt",
+    "sha256": "31defc62c0c3ad3674a82da6192226a2ba98ef4ff014a7045cb88d59f9c3de31",
+    "bytes": 1103,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_el_dict.txt",
+    "required": [
+      "ppocrv5_el_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-el-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Greek",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/el_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "5a4a020e48e8783e035e1af135423c2161a363acab9ef16e48238c3d181f0f71",
+    "bytes": 7836326,
+    "format": "file",
+    "strip": 0,
+    "filename": "el_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_el_dict.txt",
+      "el_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-el-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_el_dict.txt": "paddle-dict-ppocrv5-el-dict/ppocrv5_el_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-en-dict",
+    "label": "en_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.1.0/en_dict.txt",
+    "sha256": "5662df9d2d03f0e8ca0d3b0649d6acbab904b6a14b3d3521463c71c37c668ce3",
+    "bytes": 190,
+    "format": "file",
+    "strip": 0,
+    "filename": "en_dict.txt",
+    "required": [
+      "en_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-en-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · English",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/en_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "dcb188df82c426f251283fd4ef4ea57c039520ce6ff8355ba5aa9b2535073c33",
+    "bytes": 8978654,
+    "format": "file",
+    "strip": 0,
+    "filename": "en_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "en_dict.txt",
+      "en_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-en-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "en_dict.txt": "paddle-dict-en-dict/en_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-en-pp-ocrv4-mobile-rec",
+    "label": "PaddleOCR v4 · Mobile · English",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/en_pp-ocrv4_mobile_rec.onnx",
+    "sha256": "40c07c5e431a4c59d7b5a1fefdba2fddb962c939d626c4dbf1d32965ab533431",
+    "bytes": 7710963,
+    "format": "file",
+    "strip": 0,
+    "filename": "en_pp-ocrv4_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "en_dict.txt",
+      "en_pp-ocrv4_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-en-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "en_dict.txt": "paddle-dict-en-dict/en_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-en-dict",
+    "label": "ppocrv5_en_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_en_dict.txt",
+    "sha256": "e025a66d31f327ba0c232e03f407ae8d105e1e709e7ccb3f408aa778c24e70d6",
+    "bytes": 1416,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_en_dict.txt",
+    "required": [
+      "ppocrv5_en_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-en-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · English",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/en_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "8307465d3c9ef2ba4055c3bd0be55aafe11f518630212b7598b70ccb376028ac",
+    "bytes": 7876014,
+    "format": "file",
+    "strip": 0,
+    "filename": "en_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_en_dict.txt",
+      "en_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-en-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_en_dict.txt": "paddle-dict-ppocrv5-en-dict/ppocrv5_en_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-eslav-dict",
+    "label": "ppocrv5_eslav_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_eslav_dict.txt",
+    "sha256": "3e95f1581557162870cacdba5af91a4c6be2890710d395b0c3c7578e7ee5e6eb",
+    "bytes": 1663,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_eslav_dict.txt",
+    "required": [
+      "ppocrv5_eslav_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-eslav-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · East Slavic",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/eslav_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "36a66a68097e88b103e0f60f489e88c7239d3ea79d96fbac2d80ac9d134944cd",
+    "bytes": 7915218,
+    "format": "file",
+    "strip": 0,
+    "filename": "eslav_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_eslav_dict.txt",
+      "eslav_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-eslav-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_eslav_dict.txt": "paddle-dict-ppocrv5-eslav-dict/ppocrv5_eslav_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-japan-dict",
+    "label": "japan_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/japan_dict.txt",
+    "sha256": "1dcfcb41eec90576a945b3084f22ade11ced506e24f14879245b071698f308e8",
+    "bytes": 17332,
+    "format": "file",
+    "strip": 0,
+    "filename": "japan_dict.txt",
+    "required": [
+      "japan_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-japan-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Japanese",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/japan_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "da59d4dbb6786a92a3823c32b3f48179d18e29903d61462842aad9eb422a77a1",
+    "bytes": 10097703,
+    "format": "file",
+    "strip": 0,
+    "filename": "japan_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "japan_dict.txt",
+      "japan_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-japan-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "japan_dict.txt": "paddle-dict-japan-dict/japan_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ka-dict",
+    "label": "ka_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/ka_dict.txt",
+    "sha256": "fad3f765943275eec2134a6fbc9b52785426641104d4e7db3a159dc73f341dde",
+    "bytes": 452,
+    "format": "file",
+    "strip": 0,
+    "filename": "ka_dict.txt",
+    "required": [
+      "ka_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-ka-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Kannada",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ka_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "e9592deee670c7ae3b21a7f6ad5d73f080628a30d8f00d26c668cfa3b493de04",
+    "bytes": 8993741,
+    "format": "file",
+    "strip": 0,
+    "filename": "ka_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ka_dict.txt",
+      "ka_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ka-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ka_dict.txt": "paddle-dict-ka-dict/ka_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-korean-dict",
+    "label": "korean_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/korean_dict.txt",
+    "sha256": "aa1fdc8ae8f7cd40a0ec4edb472eb0421e11427e6ccfee9915440742c18b0a20",
+    "bytes": 14480,
+    "format": "file",
+    "strip": 0,
+    "filename": "korean_dict.txt",
+    "required": [
+      "korean_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-korean-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Korean",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/korean_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "d30dbf20502044dc0e697f047564ac015e7083e4766fdc9d0fcd225aa2b0f20d",
+    "bytes": 9912841,
+    "format": "file",
+    "strip": 0,
+    "filename": "korean_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "korean_dict.txt",
+      "korean_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-korean-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "korean_dict.txt": "paddle-dict-korean-dict/korean_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-korean-dict",
+    "label": "ppocrv5_korean_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_korean_dict.txt",
+    "sha256": "a88071c68c01707489baa79ebe0405b7beb5cca229f4fc94cc3ef992328802d7",
+    "bytes": 47451,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_korean_dict.txt",
+    "required": [
+      "ppocrv5_korean_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-korean-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Korean",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/korean_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "2d7ed96308065a86103325d22af07a88c4d06afc009f21602a4882342c0cc054",
+    "bytes": 13446374,
+    "format": "file",
+    "strip": 0,
+    "filename": "korean_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_korean_dict.txt",
+      "korean_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-korean-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_korean_dict.txt": "paddle-dict-ppocrv5-korean-dict/ppocrv5_korean_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-latin-dict",
+    "label": "latin_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/latin_dict.txt",
+    "sha256": "8e6d4e3629788c35c31f7e530287d6147b549bb7a265bd6708bb281134429e2c",
+    "bytes": 468,
+    "format": "file",
+    "strip": 0,
+    "filename": "latin_dict.txt",
+    "required": [
+      "latin_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-latin-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Latin",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/latin_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "e73a1fc3853b36fe99d7990858bbc9630346706db2e08738ffd352cf789de7ef",
+    "bytes": 9002061,
+    "format": "file",
+    "strip": 0,
+    "filename": "latin_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "latin_dict.txt",
+      "latin_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-latin-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "latin_dict.txt": "paddle-dict-latin-dict/latin_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-latin-dict",
+    "label": "ppocrv5_latin_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_latin_dict.txt",
+    "sha256": "ccbcc45730b3fbbd9050c5bc74db6a99067141ef1035e3d14889a84a6b9b1aff",
+    "bytes": 2616,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_latin_dict.txt",
+    "required": [
+      "ppocrv5_latin_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-latin-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Latin",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/latin_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "e3a6bfeea1c8a01d6fccfd480a0bd363fd907f8c65931e228bb2736f5c3e142f",
+    "bytes": 8069614,
+    "format": "file",
+    "strip": 0,
+    "filename": "latin_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_latin_dict.txt",
+      "latin_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-latin-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_latin_dict.txt": "paddle-dict-ppocrv5-latin-dict/ppocrv5_latin_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ta-dict",
+    "label": "ta_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/ta_dict.txt",
+    "sha256": "e93e694814afd9ff1e918b6f4bb4267fb4c65a9344ee5d7464f9135b90c0a270",
+    "bytes": 352,
+    "format": "file",
+    "strip": 0,
+    "filename": "ta_dict.txt",
+    "required": [
+      "ta_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-ta-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Tamil",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ta_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "de98658698cf72be6f299f04ed78032489ab502553dab31b13f49f22dab2d62f",
+    "bytes": 8987241,
+    "format": "file",
+    "strip": 0,
+    "filename": "ta_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ta_dict.txt",
+      "ta_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ta-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ta_dict.txt": "paddle-dict-ta-dict/ta_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-ta-dict",
+    "label": "ppocrv5_ta_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_ta_dict.txt",
+    "sha256": "85b541352ae18dc6ba6d47152d8bf8adff6b0266e605d2eef2990c1bf466117b",
+    "bytes": 1723,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_ta_dict.txt",
+    "required": [
+      "ppocrv5_ta_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-ta-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Tamil",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ta_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "508d07ac0e1806a8b8857ebf20bd8837d68d962c3fdba030cf0022238ba819b8",
+    "bytes": 7913282,
+    "format": "file",
+    "strip": 0,
+    "filename": "ta_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_ta_dict.txt",
+      "ta_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-ta-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_ta_dict.txt": "paddle-dict-ppocrv5-ta-dict/ppocrv5_ta_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-te-dict",
+    "label": "te_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://raw.githubusercontent.com/PaddlePaddle/PaddleOCR/dab3fe35379033fdcb2d0e9572fac0b36c9a9ebf/ppocr/utils/dict/te_dict.txt",
+    "sha256": "ee9946a60d7701977474e89883694a4ca20eaa3868a23334bf7940dcd008f0f9",
+    "bytes": 429,
+    "format": "file",
+    "strip": 0,
+    "filename": "te_dict.txt",
+    "required": [
+      "te_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-te-pp-ocrv3-mobile-rec",
+    "label": "PaddleOCR v3 · Mobile · Telugu",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/te_pp-ocrv3_mobile_rec.onnx",
+    "sha256": "5a8ba806f4fecac40bbaa468e1885530eaea483f9c63b01dbe93acebc342caa0",
+    "bytes": 8993221,
+    "format": "file",
+    "strip": 0,
+    "filename": "te_pp-ocrv3_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "te_dict.txt",
+      "te_pp-ocrv3_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-te-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "te_dict.txt": "paddle-dict-te-dict/te_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-te-dict",
+    "label": "ppocrv5_te_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_te_dict.txt",
+    "sha256": "42f83f5d3fdb50778e4fa5b66c58d99a59ab7792151c5e74f34b8ffd7b61c9d6",
+    "bytes": 1831,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_te_dict.txt",
+    "required": [
+      "ppocrv5_te_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-te-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Telugu",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/te_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "0957fc03425324d30afcd4342a5708687fd0c885a5c0987cae418e96dd761a60",
+    "bytes": 7926350,
+    "format": "file",
+    "strip": 0,
+    "filename": "te_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_te_dict.txt",
+      "te_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-te-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_te_dict.txt": "paddle-dict-ppocrv5-te-dict/ppocrv5_te_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv5-th-dict",
+    "label": "ppocrv5_th_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/ppocrv5_th_dict.txt",
+    "sha256": "57f5406f94bb6688fb7077f7be65f08bbd71cecf48c01ea26c522cb5c4836b7a",
+    "bytes": 1767,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv5_th_dict.txt",
+    "required": [
+      "ppocrv5_th_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-th-pp-ocrv5-mobile-rec",
+    "label": "PaddleOCR v5 · Mobile · Thai",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.3.0/th_pp-ocrv5_mobile_rec.onnx",
+    "sha256": "5f6ee21242691681261fee01bc39867da9cc8ff9b889f2f048b3cb7f74380217",
+    "bytes": 7918606,
+    "format": "file",
+    "strip": 0,
+    "filename": "th_pp-ocrv5_mobile_rec.onnx",
+    "required": [
+      "pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_th_dict.txt",
+      "th_pp-ocrv5_mobile_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det",
+      "paddle-dict-ppocrv5-th-dict"
+    ],
+    "components": {
+      "pp-ocrv5_mobile_det.onnx": "paddle-det/pp-ocrv5_mobile_det.onnx",
+      "ppocrv5_th_dict.txt": "paddle-dict-ppocrv5-th-dict/ppocrv5_th_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv6-tiny-dict",
+    "label": "ppocrv6_tiny_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/ppocrv6_tiny_dict.txt",
+    "sha256": "c5cbe34ef40c29c4df07ed012bf96569cb69a2d2a01a07027e9f13cb832bd9cd",
+    "bytes": 27156,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv6_tiny_dict.txt",
+    "required": [
+      "ppocrv6_tiny_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-pp-ocrv6-tiny-rec",
+    "label": "PaddleOCR v6 · Tiny · Multilingual",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_tiny_rec.onnx",
+    "sha256": "9ef676d6ed3c88256a2d92c640c44f25b0c40947e111b14b8be8f594091563e6",
+    "bytes": 4462639,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv6_tiny_rec.onnx",
+    "required": [
+      "pp-ocrv6_tiny_det.onnx",
+      "ppocrv6_tiny_dict.txt",
+      "pp-ocrv6_tiny_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv6-tiny-det",
+      "paddle-dict-ppocrv6-tiny-dict"
+    ],
+    "components": {
+      "pp-ocrv6_tiny_det.onnx": "paddle-det-pp-ocrv6-tiny-det/pp-ocrv6_tiny_det.onnx",
+      "ppocrv6_tiny_dict.txt": "paddle-dict-ppocrv6-tiny-dict/ppocrv6_tiny_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-dict-ppocrv6-dict",
+    "label": "ppocrv6_dict.txt",
+    "kind": "dependency",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/ppocrv6_dict.txt",
+    "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d",
+    "bytes": 74947,
+    "format": "file",
+    "strip": 0,
+    "filename": "ppocrv6_dict.txt",
+    "required": [
+      "ppocrv6_dict.txt"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "paddle-pp-ocrv6-small-rec",
+    "label": "PaddleOCR v6 · Small · Multilingual",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_small_rec.onnx",
+    "sha256": "5435fd747c9e0efe15a96d0b378d5bd157e9492ed8fd80edf08f30d02fa24634",
+    "bytes": 21159378,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv6_small_rec.onnx",
+    "required": [
+      "pp-ocrv6_small_det.onnx",
+      "ppocrv6_dict.txt",
+      "pp-ocrv6_small_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv6-small-det",
+      "paddle-dict-ppocrv6-dict"
+    ],
+    "components": {
+      "pp-ocrv6_small_det.onnx": "paddle-det-pp-ocrv6-small-det/pp-ocrv6_small_det.onnx",
+      "ppocrv6_dict.txt": "paddle-dict-ppocrv6-dict/ppocrv6_dict.txt"
+    }
+  },
+  {
+    "id": "paddle-pp-ocrv6-medium-rec",
+    "label": "PaddleOCR v6 · Medium · Multilingual",
+    "kind": "ocr",
+    "platform": "all",
+    "url": "https://github.com/GreatV/oar-ocr/releases/download/v0.7.0/pp-ocrv6_medium_rec.onnx",
+    "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba",
+    "bytes": 76554979,
+    "format": "file",
+    "strip": 0,
+    "filename": "pp-ocrv6_medium_rec.onnx",
+    "required": [
+      "pp-ocrv6_medium_det.onnx",
+      "ppocrv6_dict.txt",
+      "pp-ocrv6_medium_rec.onnx"
+    ],
+    "dependencies": [
+      "paddle-det-pp-ocrv6-medium-det",
+      "paddle-dict-ppocrv6-dict"
+    ],
+    "components": {
+      "pp-ocrv6_medium_det.onnx": "paddle-det-pp-ocrv6-medium-det/pp-ocrv6_medium_det.onnx",
+      "ppocrv6_dict.txt": "paddle-dict-ppocrv6-dict/ppocrv6_dict.txt"
+    }
+  }
+]

@@ -50,7 +50,7 @@ simple-stt-infer.exe
     ├── only active component allowed to load parakeet.dll
     ├── only active component allowed to load GGUF models
     ├── framed PCM/WAV-test protocol on stdin/stdout
-    ├── warm reuse during configured idle window
+    ├── warm reuse within the configured idle timeout
     └── graceful shutdown plus process exit cleanup guarantee
 ```
 
@@ -60,6 +60,7 @@ simple-stt-infer.exe
 | --- | --- | --- |
 | Tray icon/menu | AHK shell | `A_TrayMenu`, menu object APIs, `TraySetIcon()`. |
 | Linux global shortcuts | `simple-stt-linux` | Automatic backend selection uses GlobalShortcuts on Wayland, native X11 passive grabs on X11, and documented compositor commands when no Wayland portal exists. KDE Plasma on Fedora Wayland is the only real-hardware-tested Linux environment; other desktops remain experimental. |
+| Linux dictation output | `simple-stt-linux` + local reader controller | Action-only delivery settings. The controller serializes RemoteDesktop EIS typing, shortcuts and clicks with persistent grants, bounded cancellation and KDE foreground checks. Clipboard transactions preserve full formats. No legacy injector fallback; HTTP inference never exposes desktop input. |
 | Settings UI | `simple-stt-settings` | Cross-platform browser UI; built from Svelte/TypeScript and embedded in the Rust binary. Node is a build-time dependency only. |
 | User hotkeys | AHK shell | Runtime `Hotkey()` bindings; CapsLock custom combination path. |
 | Final typing | AHK shell | Variable-paced per-character `SendText()`; target HWND checked before every character. |
@@ -111,7 +112,7 @@ capture service
   send framed PCM request on child stdin
 
 simple-stt-infer
-  lazy-load the Vulkan parakeet.dll and selected English Q8 or Arabic Q8 GGUF if needed
+  lazy-load the selected Parakeet runtime and GGUF model if needed
   transcribe PCM
   return framed Unicode transcript on stdout
 
@@ -133,7 +134,7 @@ A new dictation supersedes all older work. Capture invalidates older inference a
 
 Clipboard publication is verified before ordinary paste injection. Linux serializes clipboard delivery across shell processes and advances its generation on cancellation. With preservation enabled, accessible controls receive direct insertion; the Wayland fallback snapshots every offered MIME payload before publishing a temporary selection. It waits for complete text transfers and a brief idle period before restoring the original formats, and respects selection cancellation when another copy replaces its source. Shift+Insert handles the primary selection as well. The fallback confirms data consumption, not a universal editor acknowledgement. Windows retains its full-format `ClipboardAll()` backup and sequence-number guard, restoring only after a focused standard Edit control verifies insertion. Neither shell automatically retries an uncertain paste.
 
-Model installation is separate from dictation selection. Schema 9 stores a nullable single-model choice and nullable assignments keyed by keyboard language. Windows enumerates loaded keyboard layouts with locale ISO codes and reads the foreground thread's active layout at recording start. Linux discovers KDE Plasma layouts on Wayland, or XKB configured layouts and effective groups on X11, using installed rules XML including variant overrides. Regional variants share an assignment. Other Wayland desktops use one model; XWayland is never used to guess native Wayland input. None, an unassigned language, or a missing file skips before recording, overlay, screenshots, and worker prewarm. Recording freezes the actual model and device; workers are reused when only the language changes. Only the inference worker loads models. The runtime uses Vulkan automatically with CPU fallback, a physical Vulkan GPU for explicit GPU (preferring discrete over integrated, rejecting software devices), and CPU for explicit CPU. Explicit GPU mode errors when no physical GPU is available.
+Model installation is separate from dictation selection. Schema 9 stores a nullable single-model choice and nullable assignments keyed by keyboard language. Windows enumerates loaded keyboard layouts with locale ISO codes and reads the foreground thread's active layout at recording start. Linux discovers KDE Plasma layouts on Wayland, or XKB configured layouts and effective groups on X11, using installed rules XML including variant overrides. Regional variants share an assignment. Other Wayland desktops use one model; XWayland is never used to guess native Wayland input. None, an unassigned language, or a missing file skips before recording, overlay, screenshots, and worker prewarm. Recording freezes the actual model and device; workers are reused when only the language changes. Only the inference worker loads models. The selected CUDA or Vulkan runtime supplies the inference backend; explicit CPU remains available inside either runtime.
 
 On Windows, every app hotkey may be set to `None`. The AI-cleanup toggle defaults to `None`; when assigned, it atomically flips `cleanup.enabled`, requests capture-service reload, and affects the next dictation. On Wayland the equivalent action is compositor-assigned through the GlobalShortcuts portal.
 
@@ -142,7 +143,7 @@ AI cleanup is stateless at the provider boundary: each request contains only the
 ## Worker cleanup sequence
 
 ```text
-idle timeout reached OR Unload Speech Model OR model/runtime/timeout change OR capture shutdown
+system memory pressure OR idle timeout reached OR Unload Speech Model OR model/runtime/timeout change OR capture shutdown
   capture sends framed Shutdown
   worker drops model context where possible
   worker flushes file logger as process exits
@@ -192,7 +193,7 @@ Every Rust log writer prefixes each emitted line with `component=<capture|infer>
 
 The shell remembers one final, transformed dictation (including trailing space) in memory before attempting delivery. Windows keeps it in the AHK shell; Linux sends it through authenticated IPC to a bounded 1 MiB capture-service cache. `RememberDelivery` accepts only a pending delivery session, and an older completion cannot replace newer cached text. Empty dictations and config reloads retain the previous cache. Closing/restarting the owning process clears it; no retry-cache file is written.
 
-`Retry last dictation` targets the currently focused app and uses current delivery settings, without recording, inference, cleanup, or applying text transforms again. Empty cache is a no-op. Retry cancels obsolete recording/transcription/delivery work before insertion. Windows defaults to CapsLock+V; X11 defaults to Meta+Ctrl+V. Wayland portal users assign the new Retry shortcut through their desktop shortcut dialog; compositor bindings can run `simple-stt-linux retry-delivery`.
+`Repeat last action` chooses the latest reader or dictation action using timestamps, without sharing its payload between processes. Dictation repeats the cached final transcript using current delivery settings, without recording, inference, cleanup, or applying text transforms again. Text-only reading reruns the saved source text with current reading settings. Screenshot reading and OCR copy recapture the saved window-relative region and run OCR again; they never reopen selection or send a page-advance key. Active read-along repeats its current sentence. Source text, transcript caches, and saved regions remain in memory only. Empty cache is a no-op. Unsupported region backends show a clear error instead of guessing coordinates. Windows defaults to CapsLock+V; Linux defaults to Meta+Ctrl+V. Wayland portal users assign Repeat through their desktop shortcut dialog; compositor bindings can run `simple-stt-linux repeat`. The legacy `retry-delivery` CLI alias is preserved.
 
 Linux portal and X11 retries arm on press and deliver once on release. A tooltip asks the user to release the keys, then reports progress, submission, clipboard fallback, empty cache, or failure. X11 additionally waits for shortcut modifiers to be released; Wayland allows a brief settling period because the portal does not expose global physical key state. X11 releases are matched to the pressed trigger even when a modifier is released first, and detectable autorepeat prevents a held chord from queuing retries. Submission feedback means the paste chord was sent, not that the target acknowledged insertion.
 
@@ -205,3 +206,26 @@ Normal hotkey dictation waits for the recording shortcut to deactivate before fi
 The transaction observes clipboard transfer completion, which does not prove an editor inserted the data. Applications or clipboard managers can read without inserting, and Wayland provides no atomic compare-and-swap selection operation. Isolated GTK and Kitty target tests therefore verify actual inserted bytes in addition to selection restoration. Native Unicode keysym injection was rejected after isolated KWin/Kitty tests showed modifier/keymap events reaching Kitty in the wrong order; it is not used by preservation.
 
 Clipboard-only mode always makes an ordinary copy. Turning preservation off leaves a normal transcript copy and uses the configured paste chord. Linux restoration requires a completed clipboard text transfer; elapsed time after a shortcut alone does not count as success. Its KDE history-exclusion marker is a history hint, not clipboard restoration. Windows atomically publishes Unicode text and history/cloud exclusion formats, then restores previous full-format contents only after a standard Edit control confirms insertion and ownership has not changed. Unsupported Windows controls retain the transcript; native Windows behavior needs Windows runtime validation.
+
+## Optional runtimes and integrated reader
+
+The base Linux package contains no optional speech or OCR inference runtimes or model weights. It does include the compressed fastText language-identification model. Settings → Downloads installs selected assets under the installed user's `assets/` directory. `assets/catalog/downloads.json` is the pinned catalog: HTTPS URLs, exact byte counts, SHA-256 digests, archive type, required files and dependencies. Transfers are serialized, cancelable, verified before extraction, bounded during extraction and activated by rename. A failed/cancelled transfer cannot become an installed runtime. Archive traversal, absolute paths and special device entries are rejected; contained library aliases are materialized as files. Driver installation remains the distribution's responsibility.
+
+Parakeet Vulkan and CUDA 13 are separate downloads. Runtime selection retains the existing `speech.runtime_dir` contract, previews in Settings and takes effect on Save. The native worker chooses a physical device exposed by that runtime (CUDA or Vulkan); explicit CPU remains available inside either runtime. The source checkout and sibling Simple TTS checkout are never runtime dependencies.
+
+Reader components live in `reader/crates/` and are built as workspace members. `reader-core` owns dependency-light settings and framed IPC. On-demand `readerd` owns bounded speech chunking, playback, replacement/cancellation generations, clipboard listening and optional authenticated APIs. Only `reader-tts` loads Sherpa/Kokoro/Supertonic; only `reader-ocr` loads PaddleOCR through ONNX Runtime or performs the independent vision-provider request. Both are disposable processes. `reader-hud` uses Simple STT's native overlay, fonts and shortcut footer. The embedded controller skips its standalone tray and shortcut registrations; the Simple STT shell owns all ten actions. Reading controls and provider drafts share the existing Settings Save bar. Reading settings have their own revision-checked JSON file under the installed profile's `reader/` directory; credentials use the separate `simple-stt-reader` vault namespace. Accessing Settings does not start a reader/audio device.
+
+Read-aloud and OCR share the Sherpa ONNX processor/NVIDIA runtime downloads. Model weights are installed separately. Each Paddle text model declares its detector, recognizer, dictionary and decoding preset in the central registry; shared detector/dictionary files are verified once and hard-linked into each model bundle. Only the selected bundle loads in the disposable OCR worker. Legacy Arabic dictionaries opt into their required reversal rule; other dictionaries retain their own text order. PP-OCRv6 bundles use their matching detector size and detection defaults. The existing Arabic/English bundle remains recommended. No Python interpreter is required for downloads or runtime operation. The existing Simple TTS installation/configuration is left untouched. Native Windows runtime/desktop qualification remains outstanding.
+
+New installations start with no selected dictation model or native runtime. Assets
+assigned in either the single-model or per-language settings remain protected
+from deletion, including assignments saved in an inactive selection mode.
+Dictation defaults to keyboard-language routing; reading defaults to automatic text-language routing, and OCR uses a single Paddle selection by default. Automatic reading detects each text unit with native fastText 0.7.8 and the bundled compressed `lid.176.ftz` model (CC BY-SA 3.0), then applies saved assignments and fallback. CLI and HTTP speech rendering use the same per-unit routing. Reader speech and OCR workers have independent warmth timeouts. Speech retains at most one active and one cached worker. The last successful speech route metadata is persisted as a hint, but does not load a model at startup. The resident controller and capture service remain separate from these disposable workers. Lifecycle notices identify the feature and model; reading phases reflect actual preparation, playback and completion.
+
+Local TTS bindings own voice choices, optional Kokoro lowercasing, and Supertonic generation steps (5–12). These generation-time options do not recycle the model worker. Speech cleanup defaults on, runs after language/model routing, preserves code context across chunks, and has a literal-input switch. Settings shows application-prepared text; the model frontend may still transform it. Normal tooltips identify the action, model and language; CPU/GPU verification remains in diagnostics. One shell-owned Abort chord cancels active dictation and reading/OCR work together.
+
+Automatic local Paddle OCR uses CPU; an explicit GPU selection still requires CUDA. After normal completion, each worker stays reusable until its configured idle timeout. Estimates do not cause immediate retirement; actual system memory pressure and explicit unload can release workers earlier.
+
+KDE read-along binds the visible window from KWin stacking order, restricted to the current desktop/activity. Keyboard page turns use a persistent keyboard-only RemoteDesktop session with a private restore token; authorization happens before narration. Focus loss or minimization waits for the exact window to return without stealing focus, and explicit Pause blocks new key presses. Empty OCR frames are recaptured briefly before a final error; unchanged text retains bounded configured key retries. Region-click actions retain the guarded ydotool path.
+
+The headless STT media bridge receives stdin on a bounded queue and periodically runs the existing inference supervisor idle policy while no request is active. An idle bridge may remain resident, but its model worker exits; a later request reloads lazily. This uses the same shutdown policy as interactive dictation.

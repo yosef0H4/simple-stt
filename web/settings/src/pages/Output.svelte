@@ -5,7 +5,6 @@
     markDirty,
     notice,
     platformAction,
-    refreshState,
   } from "../lib/state.svelte";
   import { fields, deliveryOptions } from "../lib/settings";
   import type { Backend, DeliveryMode } from "../lib/types";
@@ -13,71 +12,74 @@
   import Field from "../components/Field.svelte";
   import Combo from "../components/Combo.svelte";
   import IconButton from "../components/IconButton.svelte";
+  import Help from "../components/Help.svelte";
   import { t } from "../lib/i18n";
+  import { positionToWpm, wpmToPosition } from "../lib/typing";
   let query = $state("");
-  const tools = $derived(ui.state?.linux_automation || {});
+  const typingPosition = $derived(ui.config?.output.paced_typing_enabled === false
+    ? 100 : wpmToPosition(ui.config?.output.typing_speed_wpm ?? 450));
+  const typingLabel = $derived(typingPosition === 100
+    ? t("typing.instant") : `${ui.config?.output.typing_speed_wpm ?? 450}${t("ui.wpm.3fc2c6")}`);
+  function setTypingPosition(event: Event) {
+    const position = (event.currentTarget as HTMLInputElement).valueAsNumber;
+    if (!Number.isFinite(position)) return;
+    if (position < 100) set("output.typing_speed_wpm", positionToWpm(position));
+    set("output.paced_typing_enabled", position < 100);
+  }
   const linux = $derived(ui.state?.platform === "linux");
-  const backends = $derived<[Backend, string, boolean][]>([
-    ["auto", "Automatic", true],
-    ["native", "Native fast paste", Boolean(tools.native)],
-    ["wtype", "wtype", Boolean(tools.wtype)],
-    ["ydotool", "ydotool", Boolean(tools.ydotool && tools.ydotool_daemon)],
-    ["xdotool", "xdotool", Boolean(tools.xdotool)],
-    ["clipboard_only", "wl-clipboard", Boolean(tools.wl_clipboard)],
-  ]);
+  const actionOrder: DeliveryMode[] = [
+    "type", "smart_paste", "paste_ctrl_v", "paste_ctrl_shift_v",
+    "paste_shift_insert", "clipboard",
+  ];
   const choices = $derived(
-    deliveryOptions.flatMap(([mode, label]) =>
-      (linux
-        ? backends
-        : [["auto", "AutoHotkey", true] as [Backend, string, boolean]]
-      )
-        .filter(([backend]) =>
-          backend === "clipboard_only"
-            ? mode === "clipboard"
-            : backend === "native"
-              ? mode !== "type"
-              : true,
-        )
-        .map(([backend, tool, installed]) => ({
-          mode,
-          backend,
-          label,
-          tool,
-          installed,
-          key: `${backend}|${mode}`,
-        })),
-    ),
+    deliveryOptions
+      .slice()
+      .sort((a, b) => actionOrder.indexOf(a[0]) - actionOrder.indexOf(b[0]))
+      .map(([mode, label]) => ({ mode, label, key: mode })),
   );
   const shown = $derived(
     choices.filter((c) =>
-      `${t(c.label)} ${t(c.tool)} ${c.label} ${c.tool}`.toLowerCase().includes(query.toLowerCase()),
+      `${t(c.label)} ${c.label}`.toLowerCase().includes(query.toLowerCase()),
     ),
   );
   function select(value: string) {
-    const [backend, mode] = value.split("|") as [Backend, DeliveryMode];
-    set("output.delivery_mode", mode);
-    if (linux) set("output.linux_automation_backend", backend);
+    set("output.delivery_mode", value as DeliveryMode);
+    if (linux) {
+      set("output.linux_automation_backend", "auto");
+      normalizeLinuxCycle();
+    }
   }
-  function included(mode: DeliveryMode, backend: Backend) {
+  function normalizeLinuxCycle() {
+    if (!ui.config) return;
+    const seen = new Set<DeliveryMode>();
+    ui.config.output.linux_delivery_cycle = ui.config.output.linux_delivery_cycle
+      .filter((entry) => {
+        if (seen.has(entry.mode)) return false;
+        seen.add(entry.mode);
+        return true;
+      })
+      .map((entry) => ({ mode: entry.mode, backend: "auto" as Backend }));
+  }
+  function included(mode: DeliveryMode) {
     return linux
-      ? ui.config?.output.linux_delivery_cycle.some(
-          (c) => c.mode === mode && c.backend === backend,
-        )
+      ? ui.config?.output.linux_delivery_cycle.some((c) => c.mode === mode)
       : ui.config?.output.enabled_delivery_modes.includes(mode);
   }
-  function toggle(mode: DeliveryMode, backend: Backend) {
+  function toggle(mode: DeliveryMode) {
     if (!ui.config) return;
     const output = ui.config.output;
     if (linux) {
-      if (included(mode, backend)) {
+      normalizeLinuxCycle();
+      if (included(mode)) {
         if (output.linux_delivery_cycle.length === 1)
           return notice(t("ui.keep_at_least_one_delivery.2d7d41"), "error");
         output.linux_delivery_cycle = output.linux_delivery_cycle.filter(
-          (c) => c.mode !== mode || c.backend !== backend,
+          (c) => c.mode !== mode,
         );
-      } else output.linux_delivery_cycle.push({ mode, backend });
+      } else output.linux_delivery_cycle.push({ mode, backend: "auto" });
+      set("output.linux_automation_backend", "auto");
     } else {
-      if (included(mode, backend)) {
+      if (included(mode)) {
         if (output.enabled_delivery_modes.length === 1)
           return notice(t("ui.keep_at_least_one_delivery.2d7d41"), "error");
         output.enabled_delivery_modes = output.enabled_delivery_modes.filter(
@@ -100,26 +102,6 @@
       markDirty();
     }
   }
-  const packages = $derived(
-    tools.session === "X11"
-      ? "xdotool xclip"
-      : String(tools.desktop).toLowerCase().includes("kde")
-        ? "wl-clipboard"
-        : String(tools.desktop).toLowerCase().includes("gnome")
-          ? "wl-clipboard ydotool"
-          : "wl-clipboard wtype",
-  );
-  const install = $derived(
-    tools.distro_id === "fedora"
-      ? `sudo dnf install ${packages}`
-      : ["arch", "manjaro", "endeavouros"].includes(tools.distro_id || "")
-        ? `sudo pacman -S ${packages}`
-        : ["debian", "ubuntu", "linuxmint", "pop"].includes(
-              tools.distro_id || "",
-            )
-          ? `sudo apt install ${packages}`
-          : `Install ${packages} with your package manager.`,
-  );
 </script>
 
 <Group
@@ -128,24 +110,17 @@
   paths={[
     "output.delivery_mode",
     "output.enabled_delivery_modes",
-    "output.linux_automation_backend",
-    "output.linux_delivery_cycle",
     "output.preserve_clipboard",
   ]}
 >
-  {#snippet actions()}{#if linux}<IconButton
-        icon="refresh"
-        label="ui.refresh_tools.311c38"
-        onclick={() => refreshState()}
-      />{/if}{/snippet}
   <Combo
     label="ui.use_now.36690a"
     path="output.delivery_mode"
     ariaLabel={t(linux ? "Current Linux delivery method" : "Current Windows delivery method")}
-    value={`${linux ? ui.config?.output.linux_automation_backend : "auto"}|${ui.config?.output.delivery_mode}`}
+    value={`${ui.config?.output.delivery_mode}`}
     items={choices.map((c) => ({
       value: c.key,
-      label: `${t(c.label)}${linux ? ` · ${c.tool}` : ""}${c.installed ? "" : ` · ${t("ui.not_installed.1aab9f")}`}`,
+      label: t(c.label),
     }))}
     onselect={select}
   />
@@ -164,36 +139,31 @@
         bind:value={query}
       />{#each shown as c}<label class="cycle-row"
           ><span
-            >{t(c.label)}{#if linux}<small dir="ltr"
-                >{c.tool}{c.installed ? "" : ` · ${t("ui.not_installed.1aab9f")}`}</small
-              >{/if}</span
+            >{t(c.label)}</span
           ><input
             type="checkbox"
-            aria-label={t("ui.include_method_in_delivery_cycle.d45eee", { method: `${t(c.label)}${linux ? ` ${c.tool}` : ""}` })}
-            checked={included(c.mode, c.backend)}
-            onchange={() => toggle(c.mode, c.backend)}
+            aria-label={t("ui.include_method_in_delivery_cycle.d45eee", { method: t(c.label) })}
+            checked={included(c.mode)}
+            onchange={() => toggle(c.mode)}
           /></label
         >{/each}
     </div>
   </details>
-  {#if linux}<details class="guide">
-      <summary>{t("ui.tool_setup.f7caa3")}</summary>
-      <p>{tools.distro} · {tools.desktop} · {tools.session}</p>
-      <p>{t("ui.automatic.ac9041")}: {tools.recommended || t("ui.not_available.d1a17a")}</p>
-      <code>{install}</code>
-        <p>{t("ui.wl_clipboard_handles_clipboard_data.68c501")}</p>
-    </details>{/if}
 </Group>
 <Group
   title="ui.typing.5614fd"
   icon="keyboard"
   paths={["output.paced_typing_enabled", "output.typing_speed_wpm"]}
-  ><Field spec={fields.paced} /><Field
-    spec={{
-      ...fields.speed,
-      disabled: !ui.config?.output.paced_typing_enabled,
-    }}
-  /></Group
+  ><div data-setting-path="output.paced_typing_enabled">
+    <div class="field" data-setting-path="output.typing_speed_wpm">
+      <div class="field-copy"><label for="typing-speed">{t("ui.speed.2d2cb0")}</label><Help text={t("typing.speed_help")} /></div>
+      <div class="control">
+        <input id="typing-speed" type="range" min="0" max="100" step="1" dir="ltr"
+          aria-valuetext={typingLabel} value={typingPosition} oninput={setTypingPosition} />
+        <input class="range-number" type="number" aria-label={t("settings.typing_exact")} min="50" max="1650" step="1" value={typingPosition===100?"":ui.config?.output.typing_speed_wpm} placeholder={t("typing.instant")} oninput={event=>{const value=event.currentTarget.valueAsNumber;if(Number.isFinite(value)){set("output.typing_speed_wpm",value);set("output.paced_typing_enabled",true);}}}/><output class="range-value" for="typing-speed">{typingPosition===100?t("typing.instant"):t("ui.wpm.3fc2c6")}</output>
+      </div>
+    </div>
+  </div></Group
 >
 <Group title="ui.app_overrides.9e577a" icon="apps" paths={["output.app_overrides"]}>
   {#snippet actions()}<IconButton
@@ -232,7 +202,7 @@
             markDirty();
           }}
           >{#each deliveryOptions as [value, label]}<option {value}
-              >{label}</option
+              >{t(label)}</option
             >{/each}</select
         ><IconButton
           icon="trash"

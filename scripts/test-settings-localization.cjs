@@ -4,7 +4,7 @@ const path = require("node:path");
 const { chromium } = require("playwright");
 const f = require("./settings-fixture.cjs");
 
-const pages = ["general", "audio", "models", "output", "cleanup", "advanced", "config"];
+const pages = ["general", "audio", "models", "output", "cleanup", "advanced", "config", "reading"];
 const locales = ["en", "ar"];
 const themes = ["light", "dark"];
 const widths = [360, 768, 1280];
@@ -98,6 +98,16 @@ const widths = [360, 768, 1280];
       }
     }
 
+    await page.setViewportSize({ width: 360, height: 900 });
+    await page.locator('nav button[data-page="output"]').click();
+    const typing = page.locator('#typing-speed');
+    assert.equal(await typing.getAttribute('dir'), 'ltr', 'Instant stays at the right edge in RTL');
+    await typing.focus();
+    await typing.press('End');
+    assert.equal(await typing.getAttribute('aria-valuetext'), 'فوري');
+    await typing.press('ArrowLeft');
+    assert.equal(await typing.inputValue(), '99');
+
     // Check automatic reset and imported-config previews preserve locale behavior.
     await page.locator('nav button[data-page="config"]').click();
     await page.locator(".config-toolbar button:last-of-type").click();
@@ -120,19 +130,21 @@ const widths = [360, 768, 1280];
     await page.locator('nav button[data-page="audio"]').click();
     const combo = page.locator('[data-setting-path="audio.preferred_device_id"] input[role="combobox"]');
     if (await combo.count()) await combo.focus();
-    const modelCombo = page.locator('[data-setting-path="speech.single_model_filename"] input[role="combobox"]');
-    if (await modelCombo.count()) {
-      await modelCombo.fill("missing-saved-model.gguf");
-      assert.match(await modelCombo.inputValue(), /\.gguf$/, "technical model identifiers should remain intact in Arabic UI");
-      if (process.env.SETTINGS_VISUAL_REVIEW === "1") {
-        await page.evaluate(() => document.fonts.ready);
-        await page.screenshot({ path: path.resolve("artifacts/localization/ar-mixed-identifier-combo.png"), fullPage: true });
-      }
-      await page.keyboard.press("Escape");
+    await page.locator('#stt-mode').selectOption('single_model');
+    const modelCombo = page.locator('[data-setting-path="stt.single.model"] input[role="combobox"]');
+    await modelCombo.fill("missing-saved-model.gguf");
+    assert.match(await modelCombo.inputValue(), /\.gguf$/, "technical model identifiers should remain intact in Arabic UI");
+    assert(await page.getByRole('listbox').isVisible(), "model search dropdown is available");
+    if (process.env.SETTINGS_VISUAL_REVIEW === "1") {
+      await page.evaluate(() => document.fonts.ready);
+      await page.screenshot({ path: path.resolve("artifacts/localization/ar-mixed-identifier-combo.png"), fullPage: true });
     }
+    await page.keyboard.press("Escape");
+    f.installFixture('parakeet-vulkan');
     await page.locator('nav button[data-page="models"]').click();
+    await page.locator('[data-catalog-feature="stt"]').click();
     await page.locator('input[aria-label="ابحث عن نموذج"]').fill("عربي");
-    await page.locator(".model-result").first().waitFor();
+    await page.locator("#model-results .model-result").first().waitFor();
     if (process.env.SETTINGS_VISUAL_REVIEW === "1") {
       await page.evaluate(() => document.fonts.ready);
       await page.screenshot({ path: path.resolve("artifacts/localization/ar-model-search.png"), fullPage: true });

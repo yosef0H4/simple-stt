@@ -11,29 +11,20 @@
 #include <X11/Xlib.h>
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
-#include <X11/extensions/XTest.h>
 #include <X11/keysym.h>
 #include <unistd.h>
-
-#ifdef HAVE_UINPUT
-#include <linux/uinput.h>
-#include <linux/input.h>
-#include <fcntl.h>
-#include <errno.h>
-#endif
 
 #ifdef HAVE_ATSPI
 #include <atspi/atspi.h>
 #endif
 
-/* Paste key sequence. SHIFT_INSERT is the universal Linux paste shortcut —
- * works in terminals and GUI apps, and (unlike Ctrl+V) isn't intercepted by
- * TUI agents as "paste image". Used when window class is unknown on Wayland
- * or when targeting Konsole (which silently drops simulated Ctrl+Shift+V). */
 typedef enum {
     PASTE_MODE_CTRL_V        = 0,
     PASTE_MODE_CTRL_SHIFT_V  = 1,
     PASTE_MODE_SHIFT_INSERT  = 2,
+    COPY_MODE_CTRL_INSERT = 3,
+    COPY_MODE_CTRL_C = 4,
+    COPY_MODE_CTRL_SHIFT_C = 5,
 } paste_mode_t;
 
 #ifdef HAVE_GIO
@@ -48,6 +39,7 @@ typedef enum {
 #define PORTAL_KEY_LEFTCTRL  29
 #define PORTAL_KEY_LEFTSHIFT 42
 #define PORTAL_KEY_V         47
+#define PORTAL_KEY_C         46
 #define PORTAL_KEY_INSERT    110
 
 static int portal_exit_code = 0;
@@ -105,14 +97,16 @@ static void portal_send_paste(PortalData *app)
         portal_emit_key(app, PORTAL_KEY_INSERT,    0, "Insert release");
         portal_emit_key(app, PORTAL_KEY_LEFTSHIFT, 0, "Shift release");
     } else {
-        const int use_shift = (app->mode == PASTE_MODE_CTRL_SHIFT_V);
+        const int use_shift = (app->mode == PASTE_MODE_CTRL_SHIFT_V || app->mode == COPY_MODE_CTRL_SHIFT_C);
+        const int key = app->mode == COPY_MODE_CTRL_INSERT ? PORTAL_KEY_INSERT :
+            (app->mode == COPY_MODE_CTRL_C || app->mode == COPY_MODE_CTRL_SHIFT_C ? PORTAL_KEY_C : PORTAL_KEY_V);
 
         portal_emit_key(app, PORTAL_KEY_LEFTCTRL, 1, "Ctrl press");
         if (use_shift)
             portal_emit_key(app, PORTAL_KEY_LEFTSHIFT, 1, "Shift press");
-        portal_emit_key(app, PORTAL_KEY_V, 1, "V press");
+        portal_emit_key(app, key, 1, "key press");
         usleep(20000);
-        portal_emit_key(app, PORTAL_KEY_V, 0, "V release");
+        portal_emit_key(app, key, 0, "key release");
         if (use_shift)
             portal_emit_key(app, PORTAL_KEY_LEFTSHIFT, 0, "Shift release");
         portal_emit_key(app, PORTAL_KEY_LEFTCTRL, 0, "Ctrl release");
@@ -134,6 +128,17 @@ static void on_start_response(GDBusConnection *conn, const char *sender,
 
     if (response != 0) {
         fprintf(stderr, "Start cancelled (response=%u)\n", response);
+        portal_exit_code = 3;
+        g_variant_unref(results);
+        g_main_loop_quit(app->loop);
+        return;
+    }
+
+    guint32 devices = 0;
+    g_variant_lookup(results, "devices", "u", &devices);
+    fprintf(stderr, "Portal granted devices=%u\n", devices);
+    if (!(devices & 1)) {
+        fprintf(stderr, "Portal did not grant keyboard control\n");
         portal_exit_code = 3;
         g_variant_unref(results);
         g_main_loop_quit(app->loop);
@@ -289,7 +294,7 @@ static int paste_via_portal(paste_mode_t mode, const char *restore_token)
     }
 
     app.loop = g_main_loop_new(NULL, FALSE);
-    g_timeout_add_seconds(10, on_portal_timeout, &app);
+    g_timeout_add_seconds(60, on_portal_timeout, &app);
 
     char *sender_path = get_sender_path(app.conn);
     char *request_path = g_strdup_printf(
@@ -305,7 +310,7 @@ static int paste_via_portal(paste_mode_t mode, const char *restore_token)
     g_variant_builder_add(&opts, "{sv}", "handle_token",
                           g_variant_new_string("createsession"));
     g_variant_builder_add(&opts, "{sv}", "session_handle_token",
-                          g_variant_new_string("openwhispr"));
+                          g_variant_new_string("simple_stt"));
 
     g_dbus_connection_call_sync(app.conn, PORTAL_BUS, PORTAL_PATH,
         PORTAL_IFACE, "CreateSession",
@@ -380,41 +385,28 @@ static int check_parent_terminal(Display *dpy, Window win) {
 }
 
 #ifdef HAVE_ATSPI
-/* Direct insertion leaves every clipboard format and history untouched. Only
- * an active, focused, editable text control with no selection is eligible.
- * Return 1 only before attempting an insertion; 2 means uncertain consumption
- * and MUST NOT cause an automatic paste fallback (which could duplicate text). */
-static AtspiAccessible *focused_editable(AtspiAccessible *node, int depth, int *budget) {
+static AtspiAccessible *focused_text(AtspiAccessible *node, int depth, int *budget) {
     if (!node || depth > 24 || --*budget < 0) return NULL;
     AtspiStateSet *states = atspi_accessible_get_state_set(node);
     gboolean focused = states && atspi_state_set_contains(states, ATSPI_STATE_FOCUSED);
-    gboolean editable = states && atspi_state_set_contains(states, ATSPI_STATE_EDITABLE);
     if (states) g_object_unref(states);
-    if (focused && editable && atspi_accessible_get_role(node, NULL) != ATSPI_ROLE_PASSWORD_TEXT)
-        return g_object_ref(node);
+    if (focused && atspi_accessible_get_role(node, NULL) != ATSPI_ROLE_PASSWORD_TEXT) {
+        AtspiText *text = atspi_accessible_get_text_iface(node);
+        if (text) { g_object_unref(text); return g_object_ref(node); }
+    }
     int count = atspi_accessible_get_child_count(node, NULL);
     for (int i = 0; i < count && *budget > 0; ++i) {
         AtspiAccessible *child = atspi_accessible_get_child_at_index(node, i, NULL);
-        AtspiAccessible *found = focused_editable(child, depth + 1, budget);
+        AtspiAccessible *found = focused_text(child, depth + 1, budget);
         if (child) g_object_unref(child);
         if (found) return found;
     }
     return NULL;
 }
 
-static int insert_text_direct(void) {
-    GString *input = g_string_new(NULL);
-    char buffer[4096]; size_t count;
-    while ((count = fread(buffer, 1, sizeof buffer, stdin)) > 0) {
-        if (input->len + count > 1024 * 1024) { g_string_free(input, TRUE); return 1; }
-        g_string_append_len(input, buffer, count);
-    }
-    if (ferror(stdin) || !input->len || !g_utf8_validate(input->str, input->len, NULL)) {
-        g_string_free(input, TRUE); return 1;
-    }
+/* 0: selection on stdout, 1: unavailable/error, 2: no selected text. */
+static int read_selection_direct(void) {
 #ifdef HAVE_GIO
-    /* libatspi can abort when desktop accessibility activation is broken.
-     * Probe first, and fall back before touching the target or clipboard. */
     GError *bus_error = NULL;
     GDBusConnection *bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &bus_error);
     GVariant *address = bus ? g_dbus_connection_call_sync(bus, "org.a11y.Bus", "/org/a11y/bus",
@@ -422,7 +414,7 @@ static int insert_text_direct(void) {
         250, NULL, &bus_error) : NULL;
     if (address) g_variant_unref(address);
     if (bus) g_object_unref(bus);
-    if (bus_error) { g_error_free(bus_error); g_string_free(input, TRUE); return 1; }
+    if (bus_error) { g_error_free(bus_error); return 1; }
 #endif
     atspi_init(); atspi_set_timeout(300, 1000);
     AtspiAccessible *desktop = atspi_get_desktop(0), *target = NULL;
@@ -436,48 +428,46 @@ static int insert_text_direct(void) {
             AtspiStateSet *states = win ? atspi_accessible_get_state_set(win) : NULL;
             gboolean active = states && atspi_state_set_contains(states, ATSPI_STATE_ACTIVE);
             if (states) g_object_unref(states);
-            if (active) target = focused_editable(win, 0, &budget);
+            if (active) target = focused_text(win, 0, &budget);
             if (win) g_object_unref(win);
         }
         if (app) g_object_unref(app);
     }
     int result = 1;
     AtspiText *text = target ? atspi_accessible_get_text_iface(target) : NULL;
-    AtspiEditableText *edit = target ? atspi_accessible_get_editable_text_iface(target) : NULL;
-    char *before = NULL, *expected = NULL;
-    if (text && edit && atspi_text_get_n_selections(text, NULL) == 0) {
-        int length = atspi_text_get_character_count(text, NULL);
-        int caret = atspi_text_get_caret_offset(text, NULL);
-        before = length <= 65535 ? atspi_text_get_text(text, 0, -1, NULL) : NULL;
-        AtspiStateSet *states = atspi_accessible_get_state_set(target);
-        gboolean focused = states && atspi_state_set_contains(states, ATSPI_STATE_FOCUSED);
-        if (states) g_object_unref(states);
-        if (focused && before && g_utf8_validate(before, -1, NULL) && caret >= 0 && caret <= length
-            && g_utf8_strlen(before, -1) == length) {
-            const char *split = g_utf8_offset_to_pointer(before, caret);
-            char *prefix = g_strndup(before, split - before);
-            expected = g_strconcat(prefix, input->str, split, NULL); g_free(prefix);
-            result = 2; /* An attempted RPC might have succeeded even on an error. */
-            fputs("attempt\n", stdout); fflush(stdout);
-            GError *error = NULL;
-            gboolean inserted = atspi_editable_text_insert_text(edit, caret, input->str,
-                input->len, &error);
-            if (error) g_error_free(error);
-            if (inserted) {
-                char *after = atspi_text_get_text(text, 0, -1, NULL);
-                if (after && strcmp(after, expected) == 0) result = 0;
-                g_free(after);
+    GError *error = NULL;
+    if (text) {
+        int count = atspi_text_get_n_selections(text, &error);
+        if (!error && count == 0) result = 2;
+        if (!error && count == 1) {
+            AtspiRange *range = atspi_text_get_selection(text, 0, &error);
+            if (!error && range && range->start_offset >= 0 &&
+                range->end_offset >= range->start_offset &&
+                range->end_offset - range->start_offset <= 1024 * 1024) {
+                if (range->start_offset == range->end_offset) result = 2;
+                else {
+                    char *selected = atspi_text_get_text(text, range->start_offset, range->end_offset, &error);
+                    if (!error && selected && strlen(selected) <= 1024 * 1024 &&
+                        g_utf8_validate(selected, -1, NULL)) {
+                        size_t len = strlen(selected);
+                        result = len == 0 ? 2 : (fwrite(selected, 1, len, stdout) == len ? 0 : 1);
+                    }
+                    g_free(selected);
+                }
             }
+            g_free(range);
         }
     }
-    g_free(before); g_free(expected); g_string_free(input, TRUE);
-    if (edit) g_object_unref(edit);
+    if (error) g_error_free(error);
     if (text) g_object_unref(text);
     if (target) g_object_unref(target);
     if (desktop) g_object_unref(desktop);
     return result;
 }
 
+/* Refresh AT-SPI's cached states before every paced insertion. A target that
+ * loses focus or whose original top-level window loses activation is no longer
+ * safe, even if another control has the same application identity. */
 static char *active_app_atspi(void) {
     atspi_init();
     AtspiAccessible *desktop = atspi_get_desktop(0);
@@ -539,251 +529,38 @@ static Window get_active_window(Display *dpy) {
     return focused;
 }
 
-static void activate_window(Display *dpy, Window win) {
-    Atom net_active = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
-    XEvent ev;
-    memset(&ev, 0, sizeof(ev));
-    ev.xclient.type         = ClientMessage;
-    ev.xclient.window       = win;
-    ev.xclient.message_type = net_active;
-    ev.xclient.format       = 32;
-    ev.xclient.data.l[0]    = 2; /* source: pager */
-    ev.xclient.data.l[1]    = CurrentTime;
-    ev.xclient.data.l[2]    = 0;
 
-    XSendEvent(dpy, DefaultRootWindow(dpy), False,
-               SubstructureNotifyMask | SubstructureRedirectMask, &ev);
-    XFlush(dpy);
-
-    usleep(50000);
-
-    XSetInputFocus(dpy, win, RevertToParent, CurrentTime);
-    XFlush(dpy);
-    usleep(20000);
-}
-
-#ifdef HAVE_UINPUT
-static void emit(int fd, int type, int code, int val) {
-    struct input_event ie;
-    memset(&ie, 0, sizeof(ie));
-    ie.type = type;
-    ie.code = code;
-    ie.value = val;
-    if (write(fd, &ie, sizeof(ie)) < 0) {
-        /* best-effort */
-    }
-}
-
-static void emit_key(int fd, int code, int val) {
-    emit(fd, EV_KEY, code, val);
-    emit(fd, EV_SYN, SYN_REPORT, 0);
-}
-
-static int paste_via_uinput(paste_mode_t mode) {
-    int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-    if (fd < 0) {
-        fprintf(stderr, "Cannot open /dev/uinput: %s\n", strerror(errno));
-        return 3;
-    }
-
-    if (ioctl(fd, UI_SET_EVBIT, EV_KEY) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_LEFTCTRL) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_LEFTSHIFT) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_V) < 0 ||
-        ioctl(fd, UI_SET_KEYBIT, KEY_INSERT) < 0) {
-        close(fd);
-        return 4;
-    }
-
-    struct uinput_setup usetup;
-    memset(&usetup, 0, sizeof(usetup));
-    usetup.id.bustype = BUS_USB;
-    usetup.id.vendor  = 0x1234;
-    usetup.id.product = 0x5678;
-    snprintf(usetup.name, UINPUT_MAX_NAME_SIZE, "openwhispr-paste");
-
-    if (ioctl(fd, UI_DEV_SETUP, &usetup) < 0 ||
-        ioctl(fd, UI_DEV_CREATE) < 0) {
-        close(fd);
-        return 4;
-    }
-
-    usleep(50000);
-
-    if (mode == PASTE_MODE_SHIFT_INSERT) {
-        emit_key(fd, KEY_LEFTSHIFT, 1);
-        usleep(8000);
-        emit_key(fd, KEY_INSERT, 1);
-        usleep(8000);
-        emit_key(fd, KEY_INSERT, 0);
-        usleep(8000);
-        emit_key(fd, KEY_LEFTSHIFT, 0);
-    } else {
-        const int use_shift = (mode == PASTE_MODE_CTRL_SHIFT_V);
-
-        emit_key(fd, KEY_LEFTCTRL, 1);
-        if (use_shift) emit_key(fd, KEY_LEFTSHIFT, 1);
-        usleep(8000);
-        emit_key(fd, KEY_V, 1);
-        usleep(8000);
-        emit_key(fd, KEY_V, 0);
-        usleep(8000);
-        if (use_shift) emit_key(fd, KEY_LEFTSHIFT, 0);
-        emit_key(fd, KEY_LEFTCTRL, 0);
-    }
-
-    usleep(20000);
-
-    ioctl(fd, UI_DEV_DESTROY);
-    close(fd);
-    return 0;
-}
-#endif
-
-static int send_media_play_pause(void) {
-#ifdef HAVE_UINPUT
-    /* KEY_PLAYPAUSE = 164 (evdev) — works without X11 display */
-    int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK);
-    if (fd >= 0) {
-        if (ioctl(fd, UI_SET_EVBIT, EV_KEY) >= 0 &&
-            ioctl(fd, UI_SET_KEYBIT, KEY_PLAYPAUSE) >= 0) {
-
-            struct uinput_setup usetup;
-            memset(&usetup, 0, sizeof(usetup));
-            usetup.id.bustype = BUS_USB;
-            usetup.id.vendor  = 0x1234;
-            usetup.id.product = 0x5678;
-            snprintf(usetup.name, UINPUT_MAX_NAME_SIZE, "openwhispr-media");
-
-            if (ioctl(fd, UI_DEV_SETUP, &usetup) >= 0 &&
-                ioctl(fd, UI_DEV_CREATE) >= 0) {
-
-                usleep(50000);
-
-                emit(fd, EV_KEY, KEY_PLAYPAUSE, 1);
-                emit(fd, EV_SYN, SYN_REPORT, 0);
-                usleep(8000);
-                emit(fd, EV_KEY, KEY_PLAYPAUSE, 0);
-                emit(fd, EV_SYN, SYN_REPORT, 0);
-                usleep(20000);
-
-                ioctl(fd, UI_DEV_DESTROY);
-                close(fd);
-                return 0;
-            }
-        }
-        close(fd);
-    }
-#endif
-
-    /* Fallback to XTest */
-    Display *dpy = XOpenDisplay(NULL);
-    if (!dpy) return 1;
-
-    int event_base, error_base, major, minor;
-    if (!XTestQueryExtension(dpy, &event_base, &error_base, &major, &minor)) {
-        XCloseDisplay(dpy);
-        return 2;
-    }
-
-    /* XF86AudioPlay keysym = 0x1008FF14 */
-    KeyCode play = XKeysymToKeycode(dpy, 0x1008FF14);
-    if (play == 0) {
-        XCloseDisplay(dpy);
-        return 2;
-    }
-
-    XTestFakeKeyEvent(dpy, play, True, CurrentTime);
-    usleep(8000);
-    XTestFakeKeyEvent(dpy, play, False, CurrentTime);
-
-    XFlush(dpy);
-    usleep(20000);
-    XCloseDisplay(dpy);
-    return 0;
-}
-
-/* Resolve the paste key sequence. --shift-insert wins outright (used when the
- * caller already knows context is unknown or Konsole). Otherwise: terminal
- * detection via atspi, then X11 class, then parent class — same fallback
- * chain the binary used before this enum existed. */
-static paste_mode_t resolve_paste_mode(int force_terminal, int force_shift_insert,
-                                       Window target_window)
-{
-    if (force_shift_insert) return PASTE_MODE_SHIFT_INSERT;
-
-    int is_term = force_terminal;
-#ifdef HAVE_ATSPI
-    if (!is_term) { int r = detect_terminal_atspi(); if (r >= 0) is_term = r; }
-#endif
-    if (!is_term) {
-        Display *dpy = XOpenDisplay(NULL);
-        if (dpy) {
-            Window win = (target_window != None) ? target_window : get_active_window(dpy);
-            if (win != None) {
-                XClassHint hint;
-                if (XGetClassHint(dpy, win, &hint)) {
-                    is_term = is_terminal(hint.res_class) || is_terminal(hint.res_name);
-                    XFree(hint.res_name);
-                    XFree(hint.res_class);
-                } else {
-                    is_term = check_parent_terminal(dpy, win);
-                }
-            }
-            XCloseDisplay(dpy);
-        }
-    }
-    return is_term ? PASTE_MODE_CTRL_SHIFT_V : PASTE_MODE_CTRL_V;
-}
-
+/* Observation and portal shortcuts only. No XTest, uinput, accessibility writes,
+ * or window activation. The application uses the Rust EIS broker for input. */
 int main(int argc, char *argv[]) {
-    int force_terminal = 0;
-    int force_shift_insert = 0;
-    int use_uinput = 0;
-    int use_portal = 0;
-    int media_play_pause = 0;
-    int detect_terminal = 0;
-    int print_active_app = 0;
-    int insert_text = 0;
+    int force_terminal = 0, force_ctrl_v = 0, force_shift_insert = 0;
+    int use_portal = 0, detect_terminal = 0, print_active_app = 0, read_selection = 0;
+    int copy_mode = -1;
     const char *restore_token = NULL;
-    Window target_window = None;
-
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--insert-text") == 0) {
-            insert_text = 1;
-        } else if (strcmp(argv[i], "--terminal") == 0) {
-            force_terminal = 1;
-        } else if (strcmp(argv[i], "--shift-insert") == 0) {
-            force_shift_insert = 1;
-        } else if (strcmp(argv[i], "--uinput") == 0) {
-            use_uinput = 1;
-        } else if (strcmp(argv[i], "--portal") == 0) {
-            use_portal = 1;
-        } else if (strcmp(argv[i], "--media-play-pause") == 0) {
-            media_play_pause = 1;
-        } else if (strcmp(argv[i], "--detect-terminal") == 0) {
-            detect_terminal = 1;
-        } else if (strcmp(argv[i], "--active-app") == 0) {
-            print_active_app = 1;
-        } else if (strcmp(argv[i], "--restore-token") == 0 && i + 1 < argc) {
-            restore_token = argv[++i];
-        } else if (strcmp(argv[i], "--window") == 0 && i + 1 < argc) {
-            target_window = (Window)strtoul(argv[++i], NULL, 0);
-        }
+        if (!strcmp(argv[i], "--read-selection")) read_selection = 1;
+        else if (!strcmp(argv[i], "--active-app")) print_active_app = 1;
+        else if (!strcmp(argv[i], "--detect-terminal")) detect_terminal = 1;
+        else if (!strcmp(argv[i], "--portal")) use_portal = 1;
+        else if (!strcmp(argv[i], "--ctrl-v")) force_ctrl_v = 1;
+        else if (!strcmp(argv[i], "--terminal")) force_terminal = 1;
+        else if (!strcmp(argv[i], "--shift-insert")) force_shift_insert = 1;
+        else if (!strcmp(argv[i], "--restore-token") && i + 1 < argc) restore_token = argv[++i];
+        else if (!strcmp(argv[i], "--copy-key") && i + 1 < argc) {
+            const char *key = argv[++i];
+            if (!strcmp(key, "ctrl-insert")) copy_mode = COPY_MODE_CTRL_INSERT;
+            else if (!strcmp(key, "ctrl-c")) copy_mode = COPY_MODE_CTRL_C;
+            else if (!strcmp(key, "ctrl-shift-c")) copy_mode = COPY_MODE_CTRL_SHIFT_C;
+            else return 1;
+        } else { fprintf(stderr, "unsupported helper action; input requires the RemoteDesktop portal\n"); return 1; }
     }
-
-    if (insert_text) {
+    if (read_selection) {
 #ifdef HAVE_ATSPI
-        return insert_text_direct();
+        return read_selection_direct();
 #else
         return 1;
 #endif
     }
-
-    if (media_play_pause) {
-        return send_media_play_pause();
-    }
-
     if (detect_terminal) {
 #ifdef HAVE_ATSPI
         int atspi_result = detect_terminal_atspi();
@@ -832,73 +609,17 @@ int main(int argc, char *argv[]) {
         return 2;
     }
 
-    if (use_portal) {
+
+    if (!use_portal) { fprintf(stderr, "input requires the RemoteDesktop portal\n"); return 1; }
 #ifdef HAVE_GIO
-        paste_mode_t mode = resolve_paste_mode(force_terminal, force_shift_insert, target_window);
-        return paste_via_portal(mode, restore_token);
+    paste_mode_t mode = copy_mode >= 0 ? (paste_mode_t)copy_mode :
+        force_shift_insert ? PASTE_MODE_SHIFT_INSERT :
+        force_ctrl_v ? PASTE_MODE_CTRL_V :
+        force_terminal ? PASTE_MODE_CTRL_SHIFT_V : PASTE_MODE_CTRL_V;
+    return paste_via_portal(mode, restore_token);
 #else
-        fprintf(stderr, "portal support not compiled in\n");
-        return 5;
+    (void)copy_mode; (void)force_terminal; (void)force_ctrl_v;
+    (void)force_shift_insert; (void)restore_token;
+    fprintf(stderr, "portal support not compiled in\n"); return 3;
 #endif
-    }
-
-    if (use_uinput) {
-#ifdef HAVE_UINPUT
-        paste_mode_t mode = resolve_paste_mode(force_terminal, force_shift_insert, target_window);
-        return paste_via_uinput(mode);
-#else
-        fprintf(stderr, "uinput support not compiled in\n");
-        return 3;
-#endif
-    }
-
-    Display *dpy = XOpenDisplay(NULL);
-    if (!dpy) return 1;
-
-    int event_base, error_base, major, minor;
-    if (!XTestQueryExtension(dpy, &event_base, &error_base, &major, &minor)) {
-        XCloseDisplay(dpy);
-        return 2;
-    }
-
-    if (target_window != None) {
-        activate_window(dpy, target_window);
-    }
-
-    paste_mode_t mode = resolve_paste_mode(force_terminal, force_shift_insert, target_window);
-
-    if (mode == PASTE_MODE_SHIFT_INSERT) {
-        KeyCode shift  = XKeysymToKeycode(dpy, XK_Shift_L);
-        KeyCode insert = XKeysymToKeycode(dpy, XK_Insert);
-
-        XTestFakeKeyEvent(dpy, shift, True, CurrentTime);
-        usleep(8000);
-        XTestFakeKeyEvent(dpy, insert, True, CurrentTime);
-        usleep(8000);
-        XTestFakeKeyEvent(dpy, insert, False, CurrentTime);
-        usleep(8000);
-        XTestFakeKeyEvent(dpy, shift, False, CurrentTime);
-    } else {
-        const int use_shift = (mode == PASTE_MODE_CTRL_SHIFT_V);
-        KeyCode ctrl = XKeysymToKeycode(dpy, XK_Control_L);
-        KeyCode shift = XKeysymToKeycode(dpy, XK_Shift_L);
-        KeyCode v = XKeysymToKeycode(dpy, XK_v);
-
-        XTestFakeKeyEvent(dpy, ctrl, True, CurrentTime);
-        if (use_shift)
-            XTestFakeKeyEvent(dpy, shift, True, CurrentTime);
-        usleep(8000);
-        XTestFakeKeyEvent(dpy, v, True, CurrentTime);
-        usleep(8000);
-        XTestFakeKeyEvent(dpy, v, False, CurrentTime);
-        usleep(8000);
-        if (use_shift)
-            XTestFakeKeyEvent(dpy, shift, False, CurrentTime);
-        XTestFakeKeyEvent(dpy, ctrl, False, CurrentTime);
-    }
-
-    XFlush(dpy);
-    usleep(20000);
-    XCloseDisplay(dpy);
-    return 0;
 }

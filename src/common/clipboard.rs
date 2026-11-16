@@ -279,7 +279,8 @@ mod tests {
         let reader = dir.join("read");
         let code = format!(
             "#!/usr/bin/python3\nimport pathlib,sys,time\np=pathlib.Path({:?})\ntext=sys.stdin.buffer.read()\ntime.sleep({delay})\nif {fail}:sys.exit(7)\np.write_bytes(text)\nwhile True:time.sleep(1)\n",
-            clipboard.to_str().unwrap(), fail = if fail { "True" } else { "False" }
+            clipboard.to_str().unwrap(),
+            fail = if fail { "True" } else { "False" }
         );
         fs::write(&publisher, code).unwrap();
         fs::write(&reader, format!("#!/usr/bin/python3\nimport pathlib,sys\nsys.stdout.buffer.write(pathlib.Path({:?}).read_bytes())\n", clipboard.to_str().unwrap())).unwrap();

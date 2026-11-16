@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { FieldSpec } from "../lib/types";
   import { get, set } from "../lib/state.svelte";
+  import Range from "./Range.svelte";
+  import Combo from "./Combo.svelte";
   import Help from "./Help.svelte";
   import { t } from "../lib/i18n";
   let { spec, extra }: { spec: FieldSpec; extra?: import("svelte").Snippet } =
@@ -20,6 +22,13 @@
   }
 </script>
 
+{#if spec.type === "select"}
+<Combo label={spec.label} path={spec.path} value={String(value??"")} items={(spec.options||[]).map(([value,label])=>({value,label}))} help={spec.help||""} disabled={spec.disabled} onselect={value=>set(spec.path,value)}>
+ {#snippet extra()}{#if extra}{@render extra()}{/if}{/snippet}
+</Combo>
+{:else if spec.type === "range"}
+<Range label={spec.label} path={spec.path} value={Number(value)} min={spec.min??0} max={spec.max??100} step={spec.step||1} unit={spec.suffix?t(spec.suffix):""} help={spec.help||""} disabled={spec.disabled} onchange={value=>set(spec.path,value)}/>
+{:else}
 <div
   class="field"
   class:field-disabled={spec.disabled}
@@ -39,15 +48,6 @@
         disabled={spec.disabled}
         onchange={change}
       />
-    {:else if spec.type === "select"}<select
-        id={spec.path}
-        value={String(value ?? "")}
-        disabled={spec.disabled}
-        onchange={change}
-        >{#each spec.options || [] as [v, label]}<option value={v}
-            >{t(label)}</option
-          >{/each}</select
-      >
     {:else if spec.type === "textarea"}<textarea
         id={spec.path}
         dir={spec.path === "cleanup.prompt" ? "auto" : "ltr"}
@@ -55,16 +55,6 @@
         value={String(value ?? "")}
         disabled={spec.disabled}
         oninput={change}></textarea>
-    {:else if spec.type === "range"}<input
-        id={spec.path}
-        type="range"
-        value={Number(value)}
-        min={spec.min}
-        max={spec.max}
-        step={spec.step || 1}
-        disabled={spec.disabled}
-        oninput={change}
-      /><output class="range-value">{String(value)}{spec.suffix ? t(spec.suffix) : ""}</output>
     {:else}<input
         id={spec.path}
         dir="ltr"
@@ -79,3 +69,5 @@
     {#if extra}{@render extra()}{/if}
   </div>
 </div>
+
+{/if}

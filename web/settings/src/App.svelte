@@ -1,22 +1,26 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import { ui, load, eventLoop, save, run, dispose } from "./lib/state.svelte";
-  import { api } from "./lib/api";
+  import { ui, load, eventLoop, save, run, dispose, refreshAutomaticSelections } from "./lib/state.svelte";
+  import {catalogView,refreshModules,onAutomaticSelection} from "./lib/modules.svelte";
+  import { api, hasToken, setToken } from "./lib/api";
   import { pages, searchEntries, fuzzyScore } from "./lib/settings";
   import Icon from "./components/Icon.svelte";
   import IconButton from "./components/IconButton.svelte";
-  import ModelSetup from "./components/ModelSetup.svelte";
+  import Reading from "./pages/Reading.svelte";
   import General from "./pages/General.svelte";
   import Audio from "./pages/Audio.svelte";
   import Models from "./pages/Models.svelte";
-  import Output from "./pages/Output.svelte";
   import Cleanup from "./pages/Cleanup.svelte";
   import Advanced from "./pages/Advanced.svelte";
-  import Config from "./pages/Config.svelte";
   import type { Page } from "./lib/types";
   import { direction, locale, t, tEnglish } from "./lib/i18n";
   let query = $state(""),
     searchIndex = $state(0);
+  let authenticated = $state(hasToken());
+  let signInToken = $state("");
+  let signInError = $state("");
+  let signingIn = $state(false);
+  let stopSession: (() => void) | undefined;
   const results = $derived(
     query.trim()
       ? searchEntries
@@ -27,15 +31,18 @@
           )
           .map((e) => ({
             ...e,
-            score: fuzzyScore(query, `${t(e.label)} ${tEnglish(e.label)} ${e.path}`),
+            score: fuzzyScore(query, `${t(e.label)} ${tEnglish(e.label)} ${e.path} ${t(pages.find(page=>page.id===e.page)?.name||"")} ${"help" in e && e.help ? t(e.help):""} ${"aliases" in e ? e.aliases : ""}`),
           }))
           .filter((e) => e.score >= 0)
           .sort((a, b) => b.score - a.score)
           .slice(0, 7)
       : [],
   );
-  const current = $derived(pages.find((p) => p.id === ui.page)!);
-  onMount(() => {
+  const current = $derived(pages.find((p) => p.id === ui.page) || pages[0]);
+  function startSession() {
+    onAutomaticSelection(refreshAutomaticSelections);
+    const refreshTimer=setInterval(()=>{void refreshModules().catch(()=>{});},2000);
+    void refreshModules().catch(()=>{});
     const controller = new AbortController();
     void run(async () => {
       await load();
@@ -43,10 +50,31 @@
         void eventLoop(controller.signal);
     });
     return () => {
+      onAutomaticSelection();
+      clearInterval(refreshTimer);
       controller.abort();
       dispose();
     };
+  }
+  onMount(() => {
+    if (authenticated) stopSession = startSession();
+    return () => stopSession?.();
   });
+  async function signIn(event: SubmitEvent) {
+    event.preventDefault();
+    signingIn = true;
+    signInError = "";
+    setToken(signInToken);
+    try {
+      await api("/api/state");
+      signInToken = "";
+      authenticated = true;
+      stopSession = startSession();
+    } catch {
+      setToken("");
+      signInError = t("admin.sign_in_failed");
+    } finally { signingIn = false; }
+  }
   $effect(() => {
     document.documentElement.dataset.theme =
       ui.config?.general.ui_theme || "auto";
@@ -55,11 +83,17 @@
     document.title = `${t("ui.settings.c7f73b")} · Simple STT`;
   });
   async function jump(page: Page, path = "") {
+    if (page === "models") {
+      catalogView.panel=path.startsWith("cleanup.")?"cleanup":"models";
+      if(path.startsWith("tts."))catalogView.feature="tts";
+      else if(path.startsWith("ocr."))catalogView.feature="ocr";
+      else if(path.startsWith("speech."))catalogView.feature="stt";
+    }
     ui.page = page;
     query = "";
     if (path) {
       await tick();
-      const field = document.querySelector(`[data-setting-path="${path}"]`);
+      const field = document.querySelector(`[data-setting-path="${path}"]`) || document.getElementById(path) || document.querySelector(`[data-setting-path$=".${path.split('.').at(-1)}"]`);
       if (field) {
         for (let p = field.parentElement; p; p = p.parentElement)
           if (p instanceof HTMLDetailsElement) p.open = true;
@@ -100,6 +134,18 @@
     }
   }}
 />
+{#if !authenticated}
+  <main class="admin-sign-in">
+    <h1>Simple STT</h1>
+    <p>{t("admin.sign_in_help")}</p>
+    <form onsubmit={signIn}>
+      <label for="admin-token">{t("admin.token")}</label>
+      <input id="admin-token" type="password" autocomplete="current-password" bind:value={signInToken} required disabled={signingIn} />
+      <button type="submit" disabled={signingIn || !signInToken.trim()}>{t("admin.sign_in")}</button>
+      {#if signInError}<p role="alert">{signInError}</p>{/if}
+    </form>
+  </main>
+{:else}
 <div class="app-shell">
   <aside class="rail">
     <div class="brand">
@@ -150,7 +196,7 @@
           aria-current={ui.page === page.id ? "page" : undefined}
           class:active={ui.page === page.id}
           onclick={() => jump(page.id)}
-          ><Icon name={page.icon} /><span>{t(page.name)}</span></button
+          ><Icon name={page.icon} /><span class="nav-copy"><span>{t(page.name)}</span><small>{t(page.description)}</small></span></button
         >{/each}
     </nav>
     <div class="rail-bottom">
@@ -167,8 +213,7 @@
     </div>
   </aside>
   <main>
-    <header class="page-head"><h1>{t(current.name)}</h1></header>
-    {#if ui.ready && ui.state?.model_setup?.show}<ModelSetup />{/if}
+    <header class="page-head"><h1>{t(current.name)}</h1><p class="page-description">{t(current.description)}</p></header>
     <form
       id="settings"
       onsubmit={(event) => {
@@ -180,10 +225,7 @@
           {#if ui.page === "general"}<General
             />{:else if ui.page === "audio"}<Audio
             />{:else if ui.page === "models"}<Models
-            />{:else if ui.page === "output"}<Output
-            />{:else if ui.page === "cleanup"}<Cleanup
-            />{:else if ui.page === "advanced"}<Advanced />{:else}<Config
-            />{/if}
+            />{:else if ui.page === "reading"}<Reading />{:else if ui.page === "cleanup"}<Cleanup />{:else}<Advanced />{/if}
         </section>{:else}<div
           class="loading-skeleton"
           aria-label={t("ui.loading_settings.2ee974")}
@@ -210,3 +252,4 @@
       disabled={ui.saving}>{t(ui.saving ? "Saving…" : "Save")}</button
     >
   </footer>{/if}
+{/if}

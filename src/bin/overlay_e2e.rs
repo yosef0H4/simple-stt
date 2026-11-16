@@ -147,7 +147,93 @@ fn render_offscreen() {
         .unwrap_or_else(|_| "artifacts/localization/offscreen".into());
     std::fs::create_dir_all(&directory).expect("create screenshot directory");
     for locale in [Locale::En, Locale::Ar] {
+        let activity =
+            |value: serde_json::Value| simple_stt::reader::activity_text(&value, locale, false);
+        let event = |feature: &str, model: &str, state: &str| {
+            simple_stt::reader::model_event_text(
+                &serde_json::json!({"feature": feature, "model": model, "language": if feature == "tts" { "en" } else { "ar" }, "event": state}),
+                locale,
+            )
+        };
+        let mut reader_cases = vec![
+            (
+                "read-along-next-page",
+                simple_stt::reader::hud_text(&serde_json::json!({"state":"reading","activity":{"phase":"idle","message_id":"idle"},"chunk_text":if locale == Locale::Ar { "هذا هو النص الذي يُقرأ الآن." } else { "This is the sentence being read aloud." },"read_along_active":true,"next_page_activity":{"phase":"ocr"}}),locale,0).0,
+            ),
+            (
+                "reader-detect-language",
+                activity(
+                    serde_json::json!({"activity": {"phase": "detecting_language", "message_id": "reader.phase.detecting_language"}}),
+                ),
+            ),
+            (
+                "reader-loading-voice",
+                activity(
+                    serde_json::json!({"activity": {"phase": "loading_voice", "message_id": "reader.phase.loading_voice", "model": "kokoro", "language": "en"}}),
+                ),
+            ),
+            (
+                "reader-reading",
+                activity(
+                    serde_json::json!({"activity": {"phase": "reading", "message_id": "reader.phase.reading", "model": "supertonic3", "language": "ar"}, "device": "CUDA verified", "chunk": 1, "chunk_total": 4, "chunk_text": if locale == Locale::Ar { "هذا النص هو ما يُقرأ الآن. السعر ٥ دولارات." } else { "This is the passage being read aloud. The price is five dollars." }}),
+                ),
+            ),
+            (
+                "reader-reading-copy-notice",
+                simple_stt::reader::hud_text(&serde_json::json!({"state":"reading","activity":{"phase":"reading","message_id":"reader.phase.reading"},"chunk_text":if locale == Locale::Ar { "هذا النص هو ما يُقرأ الآن." } else { "This passage remains visible alongside the clipboard notice." },"notice_text":"reader.clipboard_replaced"}),locale,0).0,
+            ),
+            (
+                "reader-prewarm",
+                format!(
+                    "{}\n{}",
+                    event("ocr", "paddle-ar-en", "loading"),
+                    event("tts", "kokoro", "loading")
+                ),
+            ),
+            (
+                "reader-loaded",
+                format!(
+                    "{}\n{}",
+                    event("ocr", "paddle-ar-en", "loaded"),
+                    event("tts", "kokoro", "loaded")
+                ),
+            ),
+            (
+                "reader-unloaded",
+                format!(
+                    "{}\n{}",
+                    event("ocr", "paddle-ar-en", "unloaded"),
+                    event("tts", "kokoro", "unloaded")
+                ),
+            ),
+            (
+                "reader-clipboard-replaced",
+                format!("📋 {}", translate(locale, "reader.clipboard_replaced", &[])),
+            ),
+        ];
+        // Feed actual isolated OCR output through the production HUD and Pango
+        // renderer, without mapping a window or touching the clipboard.
+        let arguments: Vec<_> = std::env::args().collect();
+        if let Some(pair) = arguments
+            .windows(2)
+            .find(|pair| pair[0] == "--reading-text-file")
+        {
+            let text = std::fs::read_to_string(&pair[1]).expect("read OCR fixture text");
+            reader_cases.push((
+                "reader-ocr-result",
+                activity(serde_json::json!({
+                    "activity": {"phase": "reading", "message_id": "reader.phase.reading", "language": "ar"},
+                    "chunk": 1, "chunk_total": 3, "chunk_text": text
+                })),
+            ));
+        }
         let cases = [
+            ("compact-assigned", OverlayPrimary::Recording, simple_stt::shortcuts::summary(&std::collections::BTreeMap::from([
+                ("record".into(), "Meta+Z".into()),
+                ("cancel".into(), "Meta+Ctrl+Z".into()),
+                ("delivery".into(), "Meta+Ctrl+.".into()),
+                ("retry".into(), "Meta+Ctrl+,".into()),
+            ]), locale)),
             ("clipboard-buffering", OverlayPrimary::Hidden, translate(locale, "notice.clipboardBuffering", &[])),
             ("clipboard-ready", OverlayPrimary::Hidden, translate(locale, "notice.clipboardReady", &[])),
             ("clipboard-failed", OverlayPrimary::Hidden, translate(locale, "notice.clipboardFailed", &[])),
@@ -168,11 +254,92 @@ fn render_offscreen() {
             ("waiting-paste", OverlayPrimary::WaitingForPaste, String::new()),
             ("waiting-keys", OverlayPrimary::WaitingForKeys, String::new()),
             ("mixed-transcribing", OverlayPrimary::Transcribing, "النموذج: \u{2066}lemura-arabic-q8_0.gguf\u{2069}".into()),
+            ("recording-countdown-500", OverlayPrimary::Recording, translate(locale, "notice.recordingCountdownMs", &[("milliseconds", "500")])),
+            ("recording-countdown-250", OverlayPrimary::Recording, translate(locale, "notice.recordingCountdownMs", &[("milliseconds", "250")])),
             ("recording-warning", OverlayPrimary::Recording, translate(locale, "notice.microphoneFallback", &[])),
             ("multiline-warning", OverlayPrimary::Hidden, "تعذّر الاتصال بخدمة الصوت.\nتحقق من الميكروفون وأعد المحاولة.\nالملف: \u{2066}/home/user/models/arabic-q8.gguf\u{2069}".into()),
             ("wrapped-warning", OverlayPrimary::Recording, translate(locale, "notice.cleanupTimeout", &[("seconds", "120")])),
             ("long-mixed-warning", OverlayPrimary::Recording, translate(locale, "error.missingBinary", &[("binary", "\u{2066}/home/user/simple-stt/runtime/arabic-models/lemura-arabic-asr-lite-q8_0.gguf\u{2069}")])),
         ];
+        let bindings = [
+            ("record", "Meta+Z"),
+            ("cancel", "Meta+X"),
+            ("delivery", "Meta+D"),
+            ("cleanup", "Meta+Ctrl+A"),
+            ("retry", "Meta+Ctrl+V"),
+            ("shortcuts", "Meta+Ctrl+H"),
+        ]
+        .into_iter()
+        .map(|(id, chord)| (id.to_owned(), chord.to_owned()))
+        .collect();
+        let shortcuts = simple_stt::shortcuts::summary(&bindings, locale);
+        for (name, primary, notice, enabled) in [
+            (
+                "reminders-recording",
+                OverlayPrimary::Recording,
+                String::new(),
+                true,
+            ),
+            (
+                "reminders-transcribing",
+                OverlayPrimary::Transcribing,
+                String::new(),
+                true,
+            ),
+            (
+                "reminders-pasting",
+                OverlayPrimary::Pasting,
+                String::new(),
+                true,
+            ),
+            (
+                "reminders-typing",
+                OverlayPrimary::Typing,
+                String::new(),
+                true,
+            ),
+            (
+                "reminders-warning",
+                OverlayPrimary::Recording,
+                translate(locale, "notice.microphoneFallback", &[]),
+                true,
+            ),
+            (
+                "reminders-off",
+                OverlayPrimary::Pasting,
+                String::new(),
+                false,
+            ),
+            (
+                "shortcuts-manual",
+                OverlayPrimary::Hidden,
+                format!("{}\n{shortcuts}", translate(locale, "shortcut.title", &[])),
+                false,
+            ),
+        ] {
+            let plan = overlay_render::plan_with_shortcuts(
+                primary,
+                Some(&notice),
+                &[0.6; 10],
+                RecordingIndicators::default(),
+                locale,
+                &shortcuts,
+                enabled,
+            )
+            .expect("shortcut layout");
+            if enabled {
+                assert!(plan.text.contains(&shortcuts));
+            }
+            assert!(
+                plan.height < overlay_render::MAX_HEIGHT,
+                "shortcut reminder clipped"
+            );
+            let surface = overlay_render::render_surface(&plan).expect("shortcut surface");
+            let mut file =
+                std::fs::File::create(format!("{directory}/{}-{name}.png", locale.as_str()))
+                    .unwrap();
+            surface.write_to_png(&mut file).unwrap();
+        }
         for (name, primary, notice) in cases {
             let plan = overlay_render::plan_for_locale(
                 primary,
@@ -183,6 +350,21 @@ fn render_offscreen() {
             )
             .expect("layout plan");
             let surface = overlay_render::render_surface(&plan).expect("render tooltip");
+            let path = format!("{directory}/{}-{name}.png", locale.as_str());
+            let mut file = std::fs::File::create(&path).expect("create PNG");
+            surface.write_to_png(&mut file).expect("write PNG");
+            println!("{path}: {}×{}", plan.width, plan.height);
+        }
+        for (name, notice) in reader_cases {
+            let plan = overlay_render::plan_for_locale(
+                OverlayPrimary::Hidden,
+                Some(&notice),
+                &[0.6; 10],
+                RecordingIndicators::default(),
+                locale,
+            )
+            .expect("reader layout plan");
+            let surface = overlay_render::render_surface(&plan).expect("reader tooltip");
             let path = format!("{directory}/{}-{name}.png", locale.as_str());
             let mut file = std::fs::File::create(&path).expect("create PNG");
             surface.write_to_png(&mut file).expect("write PNG");

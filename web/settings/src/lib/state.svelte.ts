@@ -1,3 +1,5 @@
+import { reading, readingDirty, saveReading } from "./reading-state.svelte";
+import type { ReaderConfig } from './reader';
 import { api, events, ApiError } from "./api";
 import { responseMessage, t } from "./i18n";
 import { assertConfig } from "./types";
@@ -9,7 +11,6 @@ import type {
   SaveResult,
   ActionResult,
 } from "./types";
-import { recommendedModel } from "./models";
 export const ui = $state({
   config: null as Config | null,
   state: null as SettingsState | null,
@@ -25,7 +26,7 @@ export const ui = $state({
   jsonText: "",
   jsonPending: false,
   jsonInvalid: false,
-  downloads: {} as Record<string, { downloaded: number; total: number }>,
+  downloads: {} as Record<string, { downloaded: number; total: number; phase?: string }>,
   cleanupModels: [] as { id: string }[],
 });
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -39,7 +40,7 @@ export function notice(message: string, kind = "info", details = "") {
 }
 export function markDirty() {
   ui.dirty =
-    ui.jsonInvalid || JSON.stringify(ui.config) !== JSON.stringify(ui.baseline);
+    readingDirty() || ui.jsonInvalid || JSON.stringify(ui.config) !== JSON.stringify(ui.baseline);
 }
 export function get(path: string): unknown {
   return path
@@ -63,14 +64,7 @@ export function set(path: string, value: unknown) {
   markDirty();
   if (path === "speech.selection_mode") initializeLanguages();
 }
-export function initializeLanguages() {
-  if (ui.config?.speech.selection_mode !== "follow_keyboard") return;
-  for (const language of ui.state?.keyboard_languages?.languages || [])
-    if (!Object.hasOwn(ui.config.speech.language_models, language.id))
-      ui.config.speech.language_models[language.id] =
-        recommendedModel(ui.state?.models || [], language)?.file || null;
-  markDirty();
-}
+export function initializeLanguages() { markDirty(); }
 export async function refreshLanguages() {
   const discovered = await api<Discovery>("/api/keyboard-languages");
   if (ui.state) ui.state.keyboard_languages = discovered;
@@ -100,13 +94,12 @@ export function changedPaths(
 export async function refreshState(reloaded = false, signal?: AbortSignal) {
   const next = await api<SettingsState>("/api/state", undefined, signal);
   if (next.config) assertConfig(next.config);
-  const setupCompleted = ui.state?.model_setup?.pending && !next.model_setup?.pending;
   const discovery = ui.state?.keyboard_languages;
   ui.state = {
     ...next,
     keyboard_languages: discovery || next.keyboard_languages,
   };
-  if ((reloaded || setupCompleted) && next.config) {
+  if (reloaded && next.config) {
     if (!ui.dirty) {
       ui.config = clone(next.config);
       ui.baseline = clone(next.config);
@@ -118,8 +111,8 @@ export async function refreshState(reloaded = false, signal?: AbortSignal) {
         "cleanup.enabled",
         "output.linux_automation_backend",
       ]);
-      const routing = ["selection_mode", "single_model_filename", "language_models"] as const;
-      if (!ui.jsonInvalid && routing.every((key) => JSON.stringify(ui.config?.speech[key]) === JSON.stringify(ui.baseline?.speech[key]))) {
+      const routing = ["selection_mode", "single_model_filename", "language_models", "language_runtimes", "runtime_dir", "language_devices"] as const;
+      if (!ui.jsonInvalid && !ui.jsonPending) {
         for (const key of routing) {
           const prefix = `speech.${key}`;
           for (const path of changedPaths(ui.baseline, next.config))
@@ -129,7 +122,7 @@ export async function refreshState(reloaded = false, signal?: AbortSignal) {
       const changed = changedPaths(ui.baseline, next.config);
       if (changed.every((p) => allowed.has(p))) {
         for (const p of changed)
-          set(
+          if (JSON.stringify(readPath(ui.config, p)) === JSON.stringify(readPath(ui.baseline, p))) set(
             p,
             p
               .split(".")
@@ -145,6 +138,35 @@ export async function refreshState(reloaded = false, signal?: AbortSignal) {
     }
   }
   initializeLanguages();
+}
+
+function readPath(value: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((node,key)=>node&&typeof node==='object'?(node as Record<string,unknown>)[key]:undefined,value);
+}
+function mergeSavedFields(draft: Record<string,unknown>, baseline: Record<string,unknown>, saved: Record<string,unknown>, prefix='') {
+  for(const key of new Set([...Object.keys(baseline),...Object.keys(saved)])){
+    const current=draft[key],before=baseline[key],next=saved[key];
+    const object=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==='object'&&!Array.isArray(value);
+    const path=prefix?`${prefix}.${key}`:key;
+    if(object(current)&&object(next))mergeSavedFields(current,object(before)?before:{},next,path);
+    else if(path==='revision'||JSON.stringify(current??null)===JSON.stringify(before??null)){
+      if(next===undefined)delete draft[key];else draft[key]=clone(next);
+    }
+  }
+}
+export async function refreshAutomaticSelections():Promise<boolean> {
+  if(!ui.ready)return false;
+  await refreshState(true);
+  if(reading.config&&reading.baseline){
+    const {config:next}=await api<{config:ReaderConfig}>('/api/reader');
+    const baseline=JSON.parse(reading.baseline) as ReaderConfig;
+    const rawWasCurrent=reading.raw===JSON.stringify(reading.config,null,2);
+    mergeSavedFields(reading.config as unknown as Record<string,unknown>,baseline as unknown as Record<string,unknown>,next as unknown as Record<string,unknown>);
+    reading.baseline=JSON.stringify(next);
+    if(rawWasCurrent)reading.raw=JSON.stringify(reading.config,null,2);
+  }
+  markDirty();
+  return true;
 }
 export async function load() {
   ui.jsonPending = false;
@@ -198,6 +220,7 @@ export async function save(retried = false) {
     ui.hash = result.config_hash;
     ui.jsonPending = false;
     ui.jsonInvalid = false;
+    await saveReading();
     markDirty();
     notice(
       t(result.reloaded ? "Saved and applied." : "Saved. Capture service is offline."),
@@ -207,21 +230,12 @@ export async function save(retried = false) {
     const message = e instanceof Error ? e.message : String(e);
     if (
       !retried &&
-      message.includes("config changed outside Settings") &&
+      (message.includes("config changed outside Settings") || message.includes("configuration revision conflict")) &&
       ui.baseline
     ) {
-      const latest = await api<SettingsState>("/api/state");
-      const allowed = new Set([
-        "general.enabled",
-        "output.delivery_mode",
-        "cleanup.enabled",
-      ]);
-      const paths = changedPaths(ui.baseline, latest.config);
-      if (paths.length && paths.every((p) => allowed.has(p)) && latest.config) {
-        ui.hash = latest.config_hash;
-        ui.baseline = clone(latest.config);
-        return save(true);
-      }
+      const previousHash = ui.hash;
+      await refreshAutomaticSelections();
+      if (ui.hash !== previousHash || message.includes("configuration revision conflict")) return save(true);
     }
     const localized = e instanceof ApiError
       ? responseMessage(e.message_id, e.message_args, "")
@@ -312,7 +326,7 @@ export async function run(task: () => Promise<unknown>) {
   }
 }
 export async function download(file: string) {
-  ui.downloads[file] = { downloaded: 0, total: 0 };
+  ui.downloads[file] = { downloaded: 0, total: 0, phase: 'queued' };
   try {
     await action("download_model", file);
   } catch (e) {
@@ -327,6 +341,7 @@ export async function eventLoop(signal: AbortSignal) {
       const batch = await events(seq, signal);
       for (const e of batch) {
         seq = Math.max(seq, e.seq);
+        if (e.kind === "model_download_queued") ui.downloads[e.values.filename] = { downloaded: 0, total: 0, phase: 'queued' };
         if (e.kind === "model_download_progress")
           ui.downloads[e.values.filename] = {
             downloaded: Number(e.values.downloaded || 0),
@@ -334,7 +349,8 @@ export async function eventLoop(signal: AbortSignal) {
           };
         if (
           e.kind === "model_download_complete" ||
-          e.kind === "model_download_failed"
+          e.kind === "model_download_failed" ||
+          e.kind === "model_download_cancelled"
         ) {
           delete ui.downloads[e.values.filename];
           await refreshState();

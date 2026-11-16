@@ -55,3 +55,13 @@ SOFTWARE.
 # Bundled fonts
 
 JetBrains Mono is used for waveform glyphs; Noto Sans Arabic is used for Arabic UI text. Both are licensed under SIL Open Font License 1.1. The font license texts are in `assets/fonts/LICENSE-JetBrainsMono.txt` and `assets/fonts/LICENSE-NotoSansArabic.txt`, and Windows packages include them in `licenses/`. Noto Sans Arabic's Regular face and browser WOFF2 are derived from the upstream variable face at weight 400.
+
+## fastText language identification
+
+The unmodified Facebook AI Research `lid.176.ftz` model is distributed under CC BY-SA 3.0. See `assets/language/ATTRIBUTION.md` and `LICENSE-CC-BY-SA-3.0.txt` (also installed with the package licenses). The fastText library is MIT licensed.
+
+## Linux emulated input transport
+
+The Rust EIS client uses [reis](https://github.com/ids1024/reis) 0.7.1,
+licensed under the MIT license. It carries compositor-authorized RemoteDesktop
+input over the EI protocol; no libei binaries are bundled.

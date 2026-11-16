@@ -44,6 +44,7 @@ pub struct OverlayHandle {
 #[derive(Debug, Clone)]
 enum OverlayCommand {
     SetLocale(Locale),
+    SetShortcuts(String, bool),
     StartRecording(isize, RecordingIndicators),
     SetPrimary(OverlayPrimary),
     Notify {
@@ -78,6 +79,10 @@ impl OverlayHandle {
     /// Backwards-compatible alias used by the screenshot and latency helpers.
     pub fn show(&self, target_window: isize) {
         self.start_recording(target_window, RecordingIndicators::default());
+    }
+
+    pub fn set_shortcuts(&self, text: String, enabled: bool) {
+        let _ = self.tx.send(OverlayCommand::SetShortcuts(text, enabled));
     }
 
     pub fn set_locale(&self, locale: Locale) {
@@ -203,6 +208,8 @@ struct TooltipState {
     tool: TTTOOLINFOW,
     primary: OverlayPrimary,
     locale: Locale,
+    shortcuts: String,
+    shortcut_reminders: bool,
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
@@ -224,6 +231,8 @@ impl TooltipState {
             tool: unsafe { zeroed() },
             primary: OverlayPrimary::Hidden,
             locale: Locale::En,
+            shortcuts: String::new(),
+            shortcut_reminders: true,
             notice: None,
             target_level: 0.0,
             display_level: 0.0,
@@ -276,6 +285,10 @@ impl TooltipState {
 
     fn handle_command(&mut self, command: OverlayCommand) {
         match command {
+            OverlayCommand::SetShortcuts(text, enabled) => {
+                self.shortcuts = text;
+                self.shortcut_reminders = enabled;
+            }
             OverlayCommand::SetLocale(locale) => {
                 if self.locale != locale {
                     self.locale = locale;
@@ -392,12 +405,16 @@ impl TooltipState {
     }
 
     fn render_text(&self) -> String {
-        render_overlay_text_with_locale(
-            self.primary,
-            self.notice.as_ref().map(|notice| notice.text.as_str()),
-            &self.visualizer_levels,
-            self.indicators,
-            self.locale,
+        crate::shortcuts::append(
+            render_overlay_text_with_locale(
+                self.primary,
+                self.notice.as_ref().map(|notice| notice.text.as_str()),
+                &self.visualizer_levels,
+                self.indicators,
+                self.locale,
+            ),
+            &self.shortcuts,
+            self.shortcut_reminders,
         )
     }
 

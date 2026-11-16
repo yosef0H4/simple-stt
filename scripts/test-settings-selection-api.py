@@ -47,75 +47,6 @@ def stop_settings_server(process):
     process.wait(timeout=5)
 
 
-def test_setup_choice(binary, temporary, name, choice, *, install_before=False, manual_edit=False,
-                      reopen_before_install=False):
-    case_root = Path(temporary) / name
-    config = case_root / 'config.json'
-    runtime = case_root / 'runtime'
-    data_home = case_root / 'data'
-    process, api = start_settings_server(binary, config, runtime, data_home)
-    try:
-        initial = api('/api/state')
-        setup = initial['model_setup']
-        english, arabic = setup['english_file'], setup['arabic_file']
-        selected = [filename for filename, use in ((english, choice['english']),
-                                                    (arabic, choice['arabic'])) if use]
-        model_dir = Path(initial['resolved_model_dir'])
-
-        def install_selected(directory):
-            directory.mkdir(parents=True, exist_ok=True)
-            for filename in selected:
-                (directory / filename).write_bytes(b'isolated fake model')
-
-        if install_before:
-            install_selected(model_dir)
-        assert api('/api/model-setup', choice)['ok']
-        pending = api('/api/state')
-        if not install_before:
-            assert pending['config']['speech'] == initial['config']['speech'], \
-                f'{name}: choice applied before selected model files were installed'
-        if selected and not install_before:
-            assert pending['model_setup']['pending'] and not pending['model_setup']['show']
-            if reopen_before_install:
-                stop_settings_server(process)
-                process, api = start_settings_server(binary, config, runtime, data_home)
-                reopened = api('/api/state')
-                assert reopened['config']['speech'] == initial['config']['speech'], \
-                    f'{name}: persisted choice applied before downloads completed'
-                assert reopened['model_setup']['pending']
-                model_dir = Path(reopened['resolved_model_dir'])
-            if manual_edit:
-                draft = pending['config']
-                alternative = next(model['file'] for model in pending['models']
-                                   if model['file'] not in selected)
-                draft['speech'].update(selection_mode='single_model',
-                                       single_model_filename=alternative)
-                api('/api/save', {'config': draft, 'expected_hash': pending['config_hash']})
-                preserved = api('/api/state')
-                assert preserved['config']['speech']['selection_mode'] == 'single_model'
-                assert preserved['config']['speech']['single_model_filename'] == alternative
-                assert not preserved['model_setup']['pending']
-                return
-            install_selected(model_dir)
-
-        final = api('/api/state')
-        speech = final['config']['speech']
-        if choice['english'] and choice['arabic']:
-            assert speech['selection_mode'] == 'follow_keyboard'
-            assert speech['language_models']['en'] == english
-            assert speech['language_models']['ar'] == arabic
-        elif selected:
-            assert speech['selection_mode'] == 'single_model'
-            assert speech['single_model_filename'] == selected[0]
-        else:
-            assert speech['selection_mode'] == 'single_model'
-            assert speech['single_model_filename'] is None
-        assert not final['model_setup']['pending'] and not final['model_setup']['show']
-    finally:
-        if process.poll() is None:
-            stop_settings_server(process)
-
-
 def main():
     binary = ROOT / 'target/debug' / ('simple-stt-settings.exe' if os.name == 'nt' else 'simple-stt-settings')
     with tempfile.TemporaryDirectory(prefix='simple-stt-selection-api-') as temporary:
@@ -148,14 +79,15 @@ def main():
             assert state['config']['general']['ui_language'] == 'auto'
             assert state['ui_localization']['system_locale'] in ('en', 'ar')
             assert api('/api/normalize', {'schema_version': 9, 'general': {'ui_language': 'invalid'}})['config']['general']['ui_language'] == 'auto'
-            assert state['model_setup']['show']
-            assert state['model_setup']['arabic_file'] == 'lemura-arabic-asr-lite-q8_0.gguf'
-            for key in ['english_file', 'arabic_file']:
-                offered = next(model for model in state['models'] if model['file'] == state['model_setup'][key])
-                assert offered['recommended'] and not offered['installed']
+            assert 'model_setup' not in state
+            reader_config = api('/api/reader')['config']
+            for section in ['speech', 'ocr']:
+                assert 'fallback' not in reader_config[section]['selection']
+                assert 'uncertain_language' not in reader_config[section]['selection']
             speech = state['config']['speech']
             assert state['config']['schema_version'] == 9
-            assert speech['selection_mode'] == 'single_model'
+            assert speech['selection_mode'] == 'follow_keyboard'
+            assert speech['runtime_dir'] == '' and speech['language_runtimes'] == {}
             assert speech['single_model_filename'] is None and speech['language_models'] == {}
             language_draft = copy.deepcopy(state['config'])
             language_draft['general']['ui_language'] = 'ar'
@@ -206,28 +138,10 @@ def main():
             defaults = api('/api/defaults')['config']['speech']
             assert defaults['single_model_filename'] is None and defaults['language_models'] == {}
             assert config.read_bytes() == before, 'reset preview wrote configuration'
-            try:
-                api('/api/model-setup', {}, auth=False)
-                raise AssertionError('setup dismissal accepted unauthenticated request')
-            except HTTPError as error:
-                assert error.code == 400
-            assert api('/api/state')['model_setup']['show']
-            assert api('/api/model-setup', {'english': False, 'arabic': False})['ok']
-            assert not api('/api/state')['model_setup']['show']
-            assert api('/api/state')['config']['speech']['selection_mode'] == 'single_model'
-            assert api('/api/state')['config']['speech']['single_model_filename'] is None
-            print('PASS current-format defaults, explicit None, permissive/missing files, Save and draft-only import/reset')
-            test_setup_choice(binary, temporary, 'setup-skip',
-                              {'english': False, 'arabic': False})
-            test_setup_choice(binary, temporary, 'setup-english',
-                              {'english': True, 'arabic': False}, reopen_before_install=True)
-            test_setup_choice(binary, temporary, 'setup-arabic',
-                              {'english': False, 'arabic': True}, install_before=True)
-            test_setup_choice(binary, temporary, 'setup-both',
-                              {'english': True, 'arabic': True}, reopen_before_install=True)
-            test_setup_choice(binary, temporary, 'setup-manual-edit',
-                              {'english': True, 'arabic': True}, manual_edit=True)
-            print('PASS onboarding selection outcomes, delayed installs, process reopen, and manual selection preservation')
+            assert 'model_setup' not in api('/api/state')
+            current=api('/api/state')['config']['speech']
+            assert current['language_models']==normalized['speech']['language_models']
+            print('PASS empty defaults, no onboarding side effects, explicit routing, None/import/reset/save')
         finally:
             process.terminate()
             process.wait(timeout=5)

@@ -103,6 +103,10 @@ impl WorkerSupervisor {
     pub fn worker_pid(&self) -> Option<u32> {
         nonzero_pid(&self.pid_tracker)
     }
+    /// Language selected for the currently configured speech worker.
+    pub fn speech_language(&self) -> &str {
+        &self.config.speech_language
+    }
     /// Selection changes apply at recording start. Updating runtime preferences
     /// must not replace a warm worker with an unrelated saved selection.
     pub fn update_runtime_config(&mut self, mut next: WorkerConfig) -> Result<()> {

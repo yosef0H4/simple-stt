@@ -1,10 +1,12 @@
 class Typist {
     static modifierKeys := ["LCtrl", "RCtrl", "LAlt", "RAlt", "LShift", "RShift", "LWin", "RWin"]
 
-    __New(logger, onNotice, onFinished := "") {
+    __New(logger, onNotice, onFinished := "", onProgress := "") {
         this.logger := logger
         this.onNotice := onNotice
         this.onFinished := onFinished
+        this.onProgress := onProgress
+        this.lastProgress := ""
         this.active := false
         this.queue := Array()
         this.timer := ObjBindMethod(this, "Tick")
@@ -23,7 +25,7 @@ class Typist {
             "target_window", targetWindow,
             "text", trailingSpace && text != "" ? text . " " : text,
             "paced_typing_enabled", !!pacedTypingEnabled,
-            "typing_speed_wpm", Min(850, Max(50, typingSpeedWpm + 0)),
+            "typing_speed_wpm", Min(1650, Max(50, typingSpeedWpm + 0)),
             "delivery_mode", deliveryMode,
             "clean_clipboard_on_paste", !!cleanClipboardOnPaste
         )
@@ -54,6 +56,7 @@ class Typist {
         this.pasteExpected := ""
         this.pasteVerified := false
         this.active := true
+        this.lastProgress := ""
         this.logger.Write("info", "text-delivery begin mode=" . this.deliveryMode . " chars=" . this.textLength, this.sessionId)
         SetTimer(this.timer, -1)
     }
@@ -73,13 +76,23 @@ class Typist {
             return
         }
         if this.AnyPhysicalModifierDown() {
+            this.ReportProgress("waiting-for-keys")
             SetTimer(this.timer, -25)
             return
         }
+        this.ReportProgress(this.deliveryMode = "type" ? "typing" : "pasting")
         if this.deliveryMode = "type"
             this.TickType()
         else
             this.TickPaste()
+    }
+
+    ReportProgress(phase) {
+        if this.lastProgress = phase
+            return
+        this.lastProgress := phase
+        if IsObject(this.onProgress)
+            this.onProgress.Call(this.sessionId, phase)
     }
 
     TickType() {
@@ -126,7 +139,7 @@ class Typist {
         delay := baseDelay * this.burstFactor * jitter
         delay *= this.TransitionFactor(currentChar, nextChar)
         delay *= this.BoundaryFactor(previousChar, currentChar)
-        return Round(Max(delay, 15))
+        return Round(Max(delay, 1))
     }
 
     TransitionFactor(previousChar, currentChar) {

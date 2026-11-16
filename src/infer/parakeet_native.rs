@@ -121,7 +121,7 @@ impl Api {
                 "unsupported parakeet.cpp C ABI {actual_abi}; expected 6 (v0.5.0)"
             );
             #[cfg(target_os = "linux")]
-            select_vulkan_device(&lib)?;
+            select_native_gpu_device(&lib)?;
             #[cfg(windows)]
             select_windows_vulkan_device()?;
             Ok(Self {
@@ -149,7 +149,7 @@ unsafe fn select_windows_vulkan_device() -> Result<()> {
     let result = windows_vulkan_devices();
     match result {
         Ok(devices) => {
-            if let Some(index) = preferred_vulkan_device(&devices) {
+            if let Some(index) = preferred_gpu_device(&devices) {
                 let (_, description, _) = &devices[index];
                 // ggml applies this filter to Vulkan physical-device indices,
                 // then exposes the sole selected device as Vulkan0.
@@ -160,7 +160,7 @@ unsafe fn select_windows_vulkan_device() -> Result<()> {
             }
             anyhow::ensure!(
                 requested.is_none(),
-                "GPU mode requires a physical Vulkan GPU; no GPU was found"
+                "GPU mode requires an available physical GPU in the selected runtime"
             );
         }
         Err(error) => {
@@ -241,7 +241,7 @@ unsafe fn windows_vulkan_devices() -> Result<Vec<(String, String, c_int)>> {
 
 // Keep native backend enumeration inside the disposable inference process.
 #[cfg(target_os = "linux")]
-unsafe fn select_vulkan_device(lib: &Library) -> Result<()> {
+unsafe fn select_native_gpu_device(lib: &Library) -> Result<()> {
     let requested = std::env::var("PARAKEET_DEVICE").ok();
     if requested.as_deref() == Some("cpu") {
         return Ok(());
@@ -261,14 +261,14 @@ unsafe fn select_vulkan_device(lib: &Library) -> Result<()> {
             .into_owned();
         candidates.push((device_name, device_description, device_type(device)));
     }
-    if let Some(index) = preferred_vulkan_device(&candidates) {
+    if let Some(index) = preferred_gpu_device(&candidates) {
         let (name, description, _) = &candidates[index];
         std::env::set_var("PARAKEET_DEVICE", name);
-        tracing::info!(device = %name, gpu = %description, "selected physical Vulkan GPU");
+        tracing::info!(device = %name, gpu = %description, "selected physical GPU");
     } else {
         anyhow::ensure!(
             requested.is_none(),
-            "GPU mode requires a physical Vulkan GPU; no GPU was found"
+            "GPU mode requires an available physical GPU in the selected runtime"
         );
         // Automatic mode may fall back to CPU, explicit GPU mode may not.
         std::env::set_var("PARAKEET_DEVICE", "cpu");
@@ -277,7 +277,7 @@ unsafe fn select_vulkan_device(lib: &Library) -> Result<()> {
 }
 
 #[cfg(any(windows, target_os = "linux"))]
-fn preferred_vulkan_device(devices: &[(String, String, c_int)]) -> Option<usize> {
+fn preferred_gpu_device(devices: &[(String, String, c_int)]) -> Option<usize> {
     // ggml device types: 0 = CPU, 1 = discrete GPU, 2 = integrated GPU.
     // Software Vulkan implementations must never satisfy explicit GPU mode.
     devices
@@ -285,7 +285,7 @@ fn preferred_vulkan_device(devices: &[(String, String, c_int)]) -> Option<usize>
         .enumerate()
         .filter(|(_, (name, description, kind))| {
             let description = description.to_ascii_lowercase();
-            name.starts_with("Vulkan")
+            (name.starts_with("Vulkan") || name.starts_with("CUDA"))
                 && matches!(kind, 1 | 2)
                 && !description.contains("llvmpipe")
                 && !description.contains("lavapipe")
@@ -307,10 +307,10 @@ mod gpu_tests {
             ("Vulkan2".into(), "llvmpipe".into(), 1),
             ("CPU".into(), "AMD Ryzen".into(), 0),
         ];
-        assert_eq!(preferred_vulkan_device(&devices), Some(1));
-        assert_eq!(preferred_vulkan_device(&devices[..1]), Some(0));
-        assert_eq!(preferred_vulkan_device(&devices[2..]), None);
-        assert_eq!(preferred_vulkan_device(&[]), None);
+        assert_eq!(preferred_gpu_device(&devices), Some(1));
+        assert_eq!(preferred_gpu_device(&devices[..1]), Some(0));
+        assert_eq!(preferred_gpu_device(&devices[2..]), None);
+        assert_eq!(preferred_gpu_device(&[]), None);
     }
 }
 

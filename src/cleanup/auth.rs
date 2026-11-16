@@ -118,7 +118,10 @@ impl BrowserLogin {
         } else {
             "<!doctype html><title>Simple STT connection failed</title><p>ChatGPT could not be connected. Return to Simple STT Settings for details.</p>"
         };
-        let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
         stream.write_all(response.as_bytes())?;
         result
     }

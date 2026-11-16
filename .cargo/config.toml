@@ -1,0 +1,4 @@
+[env]
+# cfasttext-sys 0.7.8's vendored args.h omits <cstdint>. MinGW GCC 16 no
+# longer provides int64_t transitively; include its defining standard header.
+CXXFLAGS_x86_64_pc_windows_gnu = { value = "-include cstdint", force = false }

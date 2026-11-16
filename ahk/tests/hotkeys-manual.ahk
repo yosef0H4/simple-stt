@@ -33,8 +33,10 @@ cancelManager := HotkeyManager(Down, Up, logger, capsController)
 cancelManager.Configure("CapsLock+A", true, "preserve_tap")
 toggleManager := HotkeyManager(Down, Up, logger, capsController)
 toggleManager.Configure("CapsLock+D", true, "preserve_tap")
-if capsController.count != 3
-    Fail("shared CapsLock controller should have three registrations")
+helpManager := HotkeyManager(Down, Up, logger, capsController)
+helpManager.Configure("CapsLock+H", true, "preserve_tap")
+if capsController.count != 4
+    Fail("shared CapsLock controller should include the shortcut reminder binding")
 
 for label in ["CapsLock+S", "LCtrl+S", "AltGr+S", "RAlt+S", "LShift+X"] {
     spec := HotkeySpec.Parse(label)
@@ -64,6 +66,7 @@ manager.Configure("AltGr+S", true, "preserve_tap")
 manager.DisableBindings()
 cancelManager.DisableBindings()
 toggleManager.DisableBindings()
+helpManager.DisableBindings()
 if capsController.count != 0
     Fail("shared CapsLock controller should unregister all bindings")
 

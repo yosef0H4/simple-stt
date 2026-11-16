@@ -9,11 +9,17 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --all-targets
 cargo build --bin simple-stt-settings
 python scripts/test-settings-single-instance.py
+python scripts/test-settings-upgrade.py
 python scripts/test-settings-selection-api.py
 python scripts/test-cleanup-settings-e2e.py
 python scripts/verify-static.py
 python tools/ipc-poc/test_poc.py
 python scripts/test-linux-static.py
+python scripts/test-linux-package-source.py
 node scripts/test-settings-model-selection.cjs
 node scripts/test-settings-overhaul.cjs
 node scripts/test-settings-contracts.cjs
+node scripts/test-settings-provider-layout.cjs
+node scripts/test-settings-modules.cjs
+node scripts/test-settings-auto-selection.cjs
+node scripts/test-settings-paddle-catalog.cjs

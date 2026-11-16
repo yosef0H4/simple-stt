@@ -2,7 +2,9 @@ use super::overlay_model::{
     empty_visualizer_levels, set_visualizer_level, NoticeLevel, OverlayPrimary,
     RecordingIndicators, VisualizerLevels,
 };
-use super::overlay_render::{plan_for_locale, render_surface, LayoutPlan, MAX_HEIGHT, MAX_WIDTH};
+use super::overlay_render::{
+    plan_with_shortcuts, render_surface, LayoutPlan, MAX_HEIGHT, MAX_WIDTH,
+};
 use crate::localization::Locale;
 use anyhow::{Context, Result};
 use smithay_client_toolkit::reexports::calloop::{
@@ -52,6 +54,7 @@ pub struct OverlayHandle {
 #[derive(Debug, Clone)]
 enum OverlayCommand {
     SetLocale(Locale),
+    SetShortcuts(String, bool),
     StartRecording(RecordingIndicators),
     SetPrimary(OverlayPrimary),
     Notify {
@@ -96,6 +99,10 @@ impl OverlayHandle {
 
     pub fn start_recording(&self, _: isize, indicators: RecordingIndicators) {
         let _ = self.tx.send(OverlayCommand::StartRecording(indicators));
+    }
+
+    pub fn set_shortcuts(&self, text: String, enabled: bool) {
+        let _ = self.tx.send(OverlayCommand::SetShortcuts(text, enabled));
     }
 
     pub fn set_locale(&self, locale: Locale) {
@@ -181,6 +188,8 @@ fn overlay_thread(rx: channel::Channel<OverlayCommand>, level: Arc<AtomicU32>) -
         mapped: false,
         primary: OverlayPrimary::Hidden,
         locale: Locale::En,
+        shortcuts: String::new(),
+        shortcut_reminders: true,
         notice: None,
         target_level: 0.0,
         display_level: 0.0,
@@ -238,6 +247,8 @@ struct LayerOverlay {
     mapped: bool,
     primary: OverlayPrimary,
     locale: Locale,
+    shortcuts: String,
+    shortcut_reminders: bool,
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
@@ -253,6 +264,10 @@ struct LayerOverlay {
 impl LayerOverlay {
     fn handle_command(&mut self, command: OverlayCommand) {
         match command {
+            OverlayCommand::SetShortcuts(text, enabled) => {
+                self.shortcuts = text;
+                self.shortcut_reminders = enabled;
+            }
             OverlayCommand::SetLocale(locale) => {
                 if self.locale != locale {
                     self.locale = locale;
@@ -481,12 +496,14 @@ impl LayerOverlay {
 
     /// Build the lines to render plus the surface size needed to fit them.
     fn build_plan(&self) -> Option<LayoutPlan> {
-        plan_for_locale(
+        plan_with_shortcuts(
             self.primary,
             self.notice.as_ref().map(|notice| notice.text.as_str()),
             &self.visualizer_levels,
             self.indicators,
             self.locale,
+            &self.shortcuts,
+            self.shortcut_reminders,
         )
     }
 }

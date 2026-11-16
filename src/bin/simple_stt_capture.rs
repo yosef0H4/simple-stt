@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use crossbeam_channel::{bounded, select, tick, unbounded, Sender};
+use crossbeam_channel::{bounded, select, tick, unbounded, Receiver, Sender};
 use simple_stt::capture::audio::{self, AudioEvent};
 use simple_stt::capture::inference_supervisor::{
     nonzero_pid, shutdown_shared, shutdown_shared_if_current, WorkerConfig, WorkerSupervisor,
@@ -13,7 +13,7 @@ use simple_stt::cleanup::{self, CleanupHistoryEntry};
 use simple_stt::common::shell_protocol::{NoticeLevel, ServiceEvent, ShellCommand, ShellResponse};
 use simple_stt::config::{AppConfig, CleanupConfig, ModelSelectionMode};
 use simple_stt::localization::tr;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{
@@ -53,6 +53,68 @@ struct Recording {
     screen_context: Arc<ScreenCaptureSlot>,
     samples: Vec<i16>,
     started: Instant,
+    stop_deadline: Option<Instant>,
+    stop_ready: bool,
+    countdown_shown: Option<u64>,
+}
+
+impl Recording {
+    fn schedule_stop(&mut self, now: Instant, milliseconds: u64) -> bool {
+        if self.stop_ready {
+            return false;
+        }
+        if self.stop_deadline.is_some() {
+            return true;
+        }
+        if milliseconds == 0 {
+            return false;
+        }
+        self.stop_deadline = Some(now + Duration::from_millis(milliseconds));
+        self.countdown_shown = Some(countdown_millis(Duration::from_millis(milliseconds)));
+        true
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum GraceTick {
+    None,
+    Countdown(u64),
+    Finish(u64),
+}
+
+fn countdown_millis(remaining: Duration) -> u64 {
+    let millis = remaining.as_millis().min(u128::from(u64::MAX)) as u64;
+    millis.saturating_add(249) / 250 * 250
+}
+
+fn advance_stop_grace(
+    active: &mut Option<Recording>,
+    frame_rx: &Receiver<Vec<i16>>,
+    now: Instant,
+) -> GraceTick {
+    let Some(recording) = active.as_mut() else {
+        return GraceTick::None;
+    };
+    let Some(deadline) = recording.stop_deadline else {
+        return GraceTick::None;
+    };
+    if recording.stop_ready {
+        return GraceTick::None;
+    }
+    if now >= deadline {
+        while let Ok(frame) = frame_rx.try_recv() {
+            recording.samples.extend_from_slice(&frame);
+        }
+        recording.stop_ready = true;
+        return GraceTick::Finish(recording.session_id);
+    }
+    let milliseconds = countdown_millis(deadline.duration_since(now));
+    if recording.countdown_shown != Some(milliseconds) {
+        recording.countdown_shown = Some(milliseconds);
+        GraceTick::Countdown(milliseconds)
+    } else {
+        GraceTick::None
+    }
 }
 
 #[derive(Debug)]
@@ -92,6 +154,11 @@ impl ScreenCaptureSlot {
 
 #[derive(Debug)]
 enum BackgroundResult {
+    CliTranscription {
+        generation: u64,
+        job_id: u64,
+        result: Result<String, String>,
+    },
     Transcript {
         generation: u64,
         session_id: u64,
@@ -113,14 +180,17 @@ enum BackgroundResult {
     ModelLoading {
         generation: u64,
         session_id: u64,
+        language: String,
     },
     ModelLoaded {
         generation: u64,
         session_id: Option<u64>,
+        language: String,
     },
     ModelWarmed {
         generation: u64,
         session_id: Option<u64>,
+        language: String,
         result: Result<bool, String>,
     },
     ModelTested {
@@ -135,11 +205,12 @@ enum BackgroundResult {
     DownloadFinished {
         filename: String,
         result: Result<PathBuf, String>,
+        cancelled: bool,
     },
 }
 
 #[derive(Default)]
-struct LastDeliveryCache(Option<(u64, String)>);
+struct LastDeliveryCache(Option<(u64, String, u64)>);
 impl LastDeliveryCache {
     fn remember(&mut self, session_id: u64, text: String, pending: bool) -> bool {
         if !pending || text.is_empty() || text.len() > 1024 * 1024 {
@@ -148,14 +219,82 @@ impl LastDeliveryCache {
         if self
             .0
             .as_ref()
-            .is_none_or(|(previous, _)| session_id >= *previous)
+            .is_none_or(|(previous, _, _)| session_id >= *previous)
         {
-            self.0 = Some((session_id, text));
+            let remembered_at_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .min(u128::from(u64::MAX)) as u64;
+            self.0 = Some((
+                session_id,
+                text,
+                remembered_at_ms.max(self.remembered_at_ms().saturating_add(1)),
+            ));
         }
         true
     }
+    fn remembered_at_ms(&self) -> u64 {
+        self.0.as_ref().map_or(0, |(_, _, at)| *at)
+    }
     fn text(&self) -> Option<&str> {
-        self.0.as_ref().map(|(_, text)| text.as_str())
+        self.0.as_ref().map(|(_, text, _)| text.as_str())
+    }
+}
+
+struct DownloadJob {
+    config: AppConfig,
+    cancellation: Arc<simple_stt::models::DownloadCancellation>,
+    running: bool,
+}
+#[derive(Default)]
+struct DownloadJobs {
+    jobs: HashMap<String, DownloadJob>,
+    queue: VecDeque<String>,
+    running: usize,
+}
+impl DownloadJobs {
+    fn start_queued(&mut self, tx: &Sender<BackgroundResult>) {
+        while self.running < 2 {
+            let Some(filename) = self.queue.pop_front() else {
+                break;
+            };
+            let Some(job) = self.jobs.get_mut(&filename) else {
+                continue;
+            };
+            job.running = true;
+            self.running += 1;
+            let _ = tx.send(BackgroundResult::DownloadProgress {
+                filename: filename.clone(),
+                downloaded: 0,
+                total: None,
+            });
+            let config = job.config.clone();
+            let cancellation = Arc::clone(&job.cancellation);
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let progress_tx = tx.clone();
+                let result = simple_stt::models::download_model_cancellable(
+                    &config,
+                    &filename,
+                    &cancellation,
+                    |downloaded, total| {
+                        let _ = progress_tx.send(BackgroundResult::DownloadProgress {
+                            filename: filename.clone(),
+                            downloaded,
+                            total,
+                        });
+                    },
+                )
+                .map_err(|error| error.to_string());
+                let cancelled = cancellation.finish();
+                let _ = tx.send(BackgroundResult::DownloadFinished {
+                    filename,
+                    result,
+                    cancelled,
+                });
+            });
+        }
     }
 }
 
@@ -164,6 +303,7 @@ struct ControlContext<'a> {
     worker: &'a Arc<Mutex<WorkerSupervisor>>,
     worker_pid: &'a Arc<AtomicU32>,
     background_tx: &'a Sender<BackgroundResult>,
+    downloads: &'a mut DownloadJobs,
     overlay: &'a OverlayHandle,
     recording_active: &'a Arc<AtomicBool>,
     capture: &'a mut Option<audio::CaptureHandle>,
@@ -175,6 +315,7 @@ struct ControlContext<'a> {
     active: &'a mut Option<Recording>,
     transcribing: &'a mut HashSet<u64>,
     warming: &'a mut HashSet<u64>,
+    pending_model_tests: &'a mut usize,
     cleaning: &'a mut HashSet<u64>,
     delivering: &'a mut HashSet<u64>,
     cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
@@ -183,6 +324,8 @@ struct ControlContext<'a> {
 }
 
 struct BackgroundContext<'a> {
+    reload_config: &'a mut bool,
+    downloads: &'a mut DownloadJobs,
     overlay: &'a OverlayHandle,
     events: &'a mut EventBuffer,
     log_transcripts: bool,
@@ -192,6 +335,7 @@ struct BackgroundContext<'a> {
     active_recording: bool,
     transcribing: &'a mut HashSet<u64>,
     warming: &'a mut HashSet<u64>,
+    pending_model_tests: &'a mut usize,
     cleaning: &'a mut HashSet<u64>,
     delivering: &'a mut HashSet<u64>,
     cleanup_history: &'a mut VecDeque<CleanupHistoryEntry>,
@@ -241,6 +385,10 @@ fn main() -> Result<()> {
 
     let overlay = OverlayHandle::spawn()?;
     overlay.set_locale(locale);
+    overlay.set_shortcuts(
+        simple_stt::shortcuts::current(&config, locale),
+        config.general.shortcut_reminders,
+    );
     let recording_active = Arc::new(AtomicBool::new(false));
     let cancel_generation = Arc::new(AtomicU64::new(0));
     let (frame_tx, frame_rx) = bounded::<Vec<i16>>(4096);
@@ -279,22 +427,47 @@ fn main() -> Result<()> {
 
     let (background_tx, background_rx) = unbounded::<BackgroundResult>();
     let mut events = EventBuffer::default();
+    let mut downloads = DownloadJobs::default();
     events.push(ServiceEvent::simple("service_ready"));
     let timer = tick(Duration::from_millis(250));
     let mut active: Option<Recording> = None;
     let mut transcribing = HashSet::<u64>::new();
     let mut warming = HashSet::<u64>::new();
+    let mut pending_model_tests = 0usize;
     let mut cleaning = HashSet::<u64>::new();
     let mut delivering = HashSet::<u64>::new();
     let mut cleanup_history = VecDeque::<CleanupHistoryEntry>::new();
     let mut last_delivery = LastDeliveryCache::default();
     let mut shutting_down = false;
-    let idle_check_running = Arc::new(AtomicBool::new(false));
     let mut preferred_detected_notice_sent = false;
     let mut device_recovery: Option<DeviceRecovery> = None;
 
     while !shutting_down {
+        let stop_due = active
+            .as_ref()
+            .filter(|recording| !recording.stop_ready)
+            .and_then(|recording| recording.stop_deadline)
+            .map(|deadline| {
+                crossbeam_channel::after(deadline.saturating_duration_since(Instant::now()))
+            })
+            .unwrap_or_else(crossbeam_channel::never);
         select! {
+            recv(stop_due) -> _ => {
+                if let GraceTick::Finish(session_id) = advance_stop_grace(&mut active, &frame_rx, Instant::now()) {
+                    let _ = handle_control(ShellCommand::StopRecording { session_id }, ControlContext {
+                        config: &mut config, worker: &worker, worker_pid: &worker_pid,
+                        background_tx: &background_tx, downloads: &mut downloads, overlay: &overlay,
+                        recording_active: &recording_active, capture: &mut capture,
+                        capture_gain: &mut capture_gain, frame_tx: &frame_tx,
+                        audio_event_tx: &audio_event_tx, cancel_generation: &cancel_generation,
+                        events: &mut events, active: &mut active, transcribing: &mut transcribing,
+                        warming: &mut warming, pending_model_tests: &mut pending_model_tests,
+                        cleaning: &mut cleaning, delivering: &mut delivering,
+                        cleanup_history: &mut cleanup_history, last_delivery: &mut last_delivery,
+                        shutting_down: &mut shutting_down,
+                    });
+                }
+            },
             recv(frame_rx) -> message => if let (Some(recording), Ok(frame)) = (&mut active, message) { recording.samples.extend_from_slice(&frame); },
             recv(audio_event_rx) -> message => if let Ok(audio_event) = message {
                 match audio_event {
@@ -318,7 +491,10 @@ fn main() -> Result<()> {
                 }
             },
             recv(background_rx) -> message => if let Ok(result) = message {
+                let mut reload_config = false;
                 handle_background(result, &mut BackgroundContext {
+                    reload_config: &mut reload_config,
+                    downloads: &mut downloads,
                     overlay: &overlay,
                     events: &mut events,
                     log_transcripts: config.diagnostics.log_transcripts,
@@ -328,11 +504,21 @@ fn main() -> Result<()> {
                     active_recording: active.is_some(),
                     transcribing: &mut transcribing,
                     warming: &mut warming,
+                    pending_model_tests: &mut pending_model_tests,
                     cleaning: &mut cleaning,
                     delivering: &mut delivering,
                     cleanup_history: &mut cleanup_history,
                     cancel_generation: &cancel_generation,
                 });
+                if reload_config {
+                    match AppConfig::load() {
+                        Ok(next) => {
+                            config = next;
+                            events.push(ServiceEvent::simple("configuration_reloaded"));
+                        }
+                        Err(error) => tracing::warn!(%error, "could not reload automatic selections"),
+                    }
+                }
             },
             recv(control_rx) -> message => if let Ok(request) = message {
                 let response_written = request.response_written;
@@ -341,6 +527,7 @@ fn main() -> Result<()> {
                     worker: &worker,
                     worker_pid: &worker_pid,
                     background_tx: &background_tx,
+                    downloads: &mut downloads,
                     overlay: &overlay,
                     recording_active: &recording_active,
                     capture: &mut capture,
@@ -352,6 +539,7 @@ fn main() -> Result<()> {
                     active: &mut active,
                     transcribing: &mut transcribing,
                     warming: &mut warming,
+                    pending_model_tests: &mut pending_model_tests,
                     cleaning: &mut cleaning,
                     delivering: &mut delivering,
                     cleanup_history: &mut cleanup_history,
@@ -364,6 +552,29 @@ fn main() -> Result<()> {
                 }
             },
             recv(timer) -> _ => {
+                let finish_session = match advance_stop_grace(&mut active, &frame_rx, Instant::now()) {
+                    GraceTick::Countdown(milliseconds) => {
+                        overlay.notify_info(simple_stt::localization::format(
+                            "notice.recordingCountdownMs", &[("milliseconds", &milliseconds.to_string())]
+                        ), None);
+                        None
+                    }
+                    GraceTick::Finish(session_id) => Some(session_id),
+                    GraceTick::None => None,
+                };
+                if let Some(session_id) = finish_session {
+                    let _ = handle_control(ShellCommand::StopRecording { session_id }, ControlContext {
+                        config: &mut config, worker: &worker, worker_pid: &worker_pid,
+                        background_tx: &background_tx, downloads: &mut downloads, overlay: &overlay,
+                        recording_active: &recording_active, capture: &mut capture,
+                        capture_gain: &mut capture_gain, frame_tx: &frame_tx,
+                        audio_event_tx: &audio_event_tx, cancel_generation: &cancel_generation,
+                        events: &mut events, active: &mut active, transcribing: &mut transcribing,
+                        warming: &mut warming, pending_model_tests: &mut pending_model_tests, cleaning: &mut cleaning, delivering: &mut delivering,
+                        cleanup_history: &mut cleanup_history, last_delivery: &mut last_delivery,
+                        shutting_down: &mut shutting_down,
+                    });
+                }
                 if active.is_none() {
                     preferred_detected_notice_sent = false;
                 }
@@ -443,21 +654,22 @@ fn main() -> Result<()> {
                         device_recovery = None;
                     }
                 }
-                if nonzero_pid(&worker_pid).is_some()
-                    && !idle_check_running.swap(true, Ordering::SeqCst)
-                {
-                    let busy = active.is_some() || !transcribing.is_empty() || !warming.is_empty() || !cleaning.is_empty();
-                    let worker = Arc::clone(&worker);
-                    let background_tx = background_tx.clone();
-                    let idle_check_running = Arc::clone(&idle_check_running);
-                    std::thread::spawn(move || {
-                        match worker.lock().unwrap().shutdown_if_idle(busy) {
-                            Ok(true) => { let _ = background_tx.send(BackgroundResult::ModelUnloaded { result: Ok(()) }); }
+                // Check the actual busy state in the capture event loop. A
+                // delayed background snapshot could otherwise unload a worker
+                // after a new recording or model test has already started.
+                let busy = active.is_some() || !transcribing.is_empty() || !warming.is_empty() || !cleaning.is_empty() || pending_model_tests > 0;
+                if nonzero_pid(&worker_pid).is_some() {
+                    if let Ok(mut supervisor) = worker.try_lock() {
+                        let language = supervisor.speech_language().to_owned();
+                        match supervisor.shutdown_if_idle(busy) {
+                            Ok(true) => {
+                                overlay.notify_info(speech_lifecycle_notice("unloaded", &language), Some(Duration::from_secs(2)));
+                                events.push(notice_event(NoticeLevel::Info, "notice.modelUnloaded"));
+                            }
                             Ok(false) => {}
-                            Err(error) => { let _ = background_tx.send(BackgroundResult::ModelUnloaded { result: Err(error.to_string()) }); }
+                            Err(error) => tracing::warn!(%error, "worker shutdown failed"),
                         }
-                        idle_check_running.store(false, Ordering::SeqCst);
-                    });
+                    }
                 }
             }
         }
@@ -572,6 +784,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         worker,
         worker_pid,
         background_tx,
+        downloads,
         overlay,
         recording_active,
         capture,
@@ -583,6 +796,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         active,
         transcribing,
         warming,
+        pending_model_tests,
         cleaning,
         delivering,
         cleanup_history,
@@ -645,17 +859,51 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     }));
                 }
             }
-            let resolved = match resolve_recording_model(
-                config,
-                simple_stt::capture::input_language::active_keyboard_language,
-            ) {
-                Ok(resolved) => resolved,
-                Err(error) => return ShellResponse::error(error.to_string()),
+            let remote_stt = config.speech.provider
+                == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible;
+            let language = if config.speech.selection_mode == ModelSelectionMode::FollowKeyboard
+                && (remote_stt || config.speech.assigned_models().next().is_some())
+            {
+                simple_stt::capture::input_language::active_keyboard_language().ok()
+            } else {
+                None
             };
-            let Some((language, model_path)) = resolved else {
-                overlay.hide();
-                return skipped_recording_response();
+            let route_language = language.as_deref().unwrap_or("single");
+            let (language, model_path) = if remote_stt {
+                let language = language.unwrap_or_else(|| "single".to_owned());
+                (
+                    language,
+                    config.model_dir_path().join("__remote_stt__.gguf"),
+                )
+            } else {
+                let runtime = simple_stt::modules::stt_runtime(config, route_language);
+                let runtime_ready = simple_stt::modules::runtime_ready(runtime.as_deref());
+                let model_ready = simple_stt::modules::stt_model_ready(config, route_language);
+                if !runtime_ready || !model_ready {
+                    let message = simple_stt::modules::requirement_message(
+                        "stt",
+                        runtime_ready,
+                        model_ready,
+                        language.as_deref(),
+                    );
+                    overlay.notify_warning(message, std::time::Duration::from_secs(6));
+                    return skipped_recording_response();
+                }
+                let resolved = match resolve_recording_model(config, || {
+                    language
+                        .clone()
+                        .context("Keyboard language unavailable; choose one model in Settings")
+                }) {
+                    Ok(resolved) => resolved,
+                    Err(error) => return ShellResponse::error(error.to_string()),
+                };
+                let Some((language, model_path)) = resolved else {
+                    overlay.hide();
+                    return skipped_recording_response();
+                };
+                (language, model_path)
             };
+            let _ = simple_stt::reader::pause_for_dictation();
             let frozen_worker = match worker_config(config, &language, model_path) {
                 Ok(worker) => worker,
                 Err(error) => return ShellResponse::error(error.to_string()),
@@ -693,7 +941,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 }),
                 samples: Vec::new(),
                 started: Instant::now(),
+                stop_deadline: None,
+                stop_ready: false,
+                countdown_shown: None,
             });
+            overlay.clear_notice();
             overlay.start_recording(
                 target_window.unwrap_or_default() as isize,
                 simple_stt::capture::overlay::RecordingIndicators {
@@ -745,11 +997,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 .values
                 .insert("language".into(), language.as_str().into());
             events.push(event);
-            {
+            if !remote_stt {
                 warming.insert(session_id);
                 let worker = Arc::clone(worker);
                 let cancel_generation = Arc::clone(cancel_generation);
                 let tx = background_tx.clone();
+                let route_language = frozen_worker.speech_language.clone();
                 let next_worker: Result<WorkerConfig> = Ok(frozen_worker);
                 std::thread::spawn(move || {
                     if let Some(shutdown) = obsolete_shutdown {
@@ -761,6 +1014,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                             let _ = tx.send(BackgroundResult::ModelWarmed {
                                 generation,
                                 session_id: Some(session_id),
+                                language: route_language.clone(),
                                 result: Err(error),
                             });
                             return;
@@ -786,12 +1040,14 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                                         let _ = progress_tx.send(BackgroundResult::ModelLoading {
                                             generation,
                                             session_id,
+                                            language: route_language.clone(),
                                         });
                                     },
                                     || {
                                         let _ = progress_tx.send(BackgroundResult::ModelLoaded {
                                             generation,
                                             session_id: Some(session_id),
+                                            language: route_language.clone(),
                                         });
                                     },
                                 )
@@ -800,6 +1056,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                     let _ = tx.send(BackgroundResult::ModelWarmed {
                         generation,
                         session_id: Some(session_id),
+                        language: route_language,
                         result,
                     });
                 });
@@ -807,7 +1064,237 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             tracing::info!(session_id, "recording start");
             message_response(true, "capture.recordingStarted")
         }
+        ShellCommand::TranscribeFile {
+            path,
+            language,
+            job_id,
+        } => {
+            if active.is_some()
+                || !transcribing.is_empty()
+                || !warming.is_empty()
+                || !cleaning.is_empty()
+                || !delivering.is_empty()
+            {
+                return ShellResponse::error(
+                    "capture service is busy; retry after dictation finishes",
+                );
+            }
+            if path.len() > 32_768 || path.contains('\0') {
+                return ShellResponse::error("invalid audio path");
+            }
+            let audio = PathBuf::from(path);
+            let metadata = match fs::metadata(&audio) {
+                Ok(metadata)
+                    if metadata.is_file()
+                        && metadata.len() > 0
+                        && metadata.len() <= 512 * 1024 * 1024 =>
+                {
+                    metadata
+                }
+                _ => {
+                    return ShellResponse::error(
+                        "audio must be a regular nonempty WAV file no larger than 512 MiB",
+                    )
+                }
+            };
+            let _ = metadata;
+            let language = match language {
+                Some(value) => {
+                    let normalized = match value.to_ascii_lowercase().as_str() {
+                        "english" => "en".to_owned(),
+                        "arabic" => "ar".to_owned(),
+                        _ => value.to_ascii_lowercase(),
+                    };
+                    if !simple_stt::config::valid_language_id(&normalized) {
+                        return ShellResponse::error("invalid language identifier");
+                    }
+                    normalized
+                }
+                None if config.speech.provider
+                    == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible =>
+                {
+                    if config.speech.selection_mode == ModelSelectionMode::SingleModel {
+                        "single".to_owned()
+                    } else {
+                        simple_stt::capture::input_language::active_keyboard_language()
+                            .unwrap_or_else(|_| "single".to_owned())
+                    }
+                }
+                None => match resolve_recording_model(
+                    config,
+                    simple_stt::capture::input_language::active_keyboard_language,
+                ) {
+                    Ok(Some((language, _))) => language,
+                    Ok(None) => {
+                        return ShellResponse::error("no model assigned for the current language")
+                    }
+                    Err(error) => return ShellResponse::error(error.to_string()),
+                },
+            };
+            if config.speech.provider == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible
+            {
+                let language = if language == "single" {
+                    None
+                } else {
+                    Some(language)
+                };
+                let remote_config = config.speech.remote_openai_compatible.clone();
+                let fallback_enabled = remote_config.fallback_to_local;
+                let fallback_config = config.clone();
+                let local_worker = Arc::clone(worker);
+                transcribing.insert(job_id);
+                let generation = cancel_generation.load(Ordering::SeqCst);
+                let cancelled = Arc::clone(cancel_generation);
+                let tx = background_tx.clone();
+                std::thread::spawn(move || {
+                    let result = if cancelled.load(Ordering::SeqCst) != generation {
+                        Err("transcription cancelled".to_owned())
+                    } else {
+                        let remote = simple_stt::remote_stt::transcribe_wav(
+                            &remote_config,
+                            &audio,
+                            language.as_deref(),
+                        );
+                        simple_stt::remote_stt::with_local_fallback(
+                            remote,
+                            fallback_enabled,
+                            || {
+                                anyhow::ensure!(
+                                    cancelled.load(Ordering::SeqCst) == generation,
+                                    "transcription cancelled"
+                                );
+                                let fallback_language =
+                                    simple_stt::capture_cli::local_fallback_language(
+                                        &fallback_config,
+                                        language.as_deref(),
+                                    )?;
+                                let next = simple_stt::capture_cli::local_fallback_worker_config(
+                                    &fallback_config,
+                                    &fallback_language,
+                                )?;
+                                let mut worker = local_worker.lock().map_err(|_| {
+                                    anyhow::anyhow!("inference worker mutex poisoned")
+                                })?;
+                                worker.replace_config(next)?;
+                                worker.transcribe_wav(job_id, &audio)
+                            },
+                        )
+                        .map_err(|error| error.to_string())
+                    };
+                    let _ = tx.send(BackgroundResult::CliTranscription {
+                        generation,
+                        job_id,
+                        result,
+                    });
+                });
+                return ShellResponse::ok("transcription accepted");
+            }
+            let Some(model_path) = config
+                .model_path_for(&language)
+                .filter(|path| path.is_file())
+            else {
+                return ShellResponse::error(format!(
+                    "no installed model assigned for language {language}"
+                ));
+            };
+            let runtime = simple_stt::modules::stt_runtime(config, &language);
+            if !simple_stt::modules::runtime_ready(runtime.as_deref()) {
+                return ShellResponse::error(format!(
+                    "STT runtime is not ready for language {language}"
+                ));
+            }
+            if language != "single" {
+                if let Some(filename) = model_path.file_name().and_then(|name| name.to_str()) {
+                    if let Some(model) = simple_stt::models::catalog_for_config(config)
+                        .into_iter()
+                        .find(|model| model.file == filename)
+                    {
+                        let language_tag = format!("({language})");
+                        if !model.languages.is_empty()
+                            && !model
+                                .languages
+                                .iter()
+                                .any(|item| item.ends_with(&language_tag))
+                        {
+                            return ShellResponse::error(format!(
+                                "model {filename} does not support language {language}"
+                            ));
+                        }
+                    }
+                }
+            }
+            let next = match worker_config(config, &language, model_path) {
+                Ok(next) => next,
+                Err(error) => return ShellResponse::error(error.to_string()),
+            };
+            transcribing.insert(job_id);
+            let worker = Arc::clone(worker);
+            let generation = cancel_generation.load(Ordering::SeqCst);
+            let cancelled = Arc::clone(cancel_generation);
+            let tx = background_tx.clone();
+            std::thread::spawn(move || {
+                let result = (|| {
+                    let mut worker = worker
+                        .lock()
+                        .map_err(|_| "inference worker lock poisoned".to_owned())?;
+                    if cancelled.load(Ordering::SeqCst) != generation {
+                        return Err("transcription cancelled".to_owned());
+                    }
+                    worker
+                        .replace_config(next)
+                        .and_then(|_| worker.transcribe_wav(job_id, &audio))
+                        .map_err(|error| error.to_string())
+                })();
+                let _ = tx.send(BackgroundResult::CliTranscription {
+                    generation,
+                    job_id,
+                    result,
+                });
+            });
+            ShellResponse::ok("transcription accepted")
+        }
         ShellCommand::StopRecording { session_id } => {
+            if let Some(recording) = active
+                .as_mut()
+                .filter(|recording| recording.session_id == session_id)
+            {
+                let was_scheduled = recording.stop_deadline.is_some();
+                let milliseconds = config.audio.stop_grace_ms;
+                if recording.schedule_stop(Instant::now(), milliseconds) {
+                    if !was_scheduled {
+                        overlay.notify_info(
+                            simple_stt::localization::format(
+                                "notice.recordingCountdownMs",
+                                &[(
+                                    "milliseconds",
+                                    &countdown_millis(Duration::from_millis(milliseconds))
+                                        .to_string(),
+                                )],
+                            ),
+                            None,
+                        );
+                    }
+                    let remaining = recording
+                        .stop_deadline
+                        .map(|deadline| {
+                            countdown_millis(deadline.saturating_duration_since(Instant::now()))
+                        })
+                        .unwrap_or(0)
+                        .to_string();
+                    let args = [("milliseconds", remaining.as_str())];
+                    let mut response = ShellResponse::ok(simple_stt::localization::format(
+                        "notice.recordingCountdownMs",
+                        &args,
+                    ));
+                    response
+                        .values
+                        .extend(simple_stt::localization::message_values(
+                            "notice.recordingCountdownMs",
+                            &args,
+                        ));
+                    return response;
+                }
+            }
             let Some(recording) = active.take() else {
                 return message_response(false, "capture.noRecording");
             };
@@ -816,6 +1303,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 return message_response(false, "capture.sessionMismatch");
             }
             recording_active.store(false, Ordering::Relaxed);
+            overlay.clear_notice();
             let duration_ms = recording.started.elapsed().as_millis();
             let frozen_worker = recording.worker_config;
             let samples = recording.samples;
@@ -836,7 +1324,9 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 ));
                 return message_response(true, "capture.recordingShort");
             }
-            if !frozen_worker.model_path.is_file() {
+            let remote_stt = config.speech.provider
+                == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible;
+            if !remote_stt && !frozen_worker.model_path.is_file() {
                 restore_overlay_work_state(overlay, false, !transcribing.is_empty());
                 events.push(terminal_notice_event_for_session(
                     NoticeLevel::Info,
@@ -850,8 +1340,11 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let mut event = ServiceEvent::simple("transcribing");
             event.session_id = Some(session_id);
             events.push(event);
-            if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info(tr("notice.modelLoading"), None);
+            if !remote_stt && nonzero_pid(worker_pid).is_none() {
+                overlay.notify_info(
+                    speech_lifecycle_notice("loading", &frozen_worker.speech_language),
+                    None,
+                );
                 let mut loading = ServiceEvent::simple("model_loading");
                 loading.session_id = Some(session_id);
                 events.push(loading);
@@ -861,22 +1354,63 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
             let next_worker: Result<WorkerConfig> = Ok(frozen_worker);
+            let remote_config = config.speech.remote_openai_compatible.clone();
+            let fallback_enabled = remote_config.fallback_to_local;
+            let fallback_config = config.clone();
+            let remote_language = if next_worker
+                .as_ref()
+                .is_ok_and(|worker| worker.speech_language != "single")
+            {
+                next_worker
+                    .as_ref()
+                    .ok()
+                    .map(|worker| worker.speech_language.clone())
+            } else {
+                None
+            };
             std::thread::spawn(move || {
                 if cancel_generation.load(Ordering::SeqCst) != generation {
                     return;
                 }
-                let result = next_worker
-                    .map_err(|error| error.to_string())
-                    .and_then(|next| {
-                        let mut worker = worker.lock().unwrap();
+                let result = if remote_stt {
+                    let remote = simple_stt::remote_stt::transcribe_pcm(
+                        &remote_config,
+                        &samples,
+                        remote_language.as_deref(),
+                    );
+                    simple_stt::remote_stt::with_local_fallback(remote, fallback_enabled, || {
                         if cancel_generation.load(Ordering::SeqCst) != generation {
-                            return Err("transcription superseded before inference".to_owned());
+                            anyhow::bail!("transcription superseded before local fallback");
                         }
-                        worker
-                            .replace_config(next)
-                            .and_then(|_| worker.transcribe_pcm(session_id, &samples))
-                            .map_err(|error| error.to_string())
-                    });
+                        let fallback_language = simple_stt::capture_cli::local_fallback_language(
+                            &fallback_config,
+                            remote_language.as_deref(),
+                        )?;
+                        let next = simple_stt::capture_cli::local_fallback_worker_config(
+                            &fallback_config,
+                            &fallback_language,
+                        )?;
+                        let mut worker = worker
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("inference worker mutex poisoned"))?;
+                        worker.replace_config(next)?;
+                        worker.transcribe_pcm(session_id, &samples)
+                    })
+                    .map_err(|error| error.to_string())
+                } else {
+                    next_worker
+                        .map_err(|error| error.to_string())
+                        .and_then(|next| {
+                            let mut worker = worker.lock().unwrap();
+                            if cancel_generation.load(Ordering::SeqCst) != generation {
+                                return Err("transcription superseded before inference".to_owned());
+                            }
+                            worker
+                                .replace_config(next)
+                                .and_then(|_| worker.transcribe_pcm(session_id, &samples))
+                                .map_err(|error| error.to_string())
+                        })
+                };
                 let screen_context = if result.is_ok() {
                     screen_context.wait(Duration::from_secs(15))
                 } else {
@@ -899,10 +1433,26 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
         }
         ShellCommand::LastDelivery => {
             let mut response = ShellResponse::ok("last dictation");
+            response.values.insert(
+                "remembered_at_ms".into(),
+                last_delivery.remembered_at_ms().to_string(),
+            );
             if let Some(text) = last_delivery.text() {
                 response.values.insert("text".into(), text.to_owned());
             }
             response
+        }
+        ShellCommand::BeginDelivery { session_id } => {
+            let busy = active.is_some()
+                || !transcribing.is_empty()
+                || !cleaning.is_empty()
+                || !warming.is_empty();
+            if !begin_delivery_session(session_id, delivering, busy) {
+                return ShellResponse::error("delivery superseded by newer work");
+            }
+            overlay.clear_notice();
+            overlay.set_primary(OverlayPrimary::WaitingForKeys);
+            ShellResponse::ok("delivery started")
         }
         ShellCommand::DeliveryProgress { session_id, phase } => {
             // A late delivery must never replace a newer recording's waveform.
@@ -912,10 +1462,12 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 && cleaning.is_empty()
             {
                 use simple_stt::common::shell_protocol::DeliveryPhase;
-                // Keep each delivery mode stable; waiting for the trigger to be
-                // released must not change a typing label into a pasting label.
+                // Keep the release hint visible while keys are held, then use
+                // the effective delivery mode reported by the desktop shell.
                 match phase {
-                    DeliveryPhase::WaitingForKeys => {}
+                    DeliveryPhase::WaitingForKeys => {
+                        overlay.set_primary(OverlayPrimary::WaitingForKeys)
+                    }
                     DeliveryPhase::Typing => overlay.set_primary(OverlayPrimary::Typing),
                     _ => overlay.set_primary(OverlayPrimary::Pasting),
                 }
@@ -926,11 +1478,20 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let removed = delivering.remove(&session_id);
             let pending =
                 !transcribing.is_empty() || !cleaning.is_empty() || !delivering.is_empty();
-            restore_overlay_work_state(overlay, active.is_some(), pending);
+            if removed {
+                restore_overlay_work_state(overlay, active.is_some(), pending);
+            }
             tracing::info!(session_id, removed, "text delivery completed");
             ShellResponse::ok("delivery completed")
         }
         ShellCommand::Cancel => {
+            // Do not start the optional reader just to stop it. Keep IPC and
+            // model cancellation off the capture service's control thread.
+            std::thread::spawn(|| {
+                if let Err(error) = simple_stt::reader::action("stop", "") {
+                    tracing::debug!(%error, "could not stop reader during abort");
+                }
+            });
             let generation = cancel_generation.fetch_add(1, Ordering::SeqCst) + 1;
             let had_recording = active.take().is_some();
             let had_transcribing = !transcribing.is_empty();
@@ -975,6 +1536,9 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             response
         }
         ShellCommand::ListCleanupHistory => {
+            if !config.diagnostics.log_transcripts {
+                cleanup_history.clear();
+            }
             let mut response = ShellResponse::ok("cleanup history");
             response.values.insert(
                 "history".into(),
@@ -993,9 +1557,16 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 match idle_worker_config(&next) {
                     Ok(next_worker) => {
                         *config = next;
+                        if !config.diagnostics.log_transcripts {
+                            cleanup_history.clear();
+                        }
                         let locale =
                             simple_stt::localization::set_language(config.general.ui_language);
                         overlay.set_locale(locale);
+                        overlay.set_shortcuts(
+                            simple_stt::shortcuts::current(config, locale),
+                            config.general.shortcut_reminders,
+                        );
                         if audio_changed {
                             let _ = audio_event_tx.send(AudioEvent::DeviceTopologyChanged);
                             overlay.notify_info(
@@ -1056,6 +1627,33 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             } else {
                 "en"
             };
+            if config.speech.provider == simple_stt::config::SpeechProvider::RemoteOpenAiCompatible
+            {
+                let audio = simple_stt::models::smoke_audio_path_for(language);
+                if let Err(error) = simple_stt::models::ensure_smoke_audio(&audio) {
+                    return ShellResponse::error(error.to_string());
+                }
+                let remote_config = config.speech.remote_openai_compatible.clone();
+                let language = language_id.to_owned();
+                let generation = cancel_generation.load(Ordering::SeqCst);
+                let cancelled = Arc::clone(cancel_generation);
+                let tx = background_tx.clone();
+                *pending_model_tests += 1;
+                std::thread::spawn(move || {
+                    let result = if cancelled.load(Ordering::SeqCst) != generation {
+                        Err("remote STT test cancelled".to_owned())
+                    } else {
+                        simple_stt::remote_stt::transcribe_wav(
+                            &remote_config,
+                            &audio,
+                            Some(&language),
+                        )
+                        .map_err(|error| error.to_string())
+                    };
+                    let _ = tx.send(BackgroundResult::ModelTested { generation, result });
+                });
+                return message_response(true, "capture.modelTestQueued");
+            }
             let filename = filename.or_else(|| {
                 config
                     .speech
@@ -1077,7 +1675,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 return ShellResponse::error(error.to_string());
             }
             if nonzero_pid(worker_pid).is_none() {
-                overlay.notify_info(tr("notice.modelLoading"), None);
+                overlay.notify_info(speech_lifecycle_notice("loading", language_id), None);
                 events.push(ServiceEvent::simple("model_loading"));
             }
             let worker = Arc::clone(worker);
@@ -1085,14 +1683,22 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             let cancel_generation = Arc::clone(cancel_generation);
             let tx = background_tx.clone();
             let next_worker = worker_config(config, language_id, model_path);
+            *pending_model_tests += 1;
             std::thread::spawn(move || {
                 if cancel_generation.load(Ordering::SeqCst) != generation {
+                    let _ = tx.send(BackgroundResult::ModelTested {
+                        generation,
+                        result: Err("model test cancelled".into()),
+                    });
                     return;
                 }
                 let result = next_worker
                     .map_err(|error| error.to_string())
                     .and_then(|next| {
                         let mut worker = worker.lock().unwrap();
+                        if cancel_generation.load(Ordering::SeqCst) != generation {
+                            return Err("model test cancelled".to_owned());
+                        }
                         worker
                             .replace_config(next)
                             .and_then(|_| worker.transcribe_wav(0, &audio))
@@ -1103,29 +1709,42 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             message_response(true, "capture.modelTestQueued")
         }
         ShellCommand::DownloadModel { filename } => {
-            let config = config.clone();
-            let tx = background_tx.clone();
-            let progress_tx = tx.clone();
-            let filename_for_thread = filename.clone();
-            std::thread::spawn(move || {
-                let result = simple_stt::models::download_model(
-                    &config,
-                    &filename_for_thread,
-                    |downloaded, total| {
-                        let _ = progress_tx.send(BackgroundResult::DownloadProgress {
-                            filename: filename_for_thread.clone(),
-                            downloaded,
-                            total,
-                        });
-                    },
-                )
-                .map_err(|error| error.to_string());
-                let _ = tx.send(BackgroundResult::DownloadFinished {
-                    filename: filename_for_thread,
-                    result,
-                });
-            });
+            if let Err(error) = simple_stt::config::validate_model_filename(&filename) {
+                return ShellResponse::error(error.to_string());
+            }
+            if downloads.jobs.contains_key(&filename) {
+                return message_response(true, "capture.downloadQueued");
+            }
+            downloads.jobs.insert(
+                filename.clone(),
+                DownloadJob {
+                    config: config.clone(),
+                    cancellation: Arc::new(simple_stt::models::DownloadCancellation::default()),
+                    running: false,
+                },
+            );
+            downloads.queue.push_back(filename.clone());
+            let mut event = ServiceEvent::simple("model_download_queued");
+            event.values.insert("filename".into(), filename);
+            events.push(event);
+            downloads.start_queued(background_tx);
             message_response(true, "capture.downloadQueued")
+        }
+        ShellCommand::CancelModelDownload { filename } => {
+            let Some(job) = downloads.jobs.get(&filename) else {
+                return ShellResponse::error("download is not active");
+            };
+            if !job.cancellation.cancel() {
+                return ShellResponse::error("download already finished");
+            }
+            if !job.running {
+                downloads.jobs.remove(&filename);
+                downloads.queue.retain(|queued| queued != &filename);
+                let mut event = ServiceEvent::simple("model_download_cancelled");
+                event.values.insert("filename".into(), filename);
+                events.push(event);
+            }
+            ShellResponse::ok("download cancellation requested")
         }
         ShellCommand::RemoveModel { filename } => {
             match simple_stt::models::remove_model(config, &filename) {
@@ -1191,6 +1810,20 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
             }
             Err(error) => ShellResponse::error(error.to_string()),
         },
+        ShellCommand::RefreshShortcuts | ShellCommand::ShowShortcuts => {
+            let locale = simple_stt::localization::resolve(config.general.ui_language);
+            let text = simple_stt::shortcuts::current(config, locale);
+            overlay.set_shortcuts(text.clone(), config.general.shortcut_reminders);
+            if matches!(command, ShellCommand::ShowShortcuts) {
+                let notice = if text.is_empty() {
+                    tr("shortcut.empty")
+                } else {
+                    format!("{}\n{text}", tr("shortcut.title"))
+                };
+                overlay.notify_info(notice, Some(Duration::from_secs(8)));
+            }
+            ShellResponse::ok("shortcuts refreshed")
+        }
         ShellCommand::ShowNotice { level, text } => {
             match level {
                 NoticeLevel::Info => overlay.notify_info(&text, Some(Duration::from_secs(2))),
@@ -1209,6 +1842,31 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
 
 fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'_>) {
     match result {
+        BackgroundResult::CliTranscription {
+            generation,
+            job_id,
+            result,
+        } => {
+            let cancelled = context.cancel_generation.load(Ordering::SeqCst) != generation;
+            if !cancelled {
+                context.transcribing.remove(&job_id);
+            }
+            let mut event = ServiceEvent::simple("cli_transcription");
+            event.values.insert("job_id".into(), job_id.to_string());
+            match if cancelled {
+                Err("transcription cancelled".to_owned())
+            } else {
+                result
+            } {
+                Ok(text) => {
+                    event.values.insert("text".into(), text);
+                }
+                Err(error) => {
+                    event.values.insert("error".into(), error);
+                }
+            }
+            context.events.push(event);
+        }
         BackgroundResult::Transcript {
             generation,
             session_id,
@@ -1321,14 +1979,18 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             match result {
                 Ok(cleaned) => {
                     tracing::info!(target: "simple_stt_privacy", session_id, raw_chars = raw.chars().count(), cleaned_chars = cleaned.text.chars().count(), latency_ms = cleaned.latency_ms, provider = %cleaned.provider, model = %cleaned.model, "AI cleanup complete");
-                    context.cleanup_history.push_front(CleanupHistoryEntry {
-                        raw,
-                        cleaned: cleaned.text.clone(),
-                        provider: cleaned.provider,
-                        model: cleaned.model,
-                        latency_ms: cleaned.latency_ms,
-                        outcome: "cleaned".into(),
-                    });
+                    if context.log_transcripts {
+                        context.cleanup_history.push_front(CleanupHistoryEntry {
+                            raw,
+                            cleaned: cleaned.text.clone(),
+                            provider: cleaned.provider,
+                            model: cleaned.model,
+                            latency_ms: cleaned.latency_ms,
+                            outcome: "cleaned".into(),
+                        });
+                    } else {
+                        context.cleanup_history.clear();
+                    }
                     trim_cleanup_history(context.cleanup_history);
                     context.delivering.insert(session_id);
                     restore_overlay_after_success(
@@ -1343,27 +2005,31 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                     tracing::warn!(session_id, %error, "AI cleanup failed; delivering original transcript");
                     let failure_notice =
                         cleanup_failure_notice(&error, context.cleanup_config.timeout_ms);
-                    context.cleanup_history.push_front(CleanupHistoryEntry {
-                        raw: raw.clone(),
-                        cleaned: raw.clone(),
-                        provider: match context.cleanup_config.provider {
-                            simple_stt::config::CleanupProvider::OpenAiCompatible => {
-                                "openai_compatible"
+                    if context.log_transcripts {
+                        context.cleanup_history.push_front(CleanupHistoryEntry {
+                            raw: raw.clone(),
+                            cleaned: raw.clone(),
+                            provider: match context.cleanup_config.provider {
+                                simple_stt::config::CleanupProvider::OpenAiCompatible => {
+                                    "openai_compatible"
+                                }
+                                simple_stt::config::CleanupProvider::ChatGpt => "chatgpt",
                             }
-                            simple_stt::config::CleanupProvider::ChatGpt => "chatgpt",
-                        }
-                        .into(),
-                        model: match context.cleanup_config.provider {
-                            simple_stt::config::CleanupProvider::OpenAiCompatible => {
-                                context.cleanup_config.openai_compatible.model.clone()
-                            }
-                            simple_stt::config::CleanupProvider::ChatGpt => {
-                                context.cleanup_config.chatgpt.model.clone()
-                            }
-                        },
-                        latency_ms: 0,
-                        outcome: "original_used".into(),
-                    });
+                            .into(),
+                            model: match context.cleanup_config.provider {
+                                simple_stt::config::CleanupProvider::OpenAiCompatible => {
+                                    context.cleanup_config.openai_compatible.model.clone()
+                                }
+                                simple_stt::config::CleanupProvider::ChatGpt => {
+                                    context.cleanup_config.chatgpt.model.clone()
+                                }
+                            },
+                            latency_ms: 0,
+                            outcome: "original_used".into(),
+                        });
+                    } else {
+                        context.cleanup_history.clear();
+                    }
                     trim_cleanup_history(context.cleanup_history);
                     context
                         .overlay
@@ -1408,11 +2074,14 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
         BackgroundResult::ModelLoading {
             generation,
             session_id,
+            language,
         } => {
             if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 return;
             }
-            context.overlay.notify_info(tr("notice.modelLoading"), None);
+            context
+                .overlay
+                .notify_info(speech_lifecycle_notice("loading", &language), None);
             let mut loading = ServiceEvent::simple("model_loading");
             loading.session_id = Some(session_id);
             context.events.push(loading);
@@ -1420,6 +2089,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
         BackgroundResult::ModelLoaded {
             generation,
             session_id,
+            language,
         } => {
             if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
@@ -1429,7 +2099,9 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
                 return;
             }
             tracing::info!("speech model loaded; priming inference engine");
-            context.overlay.notify_info(tr("notice.modelWarming"), None);
+            context
+                .overlay
+                .notify_info(speech_lifecycle_notice("warming", &language), None);
             let mut loaded = ServiceEvent::simple("model_loaded");
             loaded.session_id = session_id;
             context.events.push(loaded);
@@ -1437,6 +2109,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
         BackgroundResult::ModelWarmed {
             generation,
             session_id,
+            language,
             result,
         } => {
             if let Some(session_id) = session_id {
@@ -1452,9 +2125,10 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             match result {
                 Ok(true) => {
                     tracing::info!("speech model warmed while recording");
-                    context
-                        .overlay
-                        .notify_info(tr("notice.modelReady"), Some(Duration::from_secs(2)));
+                    context.overlay.notify_info(
+                        speech_lifecycle_notice("ready", &language),
+                        Some(Duration::from_secs(2)),
+                    );
                     let mut ready = ServiceEvent::simple("model_ready");
                     ready.session_id = session_id;
                     context.events.push(ready);
@@ -1474,6 +2148,7 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             }
         }
         BackgroundResult::ModelTested { generation, result } => {
+            *context.pending_model_tests = context.pending_model_tests.saturating_sub(1);
             if context.cancel_generation.load(Ordering::SeqCst) != generation {
                 tracing::info!(
                     generation,
@@ -1529,23 +2204,45 @@ fn handle_background(result: BackgroundResult, context: &mut BackgroundContext<'
             }
             context.events.push(event);
         }
-        BackgroundResult::DownloadFinished { filename, result } => match result {
-            Ok(path) => {
-                let mut event = ServiceEvent::simple("model_download_complete");
-                event.values.insert("filename".into(), filename);
-                event
-                    .values
-                    .insert("path".into(), path.display().to_string());
-                context.events.push(event);
-            }
-            Err(error) => {
-                tracing::error!(%error, "model download failed");
-                let mut event = notice_event(NoticeLevel::Error, "notice.downloadFailed");
-                event.kind = "model_download_failed".into();
+        BackgroundResult::DownloadFinished {
+            filename,
+            result,
+            cancelled,
+        } => {
+            context.downloads.jobs.remove(&filename);
+            context.downloads.running = context.downloads.running.saturating_sub(1);
+            context.downloads.start_queued(context.background_tx);
+            if cancelled {
+                let mut event = ServiceEvent::simple("model_download_cancelled");
                 event.values.insert("filename".into(), filename);
                 context.events.push(event);
+            } else {
+                match result {
+                    Ok(path) => {
+                        match simple_stt::modules::persist_auto_select(&filename) {
+                            Ok(changes) if changes.stt => *context.reload_config = true,
+                            Ok(_) => {}
+                            Err(error) => {
+                                tracing::warn!(%error, "automatic selection after download failed")
+                            }
+                        }
+                        let mut event = ServiceEvent::simple("model_download_complete");
+                        event.values.insert("filename".into(), filename);
+                        event
+                            .values
+                            .insert("path".into(), path.display().to_string());
+                        context.events.push(event);
+                    }
+                    Err(error) => {
+                        tracing::error!(%error, "model download failed");
+                        let mut event = notice_event(NoticeLevel::Error, "notice.downloadFailed");
+                        event.kind = "model_download_failed".into();
+                        event.values.insert("filename".into(), filename);
+                        context.events.push(event);
+                    }
+                }
             }
-        },
+        }
     }
 }
 
@@ -1623,6 +2320,15 @@ fn overlay_primary_for_work(
     }
 }
 
+fn begin_delivery_session(session_id: u64, delivering: &mut HashSet<u64>, busy: bool) -> bool {
+    if busy || delivering.iter().any(|current| *current > session_id) {
+        return false;
+    }
+    delivering.clear();
+    delivering.insert(session_id);
+    true
+}
+
 fn restore_overlay_work_state(
     overlay: &OverlayHandle,
     active_recording: bool,
@@ -1644,6 +2350,28 @@ fn push_transcript_event(events: &mut EventBuffer, session_id: u64, text: String
         "transcript ready"
     );
     events.push(event);
+}
+
+fn speech_lifecycle_notice(state: &str, language: &str) -> String {
+    let locale = simple_stt::localization::current();
+    let primary = language.split(['-', '_']).next().unwrap_or("");
+    let language_key = format!("reader.language.{primary}");
+    let label = if simple_stt::localization::contains(&language_key) {
+        simple_stt::localization::translate(locale, &language_key, &[])
+    } else {
+        String::new()
+    };
+    simple_stt::localization::translate(
+        locale,
+        &format!("notice.speech.{state}"),
+        &[("language", &label)],
+    )
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ")
+    .trim_start_matches('·')
+    .trim()
+    .to_owned()
 }
 
 fn truncate_notice(text: &str, limit: usize) -> String {
@@ -1725,11 +2453,21 @@ fn idle_worker_config(config: &AppConfig) -> Result<WorkerConfig> {
 fn worker_config(config: &AppConfig, language: &str, model_path: PathBuf) -> Result<WorkerConfig> {
     Ok(WorkerConfig {
         executable: sibling_executable("simple-stt-infer")?,
-        runtime_dir: config.parakeet_runtime_dir_path(),
+        runtime_dir: simple_stt::modules::stt_runtime(config, language)
+            .unwrap_or_else(|| config.parakeet_runtime_dir_path()),
         model_path,
         log_path: AppConfig::infer_log_path(),
         log_level: config.diagnostics.log_level.clone(),
-        inference_device: config.speech.inference_device,
+        inference_device: if config.speech.selection_mode == ModelSelectionMode::FollowKeyboard {
+            config
+                .speech
+                .language_devices
+                .get(language)
+                .copied()
+                .unwrap_or(config.speech.inference_device)
+        } else {
+            config.speech.inference_device
+        },
         speech_language: language.into(),
         idle_timeout: Duration::from_secs(config.speech.idle_worker_timeout_secs),
         shutdown_grace: Duration::from_millis(config.speech.worker_shutdown_grace_ms),
@@ -1758,19 +2496,161 @@ fn message_response(ok: bool, id: &str) -> ShellResponse {
 mod tests {
     use super::*;
 
+    fn test_recording(session_id: u64) -> Recording {
+        Recording {
+            session_id,
+            worker_config: idle_worker_config(&AppConfig::default()).unwrap(),
+            screen_context: Arc::new(ScreenCaptureSlot {
+                value: Mutex::new(ScreenCaptureState::Complete(None)),
+                ready: Condvar::new(),
+            }),
+            samples: vec![1],
+            started: Instant::now(),
+            stop_deadline: None,
+            stop_ready: false,
+            countdown_shown: None,
+        }
+    }
+
+    #[test]
+    fn stop_grace_keeps_final_samples_and_duplicate_stop_does_not_extend_deadline() {
+        let now = Instant::now();
+        let mut recording = test_recording(1);
+        assert!(recording.schedule_stop(now, 2000));
+        recording.samples.extend_from_slice(&[2, 3]);
+        assert!(recording.schedule_stop(now + Duration::from_secs(1), 2000));
+        assert_eq!(recording.stop_deadline, Some(now + Duration::from_secs(2)));
+        assert_eq!(recording.samples, vec![1, 2, 3]);
+        recording.stop_ready = true;
+        assert!(!recording.schedule_stop(now + Duration::from_secs(2), 2000));
+    }
+
+    #[test]
+    fn cancelled_or_replaced_recording_does_not_transfer_stop_deadline() {
+        let now = Instant::now();
+        let mut active = Some(test_recording(1));
+        assert!(active.as_mut().unwrap().schedule_stop(now, 2000));
+        let cancelled = active.take().unwrap();
+        assert_eq!(cancelled.session_id, 1);
+        active = Some(test_recording(2));
+        assert!(active.as_ref().unwrap().stop_deadline.is_none());
+        assert!(!active.as_mut().unwrap().schedule_stop(now, 0));
+    }
+
+    #[test]
+    fn queued_audio_is_drained_at_deadline_and_only_finishes_once() {
+        let now = Instant::now();
+        let (tx, rx) = bounded(8);
+        let mut active = Some(test_recording(7));
+        assert!(active.as_mut().unwrap().schedule_stop(now, 2000));
+        tx.send(vec![2, 3]).unwrap();
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_secs(1)),
+            GraceTick::Countdown(1000)
+        );
+        tx.send(vec![4, 5]).unwrap();
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_secs(2)),
+            GraceTick::Finish(7)
+        );
+        assert_eq!(active.as_ref().unwrap().samples, vec![1, 2, 3, 4, 5]);
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_secs(3)),
+            GraceTick::None
+        );
+        active.take();
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_secs(3)),
+            GraceTick::None
+        );
+    }
+
+    #[test]
+    fn subsecond_countdown_tracks_the_grace_interval() {
+        let now = Instant::now();
+        let (_, rx) = bounded(8);
+        let mut active = Some(test_recording(9));
+        assert!(active.as_mut().unwrap().schedule_stop(now, 750));
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_millis(250)),
+            GraceTick::Countdown(500)
+        );
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_millis(500)),
+            GraceTick::Countdown(250)
+        );
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_millis(750)),
+            GraceTick::Finish(9)
+        );
+    }
+
+    #[test]
+    fn pending_deadline_is_discarded_on_cancel_or_new_recording() {
+        let now = Instant::now();
+        let (_, rx) = bounded(8);
+        let mut active = Some(test_recording(7));
+        assert!(active.as_mut().unwrap().schedule_stop(now, 2000));
+        active.take();
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_secs(2)),
+            GraceTick::None
+        );
+        active = Some(test_recording(8));
+        assert_eq!(
+            advance_stop_grace(&mut active, &rx, now + Duration::from_secs(2)),
+            GraceTick::None
+        );
+        assert_eq!(active.unwrap().session_id, 8);
+    }
+
+    #[test]
+    fn single_model_uses_global_device_and_keyboard_mode_uses_language_device() {
+        use simple_stt::config::InferenceDevice;
+        let mut config = AppConfig::default();
+        config.speech.selection_mode = ModelSelectionMode::SingleModel;
+        config.speech.inference_device = InferenceDevice::Cpu;
+        config
+            .speech
+            .language_devices
+            .insert("single".into(), InferenceDevice::Gpu);
+        config
+            .speech
+            .language_devices
+            .insert("en".into(), InferenceDevice::Gpu);
+        assert_eq!(
+            worker_config(&config, "single", PathBuf::new())
+                .unwrap()
+                .inference_device,
+            InferenceDevice::Cpu
+        );
+        config.speech.selection_mode = ModelSelectionMode::FollowKeyboard;
+        assert_eq!(
+            worker_config(&config, "en", PathBuf::new())
+                .unwrap()
+                .inference_device,
+            InferenceDevice::Gpu
+        );
+    }
+
     #[test]
     fn retry_cache_preserves_final_unicode_payload_and_rejects_obsolete_empty_or_large_writes() {
         let mut cache = LastDeliveryCache::default();
         assert_eq!(cache.text(), None);
+        assert_eq!(cache.remembered_at_ms(), 0);
         let final_text = "مرحبا world 🙂 ";
         assert!(cache.remember(42, final_text.into(), true));
+        let first_at = cache.remembered_at_ms();
+        assert!(first_at > 0);
         assert!(!cache.remember(43, "cancelled".into(), false));
         assert!(!cache.remember(43, String::new(), true));
         assert!(!cache.remember(43, "x".repeat(1024 * 1024 + 1), true));
         assert!(cache.remember(41, "older".into(), true));
         assert_eq!(cache.text(), Some(final_text));
+        assert_eq!(cache.remembered_at_ms(), first_at);
         assert!(cache.remember(44, "new target text".into(), true));
         assert_eq!(cache.text(), Some("new target text"));
+        assert!(cache.remembered_at_ms() > first_at);
         assert_eq!(
             LastDeliveryCache::default().text(),
             None,
@@ -1892,6 +2772,21 @@ mod tests {
         assert!(audio_error_is_current(Some(7), 7));
         assert!(!audio_error_is_current(Some(8), 7));
         assert!(!audio_error_is_current(None, 7));
+    }
+
+    #[test]
+    fn retry_registers_delivery_before_progress_and_rejects_newer_work() {
+        let mut delivering = HashSet::new();
+        assert!(begin_delivery_session(42, &mut delivering, false));
+        assert!(
+            delivering.contains(&42),
+            "retry progress must have a live session"
+        );
+        assert!(!begin_delivery_session(43, &mut delivering, true));
+        assert!(!begin_delivery_session(41, &mut delivering, false));
+        assert_eq!(delivering, HashSet::from([42]));
+        assert!(begin_delivery_session(43, &mut delivering, false));
+        assert_eq!(delivering, HashSet::from([43]));
     }
 
     #[test]

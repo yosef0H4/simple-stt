@@ -1,0 +1,15 @@
+[package]
+name = "reader-tts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+libloading.workspace = true
+reader-core = { path = "../reader-core" }
+serde_json.workspace = true
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+tracing.workspace = true
+tracing-subscriber.workspace = true

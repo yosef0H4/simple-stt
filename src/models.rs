@@ -3,7 +3,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 const ENGLISH_Q8_SHA256: &str = "614feee3a990cf0e672b0314f4da0c80ae8da9094507f5ccb7c42e43b5fc5a12";
@@ -16,20 +16,6 @@ pub fn pinned_model_sha256(filename: &str) -> Option<&'static str> {
         "lemura-arabic-asr-lite-q8_0.gguf" => Some(ARABIC_Q8_SHA256),
         _ => None,
     }
-}
-
-fn sha256_file(path: &Path) -> Result<String> {
-    let mut input = fs::File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 128 * 1024];
-    loop {
-        let count = input.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
 }
 
 pub const BASE_URL: &str = "https://huggingface.co/mudler/parakeet-cpp-gguf/resolve/main";
@@ -406,7 +392,60 @@ fn recommendation_rank(file: &str, device: &InferenceDevice, size_mb: Option<u32
     }
 }
 
-pub fn download_model<F>(config: &AppConfig, filename: &str, mut on_progress: F) -> Result<PathBuf>
+/// Synchronizes cancellation with the final atomic publish.
+#[derive(Default)]
+pub struct DownloadCancellation(std::sync::Mutex<DownloadState>);
+#[derive(Default)]
+struct DownloadState {
+    cancelled: bool,
+    finished: bool,
+}
+impl DownloadCancellation {
+    pub fn cancel(&self) -> bool {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.finished {
+            return false;
+        }
+        state.cancelled = true;
+        true
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cancelled
+    }
+    pub fn finish(&self) -> bool {
+        let mut state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.finished = true;
+        state.cancelled
+    }
+}
+
+pub fn download_model<F>(config: &AppConfig, filename: &str, on_progress: F) -> Result<PathBuf>
+where
+    F: FnMut(u64, Option<u64>),
+{
+    download_model_cancellable(
+        config,
+        filename,
+        &DownloadCancellation::default(),
+        on_progress,
+    )
+}
+
+pub fn download_model_cancellable<F>(
+    config: &AppConfig,
+    filename: &str,
+    cancellation: &DownloadCancellation,
+    on_progress: F,
+) -> Result<PathBuf>
 where
     F: FnMut(u64, Option<u64>),
 {
@@ -419,48 +458,103 @@ where
     fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
     let target = dir.join(&spec.file);
     if target.exists() {
+        let mut state = cancellation
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        anyhow::ensure!(!state.cancelled, "download canceled");
+        state.finished = true;
         return Ok(target);
     }
-    let partial = target.with_extension(format!("gguf.partial.{:016x}", rand::random::<u64>()));
     let url = spec
         .download_url
         .as_deref()
         .context("this locally installed model has no published download source")?;
+    download_from_url(
+        url,
+        &target,
+        pinned_model_sha256(&spec.file),
+        cancellation,
+        on_progress,
+    )
+}
+
+fn download_from_url<F>(
+    url: &str,
+    target: &Path,
+    expected_hash: Option<&str>,
+    cancellation: &DownloadCancellation,
+    mut on_progress: F,
+) -> Result<PathBuf>
+where
+    F: FnMut(u64, Option<u64>),
+{
+    {
+        let mut state = cancellation
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        anyhow::ensure!(!state.cancelled, "download canceled");
+        if target.exists() {
+            state.finished = true;
+            return Ok(target.to_path_buf());
+        }
+    }
+    let partial = target.with_extension(format!("gguf.partial.{:016x}", rand::random::<u64>()));
     tracing::info!(%url, target = %target.display(), partial = %partial.display(), "model download begin");
     let result = (|| -> Result<u64> {
-        let mut response = reqwest::blocking::get(url)?.error_for_status()?;
-        let total = response.content_length();
-        let mut output = fs::File::create(&partial)
-            .with_context(|| format!("creating {}", partial.display()))?;
-        let mut buffer = [0_u8; 128 * 1024];
-        let mut downloaded = 0_u64;
-        loop {
-            let count = response.read(&mut buffer)?;
-            if count == 0 {
-                break;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        runtime.block_on(async {
+            async fn cancelled(token: &DownloadCancellation) {
+                while !token.is_cancelled() {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
             }
-            output.write_all(&buffer[..count])?;
-            downloaded += count as u64;
-            on_progress(downloaded, total);
-        }
-        output.flush()?;
-        output.sync_all()?;
-        if let Some(expected) = pinned_model_sha256(&spec.file) {
-            let actual = sha256_file(&partial)?;
-            anyhow::ensure!(
-                actual == expected,
-                "downloaded model checksum mismatch: {}",
-                spec.file
-            );
-        }
-        replace_file_atomic(&partial, &target)
-            .with_context(|| format!("renaming partial model to {}", target.display()))?;
-        Ok(downloaded)
+            let client = reqwest::Client::new();
+            let mut response = tokio::select! {
+                _ = cancelled(cancellation) => anyhow::bail!("download canceled"),
+                result = client.get(url).send() => result?.error_for_status()?,
+            };
+            let total = response.content_length();
+            let mut output = fs::File::create(&partial)?;
+            let mut hasher = Sha256::new();
+            let mut downloaded = 0_u64;
+            loop {
+                let chunk = tokio::select! {
+                    _ = cancelled(cancellation) => anyhow::bail!("download canceled"),
+                    result = response.chunk() => result?,
+                };
+                let Some(chunk) = chunk else { break };
+                output.write_all(&chunk)?;
+                hasher.update(&chunk);
+                downloaded += chunk.len() as u64;
+                on_progress(downloaded, total);
+            }
+            output.flush()?;
+            output.sync_all()?;
+            if let Some(expected) = expected_hash {
+                anyhow::ensure!(
+                    format!("{:x}", hasher.finalize()) == expected,
+                    "downloaded model checksum mismatch"
+                );
+            }
+            let mut state = cancellation
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            anyhow::ensure!(!state.cancelled, "download canceled");
+            replace_file_atomic(&partial, target)
+                .with_context(|| format!("renaming partial model to {}", target.display()))?;
+            state.finished = true;
+            Ok(downloaded)
+        })
     })();
     match result {
         Ok(downloaded) => {
             tracing::info!(target = %target.display(), bytes = downloaded, "model download complete");
-            Ok(target)
+            Ok(target.to_path_buf())
         }
         Err(error) => {
             let _ = fs::remove_file(&partial);
@@ -522,6 +616,56 @@ pub fn ensure_smoke_audio(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancel_stalled_download_removes_partial_and_never_publishes() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::sync::{mpsc, Arc};
+        use std::time::Duration;
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\nx")
+                .unwrap();
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("test.gguf");
+        let cancellation = Arc::new(DownloadCancellation::default());
+        let token = Arc::clone(&cancellation);
+        let path = target.clone();
+        let (progress_tx, progress_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let download = std::thread::spawn(move || {
+            let result = download_from_url(
+                &format!("http://{address}/model"),
+                &path,
+                None,
+                &token,
+                |_, _| {
+                    let _ = progress_tx.send(());
+                },
+            );
+            let _ = done_tx.send(result);
+        });
+        progress_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert!(cancellation.cancel());
+        assert!(done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .is_err());
+        assert!(!target.exists());
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
+        download.join().unwrap();
+    }
+
     #[test]
     fn catalog_contains_default() {
         assert!(find_by_file("tdt_ctc-110m-f16.gguf").is_some());

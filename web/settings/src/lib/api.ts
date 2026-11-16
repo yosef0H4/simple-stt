@@ -1,4 +1,6 @@
-const token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+let token = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+export const hasToken = () => Boolean(token);
+export function setToken(value: string) { token = value.trim(); }
 export class ApiError extends Error {
   message_id?: string;
   message_args?: Record<string, string | number>;

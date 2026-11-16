@@ -2,9 +2,9 @@ FROM quay.io/fedora/fedora:44
 RUN dnf -y install \
     alsa-lib-devel cairo-devel curl gcc gcc-c++ git glib2-devel \
     libX11-devel libXtst-devel make nodejs npm openssl-devel binutils \
-    pango-devel pkgconf-pkg-config python3 rpm-build rustup tar \
-    at-spi2-core-devel vulkan-loader wl-clipboard wtype xdg-utils libsecret \
-    xclip xdotool systemd && dnf clean all
+    pipewire-devel clang-devel pango-devel pkgconf-pkg-config python3 rpm-build rustup tar \
+    at-spi2-core-devel vulkan-loader wl-clipboard xdg-utils libsecret \
+    xclip systemd && dnf clean all
 RUN useradd --create-home --uid 1000 builder && mkdir -p /work && chown builder:builder /work
 ENV HOME=/home/builder RUSTUP_HOME=/home/builder/.rustup CARGO_HOME=/home/builder/.cargo PATH=/home/builder/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 USER builder

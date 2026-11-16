@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ComboItem } from "../lib/types";
+  import { matchesSearch } from "../lib/search";
   import Icon from "./Icon.svelte";
   import { tick, type Snippet } from "svelte";
   import Help from "./Help.svelte";
@@ -12,19 +13,23 @@
     items,
     onselect,
     custom = false,
+    disabled = false,
     unavailable = false,
     help = "",
+    searchMatcher,
     extra,
   }: {
     label: string;
     ariaLabel?: string;
     path: string;
     value: string;
-    items: ComboItem[];
+    items: (ComboItem & { search?: string })[];
     onselect: (value: string) => void;
     custom?: boolean;
+    disabled?: boolean;
     unavailable?: boolean;
     help?: string;
+    searchMatcher?: (query: string, item: ComboItem & { search?: string }) => boolean;
     extra?: Snippet;
   } = $props();
   let open = $state(false),
@@ -39,10 +44,11 @@
   );
   const filtered = $derived(
     items.filter((i) =>
-      `${t(i.label)} ${i.label} ${i.meta || ""}`.toLowerCase().includes(query.toLowerCase()),
+      searchMatcher ? searchMatcher(query, i) : matchesSearch(query, t(i.label), i.label, i.value, i.meta, i.search),
     ),
   );
   function expand() {
+    if(disabled)return;
     open = true;
     query = "";
     active = -1;
@@ -119,6 +125,7 @@
           bind:this={input}
           id={`combo-${path}`}
           class="combo-input"
+          {disabled}
           type="text"
           dir="auto"
           role="combobox"
@@ -130,7 +137,7 @@
             ? `option-${path}-${active}`
             : undefined}
           autocomplete="off"
-          value={open ? query : selected}
+          value={open ? query : t(selected)}
           onfocus={expand}
           onclick={() => {
             if (!open) expand();
@@ -170,13 +177,19 @@
         type="button"
         id={`option-${path}-${i}`}
         role="option"
+        aria-label={t(item.label)}
+        aria-describedby={item.meta ? `meta-${path}-${i}` : undefined}
         aria-selected={value === item.value}
         class:highlighted={active === i}
         onpointerdown={(event) => event.preventDefault()}
         onclick={() => choose(item)}
-        >{t(item.label)}{#if item.value === value}<Icon
+        ><span class="option-copy"><span>{t(item.label)}</span>{#if item.meta}<small id={`meta-${path}-${i}`} dir="auto">{item.meta}</small>{/if}</span>{#if item.value === value}<Icon
             name="check"
             size={15}
           />{/if}</button
       >{:else}<span class="empty">{t("ui.no_matches.cd0af6")}</span>{/each}
   </div>{/if}
+<style>
+  .option-copy { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+  .option-copy small { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+</style>

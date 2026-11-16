@@ -91,11 +91,14 @@ Copy-Item -LiteralPath (Join-Path $Root 'ahk\hotkey-recorder.ahk') -Destination 
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\lib') -Destination (Join-Path $Runtime 'lib') -Recurse -Force
 Copy-Item -LiteralPath $AhkBase -Destination (Join-Path $Runtime 'AutoHotkey64.exe') -Force
 
-foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe','simple-stt-settings.exe')) {
+foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe','simple-stt-settings.exe','readerd.exe','readerctl.exe','reader-tts.exe','reader-ocr.exe','reader-hud.exe')) {
     Copy-Item -LiteralPath (Join-Path $ResolvedTargetDir "release\$Name") -Destination $Runtime -Force
 }
+Copy-Item -LiteralPath (Join-Path $Root 'assets\language\lid.176.ftz') -Destination $Runtime -Force
 Copy-Item -LiteralPath (Join-Path $Root 'LICENSE') -Destination $Portable -Force
 New-Item -ItemType Directory -Path (Join-Path $Portable 'licenses') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $Root 'assets\language\LICENSE-CC-BY-SA-3.0.txt') -Destination (Join-Path $Portable 'licenses') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'assets\language\ATTRIBUTION.md') -Destination (Join-Path $Portable 'licenses\fastText-ATTRIBUTION.md') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'assets\fonts\LICENSE-NotoSansArabic.txt') -Destination (Join-Path $Portable 'licenses') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'assets\fonts\LICENSE-JetBrainsMono.txt') -Destination (Join-Path $Portable 'licenses') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'THIRD_PARTY_NOTICES.md') -Destination $Portable -Force
@@ -122,6 +125,11 @@ $Required = @(
     'runtime\simple-stt-infer.exe',
     'runtime\simple-stt-ctl.exe',
     'runtime\simple-stt-settings.exe',
+    'runtime\readerd.exe',
+    'runtime\readerctl.exe',
+    'runtime\reader-tts.exe',
+    'runtime\reader-ocr.exe',
+    'runtime\reader-hud.exe',
     'runtime\fixtures\parakeet-smoke.wav',
     'runtime\external\parakeet-runtime\parakeet-windows-vulkan\bin\parakeet.dll'
 )

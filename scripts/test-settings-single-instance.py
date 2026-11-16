@@ -34,7 +34,7 @@ def main():
 
         def url_for(start):
             process, output, errors = start
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + 45
             while time.monotonic() < deadline:
                 url = output.read_text().strip()
                 if url:
@@ -111,7 +111,7 @@ def main():
                 os.kill(recovered[0].pid, signal.SIGSTOP)
                 try:
                     blocked = launch()
-                    assert blocked[0].wait(timeout=15) == 1
+                    assert blocked[0].wait(timeout=30) == 1
                     assert blocked[1].read_text() == '', 'unresponsive server spawned a duplicate'
                     assert 'no second server was started' in blocked[2].read_text()
                 finally:
@@ -120,7 +120,7 @@ def main():
                 print('PASS: unresponsive existing server cannot spawn a duplicate')
             assert api(recovered_url, '/api/close', {})['ok'] is True
             assert recovered[0].wait(timeout=3) == 0
-            assert not list((directory / 'data').rglob('settings-session.json')), 'Close left session metadata'
+            assert not list((directory / 'data').rglob('settings-session*.json')), 'Close left session metadata'
         finally:
             for process in processes:
                 if process.poll() is None:

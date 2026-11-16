@@ -210,6 +210,114 @@ fn linux_layouts() -> Result<LayoutState> {
     }
 }
 
+/// A reject-only preflight for tools that emit fixed US physical keycodes.
+/// Text insertion and virtual-keyboard backends do not need this restriction.
+#[cfg(target_os = "linux")]
+pub fn physical_us_layout_configured() -> bool {
+    let Ok((index, layouts)) = linux_layouts() else {
+        return false;
+    };
+    let wayland = wayland_session();
+    let env = PhysicalLayoutEnv {
+        keymap: std::env::var_os("KWIN_XKB_DEFAULT_KEYMAP"),
+        layout: std::env::var_os("XKB_DEFAULT_LAYOUT"),
+        model: std::env::var_os("XKB_DEFAULT_MODEL"),
+        variant: std::env::var_os("XKB_DEFAULT_VARIANT"),
+        options: std::env::var_os("XKB_DEFAULT_OPTIONS"),
+    };
+    let config = wayland
+        .then(|| {
+            dirs::config_dir().and_then(|root| std::fs::read_to_string(root.join("kxkbrc")).ok())
+        })
+        .flatten();
+    physical_us_preflight(index, &layouts, wayland, config.as_deref(), &env)
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct PhysicalLayoutEnv {
+    keymap: Option<std::ffi::OsString>,
+    layout: Option<std::ffi::OsString>,
+    model: Option<std::ffi::OsString>,
+    variant: Option<std::ffi::OsString>,
+    options: Option<std::ffi::OsString>,
+}
+
+#[cfg(target_os = "linux")]
+fn physical_us_preflight(
+    index: usize,
+    layouts: &[LayoutInfo],
+    wayland: bool,
+    config: Option<&str>,
+    env: &PhysicalLayoutEnv,
+) -> bool {
+    let Some((layout, variant, _)) = layouts.get(index) else {
+        return false;
+    };
+    if !wayland {
+        return layout == "us" && variant.is_empty();
+    }
+    // These environment values are KWin fallbacks, not proof of its active
+    // map. Accept only benign values, then independently require the explicit
+    // KDE configuration to match the compositor's reported layout list.
+    if env.keymap.is_some()
+        || env.layout.as_ref().is_some_and(|value| value != "us")
+        || env.model.as_ref().is_some_and(|value| value != "pc105")
+        || !env.variant.as_ref().is_none_or(|value| value.is_empty())
+        || !env.options.as_ref().is_none_or(|value| {
+            value.to_str().is_some_and(|options| {
+                options
+                    .split(',')
+                    .all(|option| option.is_empty() || option.starts_with("grp:"))
+            })
+        })
+    {
+        return false;
+    }
+    config.is_some_and(|config| basic_us_configuration(index, layouts, config))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn physical_us_layout_configured() -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn basic_us_configuration(index: usize, layouts: &[LayoutInfo], config: &str) -> bool {
+    // KDE's tuple contains a display name, not a variant. Read the configured
+    // variant separately and reject missing, mismatched or customized layouts.
+    let mut fields = BTreeMap::new();
+    let mut in_layout = false;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_layout = line == "[Layout]";
+        } else if in_layout {
+            if let Some((key, value)) = line.split_once('=') {
+                fields.insert(key.trim(), value.trim());
+            }
+        }
+    }
+    let (Some(configured), Some(variants)) = (fields.get("LayoutList"), fields.get("VariantList"))
+    else {
+        return false;
+    };
+    let configured = configured.split(',').collect::<Vec<_>>();
+    let variants = variants.split(',').collect::<Vec<_>>();
+    fields.get("Use") == Some(&"true")
+        && configured.len() == layouts.len()
+        && configured
+            .iter()
+            .zip(layouts)
+            .all(|(name, info)| *name == info.0)
+        && configured.get(index) == Some(&"us")
+        && variants.get(index).copied().unwrap_or_default().is_empty()
+        && fields.get("Options").is_none_or(|options| {
+            options
+                .split(',')
+                .all(|option| option.is_empty() || option.starts_with("grp:"))
+        })
+}
+
 #[cfg(target_os = "linux")]
 fn xkb_metadata() -> Option<String> {
     let root = std::env::var_os("XKB_CONFIG_ROOT")
@@ -304,6 +412,115 @@ pub fn active_keyboard_language() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn physical_typing_accepts_benign_wayland_fallback_environment() {
+        let layouts = vec![
+            ("us".into(), "English".into(), "English".into()),
+            ("ara".into(), "Arabic".into(), "Arabic".into()),
+        ];
+        let config = "[Layout]\nUse=true\nLayoutList=us,ara\nVariantList=,\n";
+        let env = PhysicalLayoutEnv {
+            layout: Some("us".into()),
+            model: Some("pc105".into()),
+            options: Some("grp:alt_shift_toggle".into()),
+            ..Default::default()
+        };
+        assert!(physical_us_preflight(0, &layouts, true, Some(config), &env));
+        assert!(!physical_us_preflight(
+            1,
+            &layouts,
+            true,
+            Some(config),
+            &env
+        ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn physical_typing_rejects_untrusted_wayland_configuration() {
+        let layouts = vec![
+            ("us".into(), "English".into(), "English".into()),
+            ("ara".into(), "Arabic".into(), "Arabic".into()),
+        ];
+        let config = "[Layout]\nUse=true\nLayoutList=us,ara\nVariantList=,\n";
+        let preflight = |env: &PhysicalLayoutEnv, config: Option<&str>| {
+            physical_us_preflight(0, &layouts, true, config, env)
+        };
+        assert!(preflight(&PhysicalLayoutEnv::default(), Some(config)));
+        assert!(!preflight(
+            &PhysicalLayoutEnv {
+                keymap: Some("/tmp/custom".into()),
+                ..Default::default()
+            },
+            Some(config)
+        ));
+        assert!(!preflight(
+            &PhysicalLayoutEnv {
+                variant: Some("dvorak".into()),
+                ..Default::default()
+            },
+            Some(config)
+        ));
+        assert!(!preflight(
+            &PhysicalLayoutEnv {
+                options: Some("grp:alt_shift_toggle,ctrl:swapcaps".into()),
+                ..Default::default()
+            },
+            Some(config)
+        ));
+        assert!(!preflight(
+            &PhysicalLayoutEnv {
+                layout: Some("de".into()),
+                ..Default::default()
+            },
+            Some(config)
+        ));
+        assert!(!preflight(
+            &PhysicalLayoutEnv::default(),
+            Some("[Layout]\nUse=true\nLayoutList=de,ara\nVariantList=,\n")
+        ));
+        assert!(!preflight(&PhysicalLayoutEnv::default(), None));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn physical_typing_rejects_unknown_variants_and_non_us_layouts() {
+        let layouts = vec![
+            ("us".into(), "Custom display label".into(), "English".into()),
+            ("ara".into(), "".into(), "Arabic".into()),
+        ];
+        let basic =
+            "[Layout]\nUse=true\nLayoutList=us,ara\nVariantList=,\nOptions=grp:win_space_toggle\n";
+        assert!(basic_us_configuration(0, &layouts, basic));
+        assert!(!basic_us_configuration(1, &layouts, basic));
+        assert!(!basic_us_configuration(
+            0,
+            &layouts,
+            &basic.replace("VariantList=,", "VariantList=dvorak,")
+        ));
+        assert!(!basic_us_configuration(
+            0,
+            &layouts,
+            &basic.replace("VariantList=,\n", "")
+        ));
+        assert!(!basic_us_configuration(
+            0,
+            &layouts,
+            &basic.replace("Use=true", "Use=false")
+        ));
+        assert!(!basic_us_configuration(
+            0,
+            &layouts,
+            &basic.replace("LayoutList=us,ara", "LayoutList=de,ara")
+        ));
+        assert!(!basic_us_configuration(
+            0,
+            &layouts,
+            &basic.replace("grp:win_space_toggle", "ctrl:swapcaps")
+        ));
+    }
     #[test]
     fn regional_languages_are_deduplicated() {
         let languages = deduplicate(vec![

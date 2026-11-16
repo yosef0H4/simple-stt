@@ -1,5 +1,5 @@
 export type Page =
-  "general" | "audio" | "models" | "output" | "cleanup" | "advanced" | "config";
+  "general" | "audio" | "models" | "cleanup" | "advanced" | "reading";
 export type DeliveryMode =
   | "smart_paste"
   | "type"
@@ -20,16 +20,22 @@ export interface Config {
     cancel_hotkey: string;
     toggle_cleanup_hotkey: string;
     retry_delivery_hotkey: string;
+    show_shortcuts_hotkey: string;
+    shortcut_reminders: boolean;
     linux_hotkey_backend: "auto" | "portal" | "x11" | "desktop";
     capslock_behavior: "preserve_tap" | "always_off";
     start_at_login: boolean;
     ui_theme: "auto" | "light" | "dark";
     ui_language: "auto" | "en" | "ar";
   };
-  audio: { preferred_device_id: string; gain: number };
+  audio: { preferred_device_id: string; gain: number; stop_grace_ms: number };
   speech: {
+    provider: "local" | "remote_openai_compatible";
+    remote_openai_compatible: {base_url:string;model:string;fallback_to_local:boolean;timeout_ms:number};
     inference_device: "auto" | "cpu" | "gpu";
     runtime_dir: string;
+    language_runtimes: Record<string,string|null>;
+    language_devices: Record<string,"auto"|"cpu"|"gpu">;
     model_dir: string;
     selection_mode: "single_model" | "follow_keyboard";
     single_model_filename: string | null;
@@ -119,6 +125,7 @@ export interface Tools {
   stop_command?: string;
 }
 export interface SettingsState {
+  runtime_ready?: boolean;
   config: Config | null;
   config_hash: string;
   config_path?: string;
@@ -204,13 +211,15 @@ export function assertConfig(value: unknown): asserts value is Config {
       "cancel_hotkey",
       "toggle_cleanup_hotkey",
       "retry_delivery_hotkey",
+      "show_shortcuts_hotkey",
+      "shortcut_reminders",
       "linux_hotkey_backend",
       "capslock_behavior",
       "start_at_login",
       "ui_theme",
       "ui_language",
     ],
-    audio: ["preferred_device_id", "gain"],
+    audio: ["preferred_device_id", "gain", "stop_grace_ms"],
     speech: [
       "inference_device",
       "runtime_dir",
@@ -269,6 +278,7 @@ export function assertConfig(value: unknown): asserts value is Config {
   const primitives: Record<string, string[]> = {
     boolean: [
       "general.enabled",
+      "general.shortcut_reminders",
       "general.start_at_login",
       "output.paced_typing_enabled",
       "output.preserve_clipboard",
@@ -297,6 +307,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "general.cancel_hotkey",
       "general.toggle_cleanup_hotkey",
       "general.retry_delivery_hotkey",
+      "general.show_shortcuts_hotkey",
       "audio.preferred_device_id",
       "speech.runtime_dir",
       "speech.model_dir",

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T00:00:00Z",
+  "title": "Design System: Simple STT Settings",
+  "extensions": {
+    "colorMeta": {
+      "paper": {"role":"neutral","displayName":"Paper","canonical":"#fafbfd"},
+      "rail": {"role":"neutral","displayName":"Rail","canonical":"#f0f3f8"},
+      "raised": {"role":"neutral","displayName":"Raised","canonical":"#fff"},
+      "ink": {"role":"neutral","displayName":"Ink","canonical":"#202b3c"},
+      "muted": {"role":"neutral","displayName":"Muted","canonical":"#526176"},
+      "line": {"role":"neutral","displayName":"Line","canonical":"#dce3ec"},
+      "accent": {"role":"primary","displayName":"Simple Blue","canonical":"#2859c6"},
+      "accent-soft": {"role":"primary","displayName":"Soft Blue","canonical":"#e5edfc"},
+      "focus": {"role":"primary","displayName":"Focus Blue","canonical":"#3566d8"},
+      "danger": {"role":"secondary","displayName":"Error Red","canonical":"#b93442"},
+      "success": {"role":"secondary","displayName":"Success Green","canonical":"#27724c"},
+      "paper-dark": {"role":"neutral","displayName":"Night Paper","canonical":"#151a23"},
+      "rail-dark": {"role":"neutral","displayName":"Night Rail","canonical":"#1b212c"},
+      "raised-dark": {"role":"neutral","displayName":"Night Raised","canonical":"#202835"},
+      "ink-dark": {"role":"neutral","displayName":"Night Ink","canonical":"#e4eaf3"},
+      "muted-dark": {"role":"neutral","displayName":"Night Muted","canonical":"#a5b3c7"},
+      "line-dark": {"role":"neutral","displayName":"Night Line","canonical":"#333e50"},
+      "accent-dark": {"role":"primary","displayName":"Night Blue","canonical":"#8bafff"},
+      "accent-soft-dark": {"role":"primary","displayName":"Night Soft Blue","canonical":"#263955"},
+      "focus-dark": {"role":"primary","displayName":"Night Focus Blue","canonical":"#9cbbff"},
+      "danger-dark": {"role":"secondary","displayName":"Night Error Red","canonical":"#ff97a3"},
+      "success-dark": {"role":"secondary","displayName":"Night Success Green","canonical":"#86ccaa"}
+    },
+    "shadows": [
+      {"name":"floating-surface","value":"0 8px 24px #0002","purpose":"Separate search and choice menus from page content."},
+      {"name":"save-bar","value":"0 6px 24px #0002","purpose":"Lift the persistent save action above content."},
+      {"name":"notice","value":"0 6px 22px #0002","purpose":"Separate transient status notices from content."}
+    ],
+    "breakpoints": [
+      {"name":"tablet","value":"950px"},
+      {"name":"mobile","value":"700px"}
+    ]
+  },
+  "components": [
+    {"name":"Primary Button","kind":"button","refersTo":"button-primary","description":"Compact primary action such as Save.","html":"<button class=\"ds-button\">Save</button>","css":".ds-button { background: #2859c6; color: #fff; border: 1px solid transparent; border-radius: 7px; min-height: 34px; padding: 6px 12px; font: 600 14px ui-sans-serif, system-ui, sans-serif; transition: background 120ms ease-out; } .ds-button:hover { background: #e5edfc; color: #202b3c; } .ds-button:focus-visible { outline: 2px solid #3566d8; outline-offset: 3px; } .ds-button:active { background: #dce3ec; }"},
+    {"name":"Text Field","kind":"input","refersTo":"field","description":"Standard labeled text entry control.","html":"<label class=\"ds-field\"><span>Model name</span><input value=\"\" /></label>","css":".ds-field { display: grid; gap: 8px; color: #202b3c; font: 500 13px ui-sans-serif, system-ui, sans-serif; } .ds-field input { box-sizing: border-box; width: 100%; min-height: 36px; padding: 7px 10px; color: #202b3c; background: #fff; border: 1px solid #dce3ec; border-radius: 7px; font: 400 14px ui-sans-serif, system-ui, sans-serif; } .ds-field input:focus-visible { outline: 2px solid #3566d8; outline-offset: 3px; }"},
+    {"name":"Task Navigation","kind":"nav","description":"Task destinations with selected state.","html":"<nav class=\"ds-nav\"><button aria-current=\"page\">Models</button><button>Reading</button></nav>","css":".ds-nav { display: flex; flex-direction: column; gap: 4px; } .ds-nav button { min-height: 39px; padding: 9px 12px; border: 0; border-radius: 7px; color: #526176; background: transparent; text-align: start; font: 500 13px ui-sans-serif, system-ui, sans-serif; } .ds-nav button:hover { background: #e5edfc; } .ds-nav button[aria-current=page] { color: #2859c6; background: #e5edfc; } .ds-nav button:focus-visible { outline: 2px solid #3566d8; outline-offset: 3px; }"},
+    {"name":"Searchable Choice","kind":"input","description":"Search field used to filter an anchored choice menu.","html":"<label class=\"ds-choice\"><span>Language</span><input role=\"combobox\" value=\"English\" /></label>","css":".ds-choice { display: grid; gap: 8px; color: #202b3c; font: 500 13px ui-sans-serif, system-ui, sans-serif; } .ds-choice input { box-sizing: border-box; width: 100%; min-height: 36px; padding: 7px 10px; color: #202b3c; background: #fff; border: 1px solid #dce3ec; border-radius: 7px; font: 400 14px ui-sans-serif, system-ui, sans-serif; } .ds-choice input:focus-visible { outline: 2px solid #3566d8; outline-offset: 3px; }"},
+    {"name":"Range with Exact Value","kind":"custom","description":"Slider paired with a directly editable numeric value.","html":"<label class=\"ds-range\"><span>Microphone gain</span><span class=\"ds-range-row\"><input type=\"range\" value=\"5\" /><input type=\"number\" value=\"5\" /></span></label>","css":".ds-range { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(0, 1.2fr); align-items: center; gap: 30px; color: #202b3c; font: 500 13px ui-sans-serif, system-ui, sans-serif; } .ds-range-row { display: flex; align-items: center; gap: 8px; } .ds-range input[type=range] { flex: 1; min-width: 40px; accent-color: #2859c6; } .ds-range input[type=number] { box-sizing: border-box; width: 76px; min-height: 36px; border: 1px solid #dce3ec; border-radius: 7px; background: #fff; text-align: center; font: 400 14px ui-sans-serif, system-ui, sans-serif; } .ds-range input:focus-visible { outline: 2px solid #3566d8; outline-offset: 3px; } @media (max-width: 700px) { .ds-range { grid-template-columns: 1fr; gap: 8px; } }"}
+  ],
+  "narrative": {
+    "northStar": "A Clear Home for Every Decision",
+    "overview": "Simple STT Settings is a compact, quiet workspace for configuring desktop dictation. The navigation names six task destinations, and each choice has one clear home. Flat aligned rows keep the interface practical and let labels, values, and control state carry the meaning.\n\nThe inherited Simple STT visual identity uses a restrained blue accent, neutral light and dark surfaces, concise labels, and authored SVG icons. Search helps users find settings across destinations. On narrow screens the task navigation adapts while retaining visible names.",
+    "keyCharacteristics": ["Task-led navigation with six named destinations.", "Compact flat rows and aligned controls.", "One blue accent over neutral light or dark surfaces.", "Searchable choices and sliders paired with exact numeric values."],
+    "rules": [{"name":"The One Accent Rule","body":"Use the blue accent for interaction and hierarchy; keep broad surfaces neutral.","section":"colors"}],
+    "dos": ["Do give each decision one clear task destination.", "Do keep setting labels visible and align their controls consistently.", "Do pair sliders with an editable exact value.", "Do preserve visible task names on mobile and accessible names for icon controls.", "Do support light, dark, automatic theme, RTL content, and reduced motion."],
+    "donts": ["Don't make broad page regions blue; reserve the accent for interaction and hierarchy.", "Don't hide task names on narrow screens.", "Don't replace aligned settings rows with oversized decorative containers."]
+  }
+}

@@ -1,0 +1,1018 @@
+{
+  "runtimes": [
+    {
+      "id": "parakeet-vulkan",
+      "feature": "stt",
+      "engine": "parakeet",
+      "backend": "vulkan",
+      "label": "Parakeet · Vulkan",
+      "asset": "parakeet-vulkan"
+    },
+    {
+      "id": "parakeet-cuda",
+      "feature": "stt",
+      "engine": "parakeet",
+      "backend": "cuda",
+      "label": "Parakeet · CUDA",
+      "asset": "parakeet-cuda"
+    },
+    {
+      "id": "sherpa-cpu",
+      "feature": "tts",
+      "engine": "sherpa",
+      "backend": "cpu",
+      "label": "Sherpa ONNX · CPU",
+      "asset": "sherpa-cpu",
+      "platform_assets": {
+        "windows": "sherpa-cpu-windows"
+      }
+    },
+    {
+      "id": "sherpa-cuda",
+      "feature": "tts",
+      "engine": "sherpa",
+      "backend": "cuda",
+      "label": "Sherpa ONNX · CUDA",
+      "asset": "sherpa-cuda"
+    },
+    {
+      "id": "paddle-cpu",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "backend": "cpu",
+      "label": "Sherpa ONNX · CPU",
+      "asset": "sherpa-cpu",
+      "platform_assets": {
+        "windows": "sherpa-cpu-windows"
+      }
+    },
+    {
+      "id": "paddle-cuda",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "backend": "cuda",
+      "label": "Sherpa ONNX · CUDA",
+      "asset": "sherpa-cuda"
+    }
+  ],
+  "models": [
+    {
+      "id": "kokoro",
+      "feature": "tts",
+      "engine": "sherpa",
+      "label": "Kokoro",
+      "languages": [
+        "en"
+      ],
+      "asset": "kokoro"
+    },
+    {
+      "id": "supertonic3",
+      "feature": "tts",
+      "engine": "sherpa",
+      "label": "Supertonic 3",
+      "languages": [
+        "en",
+        "ko",
+        "ja",
+        "ar",
+        "bg",
+        "cs",
+        "da",
+        "de",
+        "el",
+        "es",
+        "et",
+        "fi",
+        "fr",
+        "hi",
+        "hr",
+        "hu",
+        "id",
+        "it",
+        "lt",
+        "lv",
+        "nl",
+        "pl",
+        "pt",
+        "ro",
+        "ru",
+        "sk",
+        "sl",
+        "sv",
+        "tr",
+        "uk",
+        "vi"
+      ],
+      "asset": "supertonic3"
+    },
+    {
+      "id": "paddle-ar-en",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR · Arabic + English",
+      "languages": [
+        "ar",
+        "fa",
+        "ug",
+        "ur",
+        "ps",
+        "ku",
+        "sd",
+        "bal",
+        "en"
+      ],
+      "asset": "paddle-ar-en",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "arabic_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_arabic_dict.txt",
+        "reverse_arabic": true,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Chinese",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "asset": "paddle-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv4_mobile_det.onnx",
+        "recognizer": "pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "ppocr_keys_v1.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv4-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v4 · Mobile · Chinese",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "asset": "paddle-pp-ocrv4-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv4_mobile_det.onnx",
+        "recognizer": "pp-ocrv4_mobile_rec.onnx",
+        "dictionary": "ppocr_keys_v1.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv4-server-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v4 · Server · Chinese",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "asset": "paddle-pp-ocrv4-server-rec",
+      "paddle": {
+        "detector": "pp-ocrv4_server_det.onnx",
+        "recognizer": "pp-ocrv4_server_rec.onnx",
+        "dictionary": "ppocr_keys_v1.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv4-server-rec-doc",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v4 · Server Document · Chinese",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "asset": "paddle-pp-ocrv4-server-rec-doc",
+      "paddle": {
+        "detector": "pp-ocrv4_server_det.onnx",
+        "recognizer": "pp-ocrv4_server_rec_doc.onnx",
+        "dictionary": "ppocrv4_doc_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Chinese",
+      "languages": [
+        "zh",
+        "en",
+        "ja"
+      ],
+      "asset": "paddle-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv5-server-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Server · Chinese",
+      "languages": [
+        "zh",
+        "en",
+        "ja"
+      ],
+      "asset": "paddle-pp-ocrv5-server-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_server_det.onnx",
+        "recognizer": "pp-ocrv5_server_rec.onnx",
+        "dictionary": "ppocrv5_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-ch-svtrv2-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR · SVTRv2 · Chinese",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "asset": "paddle-ch-svtrv2-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "ch_svtrv2_rec.onnx",
+        "dictionary": "ppocr_keys_v1.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-ch-repsvtr-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR · RepSVTR · Chinese",
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "asset": "paddle-ch-repsvtr-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "ch_repsvtr_rec.onnx",
+        "dictionary": "ppocr_keys_v1.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-arabic-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Arabic",
+      "languages": [
+        "ar",
+        "fa",
+        "ug",
+        "ur"
+      ],
+      "asset": "paddle-arabic-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "arabic_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "arabic_dict.txt",
+        "reverse_arabic": true,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-chinese-cht-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Traditional Chinese",
+      "languages": [
+        "zh"
+      ],
+      "asset": "paddle-chinese-cht-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "chinese_cht_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "chinese_cht_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-cyrillic-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Cyrillic",
+      "languages": [
+        "ru",
+        "sr",
+        "be",
+        "bg",
+        "uk",
+        "mn",
+        "abq",
+        "ady",
+        "kbd",
+        "av",
+        "dar",
+        "inh",
+        "ce",
+        "lbe",
+        "lez",
+        "tab"
+      ],
+      "asset": "paddle-cyrillic-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "cyrillic_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "cyrillic_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-cyrillic-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Cyrillic",
+      "languages": [
+        "ru",
+        "be",
+        "uk",
+        "sr",
+        "bg",
+        "mn",
+        "ab",
+        "ady",
+        "kbd",
+        "av",
+        "dar",
+        "inh",
+        "ce",
+        "lbe",
+        "lez",
+        "tab",
+        "kk",
+        "ky",
+        "tg",
+        "mk",
+        "tt",
+        "cv",
+        "ba",
+        "ro",
+        "udm",
+        "kv",
+        "os",
+        "bua",
+        "xal",
+        "tyv",
+        "sah",
+        "kaa",
+        "en"
+      ],
+      "asset": "paddle-cyrillic-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "cyrillic_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_cyrillic_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-devanagari-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Devanagari",
+      "languages": [
+        "hi",
+        "mr",
+        "ne",
+        "bh",
+        "mai",
+        "bho",
+        "mag",
+        "sck",
+        "new",
+        "kok",
+        "sa",
+        "bgc"
+      ],
+      "asset": "paddle-devanagari-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "devanagari_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "devanagari_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-devanagari-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Devanagari",
+      "languages": [
+        "hi",
+        "mr",
+        "ne",
+        "bh",
+        "mai",
+        "anp",
+        "bho",
+        "mag",
+        "sat",
+        "new",
+        "kok",
+        "sa",
+        "bgc",
+        "en"
+      ],
+      "asset": "paddle-devanagari-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "devanagari_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_devanagari_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-el-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Greek",
+      "languages": [
+        "el",
+        "en"
+      ],
+      "asset": "paddle-el-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "el_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_el_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-en-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · English",
+      "languages": [
+        "en"
+      ],
+      "asset": "paddle-en-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "en_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "en_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-en-pp-ocrv4-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v4 · Mobile · English",
+      "languages": [
+        "en"
+      ],
+      "asset": "paddle-en-pp-ocrv4-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "en_pp-ocrv4_mobile_rec.onnx",
+        "dictionary": "en_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-en-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · English",
+      "languages": [
+        "en"
+      ],
+      "asset": "paddle-en-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "en_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_en_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-eslav-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · East Slavic",
+      "languages": [
+        "ru",
+        "be",
+        "uk",
+        "en"
+      ],
+      "asset": "paddle-eslav-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "eslav_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_eslav_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-japan-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Japanese",
+      "languages": [
+        "ja"
+      ],
+      "asset": "paddle-japan-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "japan_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "japan_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-ka-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Kannada",
+      "languages": [
+        "kn"
+      ],
+      "asset": "paddle-ka-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "ka_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "ka_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-korean-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Korean",
+      "languages": [
+        "ko"
+      ],
+      "asset": "paddle-korean-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "korean_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "korean_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-korean-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Korean",
+      "languages": [
+        "ko",
+        "en"
+      ],
+      "asset": "paddle-korean-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "korean_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_korean_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-latin-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Latin",
+      "languages": [
+        "af",
+        "az",
+        "bs",
+        "cs",
+        "cy",
+        "da",
+        "de",
+        "es",
+        "et",
+        "fr",
+        "ga",
+        "hr",
+        "hu",
+        "id",
+        "is",
+        "it",
+        "ku",
+        "la",
+        "lt",
+        "lv",
+        "mi",
+        "ms",
+        "mt",
+        "nl",
+        "no",
+        "oc",
+        "pi",
+        "pl",
+        "pt",
+        "ro",
+        "sr",
+        "sk",
+        "sl",
+        "sq",
+        "sv",
+        "sw",
+        "tl",
+        "tr",
+        "uz",
+        "vi",
+        "en"
+      ],
+      "asset": "paddle-latin-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "latin_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "latin_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-latin-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Latin",
+      "languages": [
+        "en",
+        "fr",
+        "de",
+        "af",
+        "it",
+        "es",
+        "bs",
+        "pt",
+        "cs",
+        "cy",
+        "da",
+        "et",
+        "ga",
+        "hr",
+        "uz",
+        "hu",
+        "sr",
+        "id",
+        "oc",
+        "is",
+        "lt",
+        "mi",
+        "ms",
+        "nl",
+        "no",
+        "pl",
+        "sk",
+        "sl",
+        "sq",
+        "sv",
+        "sw",
+        "tl",
+        "tr",
+        "la",
+        "az",
+        "ku",
+        "lv",
+        "mt",
+        "pi",
+        "ro",
+        "vi",
+        "fi",
+        "eu",
+        "gl",
+        "lb",
+        "rm",
+        "ca",
+        "qu"
+      ],
+      "asset": "paddle-latin-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "latin_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_latin_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-ta-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Tamil",
+      "languages": [
+        "ta"
+      ],
+      "asset": "paddle-ta-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "ta_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "ta_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-ta-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Tamil",
+      "languages": [
+        "ta",
+        "en"
+      ],
+      "asset": "paddle-ta-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "ta_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_ta_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-te-pp-ocrv3-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v3 · Mobile · Telugu",
+      "languages": [
+        "te"
+      ],
+      "asset": "paddle-te-pp-ocrv3-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "te_pp-ocrv3_mobile_rec.onnx",
+        "dictionary": "te_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-te-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Telugu",
+      "languages": [
+        "te",
+        "en"
+      ],
+      "asset": "paddle-te-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "te_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_te_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-th-pp-ocrv5-mobile-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v5 · Mobile · Thai",
+      "languages": [
+        "th",
+        "en"
+      ],
+      "asset": "paddle-th-pp-ocrv5-mobile-rec",
+      "paddle": {
+        "detector": "pp-ocrv5_mobile_det.onnx",
+        "recognizer": "th_pp-ocrv5_mobile_rec.onnx",
+        "dictionary": "ppocrv5_th_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "default"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv6-tiny-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v6 · Tiny · Multilingual",
+      "languages": [
+        "zh",
+        "en",
+        "fr",
+        "de",
+        "it",
+        "es",
+        "pt",
+        "nl",
+        "pl",
+        "ro",
+        "cs",
+        "sv",
+        "no",
+        "da",
+        "fi",
+        "hu",
+        "tr",
+        "vi",
+        "id",
+        "ms",
+        "az",
+        "af",
+        "bs",
+        "hr",
+        "cy",
+        "et",
+        "ga",
+        "is",
+        "ku",
+        "lt",
+        "lv",
+        "mt",
+        "mi",
+        "oc",
+        "sk",
+        "sl",
+        "sq",
+        "sw",
+        "tl",
+        "uz",
+        "la",
+        "sr",
+        "ca",
+        "eu",
+        "gl",
+        "lb",
+        "rm",
+        "qu"
+      ],
+      "asset": "paddle-pp-ocrv6-tiny-rec",
+      "paddle": {
+        "detector": "pp-ocrv6_tiny_det.onnx",
+        "recognizer": "pp-ocrv6_tiny_rec.onnx",
+        "dictionary": "ppocrv6_tiny_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "v6_tiny"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv6-small-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v6 · Small · Multilingual",
+      "languages": [
+        "zh",
+        "en",
+        "fr",
+        "de",
+        "it",
+        "es",
+        "pt",
+        "nl",
+        "pl",
+        "ro",
+        "cs",
+        "sv",
+        "no",
+        "da",
+        "fi",
+        "hu",
+        "tr",
+        "vi",
+        "id",
+        "ms",
+        "az",
+        "af",
+        "bs",
+        "hr",
+        "cy",
+        "et",
+        "ga",
+        "is",
+        "ku",
+        "lt",
+        "lv",
+        "mt",
+        "mi",
+        "oc",
+        "sk",
+        "sl",
+        "sq",
+        "sw",
+        "tl",
+        "uz",
+        "la",
+        "sr",
+        "ca",
+        "eu",
+        "gl",
+        "lb",
+        "rm",
+        "qu",
+        "ja"
+      ],
+      "asset": "paddle-pp-ocrv6-small-rec",
+      "paddle": {
+        "detector": "pp-ocrv6_small_det.onnx",
+        "recognizer": "pp-ocrv6_small_rec.onnx",
+        "dictionary": "ppocrv6_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "v6"
+      }
+    },
+    {
+      "id": "paddle-pp-ocrv6-medium-rec",
+      "feature": "ocr",
+      "engine": "paddleocr",
+      "label": "PaddleOCR v6 · Medium · Multilingual",
+      "languages": [
+        "zh",
+        "en",
+        "fr",
+        "de",
+        "it",
+        "es",
+        "pt",
+        "nl",
+        "pl",
+        "ro",
+        "cs",
+        "sv",
+        "no",
+        "da",
+        "fi",
+        "hu",
+        "tr",
+        "vi",
+        "id",
+        "ms",
+        "az",
+        "af",
+        "bs",
+        "hr",
+        "cy",
+        "et",
+        "ga",
+        "is",
+        "ku",
+        "lt",
+        "lv",
+        "mt",
+        "mi",
+        "oc",
+        "sk",
+        "sl",
+        "sq",
+        "sw",
+        "tl",
+        "uz",
+        "la",
+        "sr",
+        "ca",
+        "eu",
+        "gl",
+        "lb",
+        "rm",
+        "qu",
+        "ja"
+      ],
+      "asset": "paddle-pp-ocrv6-medium-rec",
+      "paddle": {
+        "detector": "pp-ocrv6_medium_det.onnx",
+        "recognizer": "pp-ocrv6_medium_rec.onnx",
+        "dictionary": "ppocrv6_dict.txt",
+        "reverse_arabic": false,
+        "detection_preset": "v6"
+      }
+    }
+  ]
+}

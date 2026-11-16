@@ -498,10 +498,11 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
     state = local_data / "state"
     state.mkdir(parents=True)
     state_file = state / "linux-capture-state.json"
+    session_file = local_data / "linux-recording-session.json"
     token_file = local_data / "linux-token"
     token_file.write_text("private-retry-token\n", encoding="ascii")
     (state / "native-paste-restore-token").write_text("private-e2e-token\n", encoding="ascii")
-    (local_data / "linux-recording-session.json").write_text(
+    session_file.write_text(
         json.dumps({"recording": False, "session_id": 41, "updated_at": 1}), encoding="utf-8")
     config = root / "retry-config.json"
     config.write_text(json.dumps({
@@ -552,6 +553,11 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
                                     "values": {}, "events": []}
                         if name == "last_delivery":
                             response["values"]["text"] = "retry\nمرحبا 🙂"
+                        elif name in ("begin_delivery", "delivery_complete"):
+                            current_id = json.loads(session_file.read_text(encoding="utf-8"))["session_id"]
+                            if command.get("session_id") != current_id:
+                                raise AssertionError(
+                                    f"{name} session mismatch: {command!r}; expected {current_id}")
                         elif name not in ("cancel", "show_notice", "delivery_progress"):
                             raise AssertionError(f"unexpected retry fixture command: {name}")
                         stream.write(json.dumps({"type": "response", "request_id": request["request_id"],
@@ -570,7 +576,8 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
         retry = subprocess.run([str(SHELL), "retry-delivery"], env=shell_env,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=40)
         if retry.returncode != 0:
-            raise RuntimeError("Rust retry-delivery failed: " + retry.stderr.decode("utf-8", "replace"))
+            raise RuntimeError("Rust retry-delivery failed: " + retry.stderr.decode("utf-8", "replace")
+                               + f"; fixture messages={messages!r}; fixture errors={errors!r}")
         expected = initial_text + "retry\nمرحبا 🙂"
         try:
             wait_for(lambda: output_file.exists() and output_file.read_text(encoding="utf-8") == expected,
@@ -579,7 +586,9 @@ def run_retry_cli(env, root, output_file, initial_text, clipboard_snapshot, inje
             actual = output_file.read_text(encoding="utf-8") if output_file.exists() else "<missing>"
             raise RuntimeError(f"{exc}; actual={actual!r}; stdout={retry.stdout.decode('utf-8', 'replace')!r}; "
                                f"stderr={retry.stderr.decode('utf-8', 'replace')!r}; commands={messages}")
-        if messages.count("last_delivery") != 1 or "cancel" not in messages or "show_notice" not in messages:
+        if (messages.count("last_delivery") != 1 or "cancel" not in messages
+                or "begin_delivery" not in messages or "delivery_complete" not in messages
+                or "show_notice" not in messages):
             raise RuntimeError(f"Rust retry CLI did not use the expected authenticated fixture commands: {messages}")
         for mime, payload in clipboard_snapshot.items():
             if clipboard_data(env, mime) != payload:

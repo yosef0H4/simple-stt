@@ -27,7 +27,7 @@ const LINE_SPACING_PX: i32 = 2;
 pub const MIN_WIDTH: u32 = 90;
 pub const MIN_HEIGHT: u32 = 40;
 pub const MAX_WIDTH: u32 = 560;
-pub const MAX_HEIGHT: u32 = 220;
+pub const MAX_HEIGHT: u32 = 420;
 
 pub struct LayoutPlan {
     pub locale: Locale,
@@ -54,8 +54,24 @@ pub fn plan_for_locale(
     indicators: RecordingIndicators,
     locale: Locale,
 ) -> Option<LayoutPlan> {
-    let text = render_overlay_text_with_locale(primary, notice, levels, indicators, locale)
-        .replace("\r\n", "\n");
+    plan_with_shortcuts(primary, notice, levels, indicators, locale, "", false)
+}
+
+pub fn plan_with_shortcuts(
+    primary: OverlayPrimary,
+    notice: Option<&str>,
+    levels: &VisualizerLevels,
+    indicators: RecordingIndicators,
+    locale: Locale,
+    shortcuts: &str,
+    enabled: bool,
+) -> Option<LayoutPlan> {
+    let text = crate::shortcuts::append(
+        render_overlay_text_with_locale(primary, notice, levels, indicators, locale)
+            .replace("\r\n", "\n"),
+        shortcuts,
+        enabled,
+    );
     if text.trim().is_empty() {
         return None;
     }
@@ -105,9 +121,10 @@ pub fn render_surface(plan: &LayoutPlan) -> Option<cairo::ImageSurface> {
     rounded_rect(&cr, accent_x, 13.0, ACCENT_W, f64::from(height) - 26.0, 2.0);
     let _ = cr.fill();
 
-    // Text.
+    // Share the exact same shaped layout for measurement, keycaps and text.
     let layout = build_layout(&cr, &plan.text, plan.locale, width - 44);
-    cr.move_to(
+    let _ = cr.save();
+    cr.translate(
         if plan.locale == Locale::Ar {
             PAD_RIGHT
         } else {
@@ -115,8 +132,11 @@ pub fn render_surface(plan: &LayoutPlan) -> Option<cairo::ImageSurface> {
         },
         TEXT_Y,
     );
+    paint_keycaps(&cr, &layout, &plan.text);
+    cr.move_to(0.0, 0.0);
     cr.set_source_rgba(0.94, 0.96, 0.98, 1.0);
     pangocairo::functions::show_layout(&cr, &layout);
+    let _ = cr.restore();
 
     drop(layout);
     drop(cr);
@@ -157,8 +177,8 @@ fn build_layout(cr: &cairo::Context, text: &str, locale: Locale, width: i32) -> 
             FONT
         },
     )));
+    let attrs = pango::AttrList::new();
     if locale == Locale::Ar {
-        let attrs = pango::AttrList::new();
         let mut start = 0;
         for word in text.split_inclusive('\n') {
             if word.starts_with('\u{2066}') {
@@ -169,9 +189,141 @@ fn build_layout(cr: &cairo::Context, text: &str, locale: Locale, width: i32) -> 
             }
             start += word.len() as u32;
         }
-        layout.set_attributes(Some(&attrs));
+    }
+    decorate_shortcuts(&layout, text, &attrs);
+    if text.contains('\t') && !shortcut_runs(text).is_empty() {
+        let mut widths = [0; 2];
+        for line in text.lines().filter(|line| line.contains('\t')) {
+            for (column, entry) in line.split('\t').take(2).enumerate() {
+                let entry_layout = build_layout(cr, entry, locale, width);
+                widths[column] = widths[column].max(entry_layout.pixel_size().0);
+            }
+        }
+        let mut tabs = pango::TabArray::new(2, true);
+        tabs.set_tab(0, pango::TabAlign::Left, widths[0] + 20);
+        tabs.set_tab(1, pango::TabAlign::Left, widths[0] + widths[1] + 40);
+        layout.set_tabs(Some(&tabs));
     }
     layout
+}
+
+#[derive(Debug)]
+struct ShortcutRun {
+    icon: std::ops::Range<usize>,
+    keys: Vec<std::ops::Range<usize>>,
+    end: usize,
+}
+
+// Only app-generated icon + isolated keycap runs receive shortcut styling.
+// Notices, transcripts, filenames and ordinary bracketed text stay plain.
+fn shortcut_runs(text: &str) -> Vec<ShortcutRun> {
+    let mut runs = Vec::new();
+    for (action, _) in crate::shortcuts::ACTIONS {
+        let icon = crate::shortcuts::action_icon(action);
+        let prefix = format!("{icon} \u{2066}[");
+        for (start, _) in text.match_indices(&prefix) {
+            let keys_start = start + icon.len() + " \u{2066}".len();
+            let Some(length) = text[keys_start..].find('\u{2069}') else {
+                continue;
+            };
+            let end = keys_start + length;
+            let mut keys = Vec::new();
+            let mut offset = keys_start;
+            while offset < end && text.as_bytes()[offset] == b'[' {
+                let Some(close) = text[offset + 1..end].find(']') else {
+                    break;
+                };
+                let next = offset + close + 2;
+                keys.push(offset..next);
+                offset = next;
+            }
+            if !keys.is_empty() && offset == end {
+                runs.push(ShortcutRun {
+                    icon: start..start + icon.len(),
+                    keys,
+                    end,
+                });
+            }
+        }
+    }
+    runs
+}
+
+fn span(
+    attrs: &pango::AttrList,
+    attribute: impl Into<pango::Attribute>,
+    range: std::ops::Range<usize>,
+) {
+    let mut attribute = attribute.into();
+    attribute.set_start_index(range.start as u32);
+    attribute.set_end_index(range.end as u32);
+    attrs.insert(attribute);
+}
+
+fn reserve(attrs: &pango::AttrList, range: std::ops::Range<usize>, width: i32) {
+    let ink = pango::Rectangle::new(0, 0, 0, 0);
+    let logical = pango::Rectangle::new(
+        0,
+        -15 * pango::SCALE,
+        width * pango::SCALE,
+        20 * pango::SCALE,
+    );
+    span(attrs, pango::AttrShape::new(&ink, &logical), range.clone());
+    span(attrs, pango::AttrInt::new_foreground_alpha(0), range);
+}
+
+fn decorate_shortcuts(layout: &pango::Layout, text: &str, attrs: &pango::AttrList) {
+    let emoji_font =
+        pango::FontDescription::from_string("Noto Color Emoji, Segoe UI Emoji, emoji 12");
+    for glyph in ["🎙", "🤖", "📷"] {
+        for (start, _) in text.match_indices(glyph) {
+            span(
+                attrs,
+                pango::AttrFontDesc::new(&emoji_font),
+                start..start + glyph.len(),
+            );
+        }
+    }
+    for run in shortcut_runs(text) {
+        span(
+            attrs,
+            pango::AttrFontDesc::new(&pango::FontDescription::from_string("JetBrains Mono 10")),
+            run.icon.start..run.end,
+        );
+        // Whole shortcut groups wrap together; individual keycaps never split.
+        span(
+            attrs,
+            pango::AttrInt::new_allow_breaks(false),
+            run.icon.start..run.end,
+        );
+        // Emoji stay ordinary shaped text, shared with the Windows tooltip.
+        span(attrs, pango::AttrFontDesc::new(&emoji_font), run.icon);
+        for key in run.keys {
+            reserve(attrs, key.start..key.start + 1, 6);
+            reserve(attrs, key.end - 1..key.end, 6);
+        }
+    }
+    layout.set_attributes(Some(attrs));
+}
+
+fn paint_keycaps(cr: &cairo::Context, layout: &pango::Layout, text: &str) {
+    let scale = f64::from(pango::SCALE);
+    for run in shortcut_runs(text) {
+        for key in run.keys {
+            let start = layout.index_to_pos(key.start as i32);
+            let end = layout.index_to_pos((key.end - 1) as i32);
+            let x = f64::from(start.x()) / scale + 1.0;
+            let y = f64::from(start.y()) / scale;
+            let width = f64::from(end.x() + end.width() - start.x()) / scale - 2.0;
+            let height = f64::from(start.height()) / scale;
+            cr.set_source_rgb(0.11, 0.125, 0.145);
+            rounded_rect(cr, x, y + 0.5, width, height - 1.0, 3.5);
+            let _ = cr.fill_preserve();
+            cr.set_source_rgb(0.28, 0.31, 0.35);
+            cr.set_line_width(0.8);
+            let _ = cr.stroke();
+        }
+    }
 }
 
 fn rounded_rect(cr: &cairo::Context, x: f64, y: f64, width: f64, height: f64, radius: f64) {
@@ -211,6 +363,63 @@ fn rounded_rect(cr: &cairo::Context, x: f64, y: f64, width: f64, height: f64, ra
 #[cfg(test)]
 mod localization_tests {
     use super::*;
+    #[test]
+    fn only_shortcut_keycaps_receive_decorations() {
+        assert!(shortcut_runs("File [Meta][Ctrl][.] — обычный текст").is_empty());
+        let text = crate::shortcuts::summary(
+            &std::collections::BTreeMap::from([("delivery".to_owned(), "Meta+Ctrl+.".to_owned())]),
+            Locale::En,
+        );
+        let runs = shortcut_runs(&text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            &text[runs[0].icon.clone()],
+            crate::shortcuts::action_icon("delivery")
+        );
+        let labels: Vec<_> = runs[0].keys.iter().map(|key| &text[key.clone()]).collect();
+        assert_eq!(labels, ["[Meta]", "[Ctrl]", "[.]"]);
+    }
+
+    #[test]
+    fn shortcut_icons_render_without_missing_glyphs_or_clipping() {
+        let bindings = crate::shortcuts::ACTIONS
+            .iter()
+            .map(|(id, _)| (id.to_string(), "Meta+Ctrl+Shift+Z".to_owned()))
+            .collect();
+        let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 1, 1).unwrap();
+        let cr = cairo::Context::new(&surface).unwrap();
+        for locale in [Locale::En, Locale::Ar] {
+            let shortcuts = crate::shortcuts::summary(&bindings, locale);
+            let plan = plan_with_shortcuts(
+                OverlayPrimary::Recording,
+                None,
+                &[0.5; 10],
+                RecordingIndicators::default(),
+                locale,
+                &shortcuts,
+                true,
+            )
+            .unwrap();
+            let layout = build_layout(&cr, &plan.text, locale, plan.width as i32 - 44);
+            assert_eq!(layout.unknown_glyphs_count(), 0);
+            for run in shortcut_runs(&plan.text) {
+                for key in run.keys {
+                    let start = layout.index_to_pos(key.start as i32);
+                    let end = layout.index_to_pos((key.end - 1) as i32);
+                    assert_eq!(start.y(), end.y(), "keycap split across lines");
+                    assert!(
+                        start.x() >= 0 && end.x() + end.width() <= layout.width(),
+                        "keycap outside tooltip"
+                    );
+                }
+            }
+            assert!(
+                layout.pixel_size().1 + 26 <= plan.height as i32,
+                "shortcut rows clipped"
+            );
+        }
+    }
+
     #[test]
     fn arabic_font_and_bidi_render_without_missing_glyphs() {
         let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 1, 1).unwrap();

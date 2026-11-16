@@ -23,9 +23,10 @@ AutoHotkey shell with a Rust Linux shell.
   shows the same fallback/restored overlay notices as Windows.
   Linux device labels include the ALSA PCM name so duplicate hardware/plugin
   entries remain distinguishable.
-- **OpenWhispr-style paste helper.** `resources/linux-fast-paste.c` is adapted
-  from OpenWhispr and supports terminal-aware paste, Shift+Insert, XTest,
-  optional uinput, and optional RemoteDesktop portal paste.
+- **Portal-only input.** The local reader controller owns a reusable XDG
+  RemoteDesktop EIS broker for typing, paste/copy shortcuts and read-along
+  keys/clicks. The OpenWhispr-derived helper retains read-only app/selection
+  observation and portal shortcuts; it cannot inject through XTest or uinput.
 
 ## Installation
 
@@ -44,22 +45,11 @@ scripts/package-linux-release.sh fedora  # or arch
 Cargo build outputs are for isolated tests only. See the installation guide for
 DNF/Pacman installation; do not launch the desktop app from a build directory.
 
-The paste helper build is best-effort. If `libxtst-dev` / `libX11` headers are
-not installed, Simple STT still works but automatic paste falls back to tools
-such as `wtype`, `ydotool`, or `xdotool`.
-
-Useful packages on common distros:
-
-```bash
-# Debian/Ubuntu
-sudo apt install libasound2-dev libx11-dev libxtst-dev wl-clipboard wtype
-
-# Fedora
-sudo dnf install alsa-lib-devel libX11-devel libXtst-devel wl-clipboard wtype
-
-# Arch
-sudo pacman -S alsa-lib libx11 libxtst wl-clipboard wtype
-```
+The optional read-only app/selection helper needs X11, GIO and AT-SPI
+headers. Clipboard transport uses wl-clipboard on Wayland. Automatic input
+requires a RemoteDesktop portal with ConnectToEIS; Unicode typing additionally
+requires the compositor's EIS text capability. If unavailable, choose a paste
+action or Clipboard rather than an alternative input backend.
 
 ## Runtime layout
 
@@ -153,39 +143,40 @@ hold-to-record are intentionally not required for the Linux MVP.
 
 ## Paste behavior
 
-Settings offers `auto`, `native`, `wtype`, `ydotool`, `xdotool`, and
-`clipboard_only`. Automatic mode selects a tool that matches the current
-Wayland or X11 session. Type delivery honors the same paced-typing and WPM
-settings as Windows. `wl-clipboard` supplies clipboard data but does not inject
-keys; `wtype` targets Wayland compositors supporting virtual-keyboard,
-`xdotool` targets X11, and `ydotool` supports both when `ydotoold` is running.
-Automatic prefers Native portal paste on KDE Wayland, ydotool on GNOME
-Wayland, wtype on wlroots desktops, and xdotool on X11. KDE may request portal
-approval once; its persistent restore token prevents a prompt per transcript.
-When Native fast paste is selected, an approved persistent RemoteDesktop
-portal restore token is stored in the instance state directory and reused, so
-KDE can restore the permission without prompting on every paste.
+Settings offers actions: Type, Smart Paste, Ctrl+V, Ctrl+Shift+V, Shift+Insert
+and Clipboard. Legacy backend names in JSON are accepted and normalized to
+`auto`; the delivery cycle deduplicates by action. All injected Linux input
+uses the local reader controller's XDG RemoteDesktop EIS broker. Hotkey
+registration, screenshot capture, clipboard transport and read-only selection
+access remain separate operations.
 
-Delivery has a current mode and a user-selected cycle list. Smart Paste uses
-Shift+Insert in regular applications and Ctrl+Shift+V in recognized terminals;
-the individual shortcuts remain available under Advanced paste shortcuts.
-App overrides can replace delivery for a particular application with Smart Paste,
-Type, Clipboard only, or an explicit paste shortcut. Settings can capture the
-focused application after a three-second switch window, with manual ID entry as
-a fallback for apps that do not expose their identity.
-The default cycle contains Automatic + Smart Paste and Automatic + simulated typing. The
-searchable picker treats each automation-tool and delivery-mode pair as one
-choice. Selecting a row switches temporarily; its separate Cycle checkbox
-controls whether the portal shortcut includes it. This allows cycling across
-tools as well as paste, typing, terminal paste, and clipboard-only delivery.
+The compositor grants keyboard control once and may restore it using the
+private rotating restore token. Pointer control is requested only for a click
+action. Revoked grants can require consent again. A denied or unsupported
+portal never switches to another injector. Remote HTTP inference endpoints
+cannot access the local input broker.
 
-With **Keep clipboard clean** enabled, Linux first tries AT-SPI insertion without touching the clipboard. On Wayland compositors supporting `ext-data-control-v1`, the paste fallback saves every clipboard format in memory, publishes dictation, and sends the configured paste shortcut. After a complete text transfer and a 250 ms quiet period it restores the original formats. Shift+Insert also preserves the primary selection. New copies cancel restoration so they remain current. No read within eight seconds, a failed backup, or a failed shortcut leaves dictation available for Retry. Clipboard-only mode still copies normally.
+Type sends Unicode through EIS text, honors pacing, stops when canceled and
+checks foreground-window identity on KDE. It does not replay uncertain partial
+text. The compositor's text-input support determines compatibility with each
+application. Page-turn shortcuts use physical key events, with modifiers joined
+by `+`, for example `Ctrl+PageDown`. Portal input always acts on the foreground
+window; read-along waits for its selected window to return instead of changing
+focus. Clicks use compositor logical input regions and fail when coordinates
+cannot be safely mapped.
 
-The transfer confirms that a client read the text; it cannot universally confirm editor insertion. The isolated test harness verifies actual GTK and Kitty insertion, including Unicode, as well as full-format restoration. Generic X11 preservation needs a supported AT-SPI target; otherwise it keeps the original clipboard and reports that delivery is unavailable.
+Smart Paste sends Ctrl+V in regular applications and Ctrl+Shift+V in recognized
+terminals. The current action and cycle list are independent; application
+overrides can choose another action.
 
-With preservation disabled, the existing paste path is retained. The transcript remains on the clipboard for manual paste; the shell does not
-restore old contents on a timer. Delivery is serialized and cancellation is
-checked before input.
+With **Keep clipboard clean** enabled, Wayland clipboard transactions save all
+formats in memory, publish dictation privately, and send the selected portal
+shortcut. They restore the original formats after a completed text transfer and
+a quiet period; Shift+Insert also preserves PRIMARY. New copies cancel restore.
+Failed backup or unconfirmed transfer keeps the original clipboard and leaves
+Retry available. A transfer proves a client read the bytes, not universal editor
+insertion. X11 preservation remains unavailable. Clipboard mode explicitly
+copies, and preservation-disabled paste retains the dictation for manual paste.
 
 ## System tray
 
@@ -194,13 +185,8 @@ Left-click opens Settings. The context menu can start or stop recording, open
 Settings, unload the speech model, or close Simple STT. Closing shuts down the
 capture service cleanly, so systemd's `Restart=on-failure` does not reopen it.
 
-Paste order when clipboard preservation is disabled:
-
-1. `resources/bin/linux-fast-paste --portal` on Wayland when available.
-2. `linux-fast-paste --uinput` fallback when available.
-3. `wtype`, `ydotool`, or `xdotool` fallback.
-4. If automatic paste fails, the transcript remains in the clipboard for manual
-   paste.
+With clipboard preservation disabled, publish the text and send the configured
+portal shortcut. A failed shortcut leaves the text available for manual paste.
 
 For terminals, use:
 

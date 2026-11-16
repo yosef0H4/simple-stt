@@ -81,9 +81,9 @@ const { chromium } = require("playwright");
       /script-src 'self'/,
     );
     await page.locator('[data-setting-path="general.enabled"] input').waitFor();
-    await page.locator('nav button[data-page="audio"]').click();
+    await page.locator('nav button[data-page="models"]').click();
     await page
-      .locator('[data-setting-path="speech.selection_mode"] select')
+      .locator('#stt-mode')
       .waitFor();
     assert.deepEqual(errors, [], "compiled UI must run under real Rust CSP");
     fs.writeFileSync(path.join(temp, "config.json"), "{invalid");

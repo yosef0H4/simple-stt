@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Installed-package smoke check; no microphone, desktop, or clipboard access."""
-import ctypes
 import json
 import os
 from pathlib import Path
@@ -9,6 +8,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import wave
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError
@@ -19,24 +19,33 @@ def main():
     assert os.geteuid() != 0, 'Run the installed smoke as an ordinary user'
     assert not os.access(root, os.W_OK), 'Package directory must be root-owned'
     names = ['simple-stt-linux', 'simple-stt-capture', 'simple-stt-infer',
-             'simple-stt-ctl', 'simple-stt-settings', 'linux-fast-paste']
+             'simple-stt-ctl', 'simple-stt-settings', 'linux-fast-paste',
+             'readerd', 'readerctl', 'reader-tts', 'reader-ocr', 'reader-hud']
     for name in names:
         executable = root / name
         assert executable.is_file() and os.access(executable, os.X_OK), name
         assert not os.access(executable, os.W_OK), name
         result = subprocess.run(['ldd', str(executable)], capture_output=True, text=True, check=True)
         assert 'not found' not in result.stdout, result.stdout
-    runtime = root / 'runtime/bin/libparakeet.so'
-    library = ctypes.CDLL(str(runtime))
-    library.parakeet_capi_abi_version.restype = ctypes.c_int
-    assert library.parakeet_capi_abi_version() == 6
+    assert not (root / 'runtime').exists(), 'base package must contain no bundled inference runtime'
+    assert (root / 'downloads.json').is_file()
+    assert (root / 'lid.176.ftz').stat().st_size == 938013
+    for name in ('fixtures/parakeet-smoke.wav', 'fixtures/asr/arabic-sa.wav'):
+        with wave.open(str(root / name), 'rb') as audio:
+            assert audio.getnframes() > 0 and audio.getnchannels() == 1, name
+            assert audio.getframerate() == 16000, name
     symbols = subprocess.check_output(['nm', '-D', str(root / 'linux-fast-paste')], text=True)
-    for feature in ['atspi_', 'g_dbus_', 'XTestFakeKeyEvent']:
+    for feature in ['atspi_', 'g_dbus_']:
         assert feature in symbols, f'Paste helper missing {feature}'
+    assert "XTestFakeKeyEvent" not in symbols, "Legacy XTest injection must not ship"
     for installed in ['/usr/bin/simple-stt', '/usr/lib/systemd/user/simple-stt-linux.service',
                       '/usr/share/applications/io.github.yosef0H4.simple_stt.desktop',
-                      '/usr/share/applications/simple-stt-settings.desktop']:
+                      '/usr/share/applications/simple-stt-settings.desktop',
+                      '/usr/share/applications/simple-stt-readerd.desktop']:
         assert Path(installed).is_file(), installed
+    kwin_grant = Path('/usr/share/applications/simple-stt-readerd.desktop').read_text()
+    assert 'Exec=/usr/lib/simple-stt/readerd' in kwin_grant
+    assert 'X-KDE-DBUS-Restricted-Interfaces=org.kde.KWin.ScreenShot2' in kwin_grant
     assert (root / 'linux-installation').is_file()
     with tempfile.TemporaryDirectory(prefix='simple-stt-package-') as temporary:
         home = Path(temporary)
@@ -65,25 +74,17 @@ def main():
             with urlopen(request, timeout=20) as response:
                 state = json.load(response)
             assert state['config_path'] == str(home / 'config/simple-stt/instances/installed/config.json')
-            assert state['resolved_runtime_dir'] == str(root / 'runtime')
+            assert state['config']['speech']['runtime_dir'] == ''
             assert state['resolved_model_dir'] == str(home / 'data/simple-stt/models')
+            assert not state['runtime_ready']
             assert not state['service_online']
+            assert state['linux_automation']['recommended'] == 'portal', 'installed input must use the portal'
+            assert (root / 'linux-fast-paste').is_file(), 'read-only desktop helper missing'
             assert state['config']['speech']['single_model_filename'] is None
-            assert state['model_setup']['show'] and not state['model_setup']['pending']
-            for key in ['english_file', 'arabic_file']:
-                offered = next(model for model in state['models'] if model['file'] == state['model_setup'][key])
-                assert offered['recommended'] and not offered['installed']
-            setup = Request(origin + '/api/model-setup',
-                            data=json.dumps({'english': False, 'arabic': False}).encode(),
-                            headers={'Origin': origin, 'X-Simple-STT-Token': token,
-                                     'Content-Type': 'application/json'})
-            with urlopen(setup, timeout=10) as response:
-                assert json.load(response)['ok']
-            with urlopen(request, timeout=20) as response:
-                dismissed = json.load(response)
-            assert not dismissed['model_setup']['show'] and not dismissed['model_setup']['pending']
-            assert dismissed['config']['speech']['selection_mode'] == 'single_model'
-            assert dismissed['config']['speech']['single_model_filename'] is None
+            assert 'model_setup' not in state
+            assert state['config']['speech']['selection_mode']=='follow_keyboard'
+            assert state['config']['speech']['language_models']=={}
+            assert state['config']['speech']['language_runtimes']=={}
             (home / 'data/simple-stt/models').mkdir(parents=True, exist_ok=True)
             (home / 'data/simple-stt/models/write-test').write_text('user-writable')
             # A stopped portal shell must return an error, never report success

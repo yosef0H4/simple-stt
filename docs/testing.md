@@ -12,6 +12,7 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --all-targets
 cargo build --bin simple-stt-settings
 python scripts/test-settings-single-instance.py
+python scripts/test-settings-upgrade.py
 python scripts/test-settings-selection-api.py
 python scripts/test-cleanup-settings-e2e.py
 python scripts/verify-static.py
@@ -194,10 +195,7 @@ state-file reconnect after simulated service restart
 
 ## Browser Settings coverage
 
-`node scripts/test-settings-model-setup.cjs` checks the first-run English/Arabic
-checkboxes, explicit selected-only downloads, Skip/reopen persistence, failure
-retention, offline behavior, and localized layout screenshots. The selection API
-checks the curated recommendations and authenticated on-disk dismissal marker.
+`node scripts/test-settings-modules.cjs` checks the empty first install, keyboard routing default, compatible installed choices, download queue and filters, and a narrow Arabic layout using an isolated fixture.
 
 `node scripts/test-settings-shortcut-portal.cjs` checks the visible English and
 Arabic shortcut setup action, pending/error behavior, and 360/1280px screenshots
@@ -216,7 +214,7 @@ held throughout the server lifetime; its persistent lock file is intentionally
 not deleted. Closing a browser tab alone does not close the server: use the
 Settings Close action to shut it down for all tabs.
 
-Browser automation covers all six pages, including AI Cleanup, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, provider model search/manual IDs, credential-state controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
+Browser automation covers Settings pages, including AI Cleanup, narrow and wide layouts, accessible labels, explicit Save, Reset/Import previews, security headers, offline editing, device/model controls, provider model search/manual IDs, credential-state controls, and download progress. Release validation additionally starts the capture service, downloads a real catalog model through the UI, waits for completion, selects and saves it, and runs the real smoke-audio model test. The routine CI download uses a deterministic local fixture server; the release pass uses the production catalog and model URL.
 
 Provider tests use deterministic loopback fixtures and must never use a developer's saved API key. A real provider test is manual, requires a freshly issued credential supplied through the OS vault or `SIMPLE_STT_AI_API_KEY`, and must verify that a failed or timed-out request delivers the original transcript. Screenshot testing must also verify the visible capture notice, denylist behavior, active-window targeting, and that no image or history survives capture-process exit. Wayland's compositor-owned picker remains a manual desktop check.
 
@@ -375,7 +373,7 @@ RAM is separate. Background shell/capture code is outside this UI overhaul.
 
 ### Retry and clean clipboard delivery
 
-Run `python scripts/test-linux-paste.py` after building `simple-stt-linux` and running `python scripts/build-linux-fast-paste.py`. The wrapper invokes `test-linux-clean-clipboard.py` under an isolated X server and accessibility bus, never the user's desktop; the helper must not be run standalone. In addition to delayed paste consumption, these check real Unicode direct insertion while preserving a custom binary clipboard format; large X11 INCR transfers and history-exclusion hints; yielding to user copies; and the real retry CLI against an authenticated capture fixture. Retry must use exact cached final text in the current editor, never retransform it, never start recording/inference, never persist the cache, and leave ongoing work alone when no cache exists. Option-off must leave an ordinary copy with no exclusion hint.
+Historical X11 direct-insertion coverage (retired with portal-only injection): `scripts/test-linux-paste.py`. Use `test-portal-input-e2e.py` for current input. The original suite ran after building `simple-stt-linux` and running `python scripts/build-linux-fast-paste.py`. The wrapper invokes `test-linux-clean-clipboard.py` under an isolated X server and accessibility bus, never the user's desktop; the helper must not be run standalone. In addition to delayed paste consumption, these check real Unicode direct insertion while preserving a custom binary clipboard format; large X11 INCR transfers and history-exclusion hints; yielding to user copies; and the real retry CLI against an authenticated capture fixture. Retry must use exact cached final text in the current editor, never retransform it, never start recording/inference, never persist the cache, and leave ongoing work alone when no cache exists. Option-off must leave an ordinary copy with no exclusion hint.
 
 The retry fixture holds Meta/Ctrl on that private display and requires the CLI to wait, then insert exactly once after release. It asserts progress, submission, empty-cache and failure notices. Rust tests also cover arming on press, quick release, duplicate press/release events, and accepting the next deliberate retry. The wrapper removes inherited Wayland/accessibility connections and uses a private runtime directory and D-Bus session. Render the English/Arabic retry notices with `overlay-e2e --offscreen`; live KDE portal timing still requires a user desktop pass.
 
@@ -428,3 +426,90 @@ insertion is tested separately by the private X11 `test-linux-paste.py` suite.
 Run `node scripts/test-settings-clipboard-notices.cjs` with Playwright available. It checks the default-off flag, Linux visibility, Windows hiding, English/Arabic search, and Save/reopen persistence. Screenshots are retained under `artifacts/linux-release/clipboard-buffer-notices/`.
 
 The private Wayland cache suite also checks ordered buffering/ready phase events; Rust tests check bounded event retention and fast-transcript delivery waiting for shortcut release. `overlay-e2e --offscreen` renders the buffer notices in English and Arabic without opening a host window.
+
+### Shortcut reminders
+
+`node scripts/test-settings-shortcut-reminders.cjs` checks default-on reminders,
+draft/Save/reopen behavior, independent Show shortcuts, shortcut recording, the
+KDE-assigned shortcut row, Arabic search and narrow/wide screenshots. The
+production offscreen renderer (`target/debug/overlay-e2e --offscreen`) also
+captures reminders during recording, transcription, typing, paste and warnings
+in both languages, plus disabled reminders and manual display. Neither test
+opens a desktop window, captures audio or touches the host clipboard.
+
+`python scripts/test-shortcut-reminders.py` exercises the real Linux and control
+CLIs and Settings HTTP action against an authenticated loopback capture fixture.
+It asserts that showing shortcuts sends no recording, cancellation or delivery
+commands. Native Windows smoke also covers shortcut registration and commands.
+
+Retry delivery regressions hold the modifiers beyond the old two-second notice
+timeout, require delivery registration before release, require each progress
+update to name a registered session, and require completion after delivery.
+Rust checks that registration rejects active/newer work. Windows native smoke
+also exercises BeginDelivery and waiting/typing progress commands.
+
+Keycap rendering checks cover standard emoji glyph availability, punctuation
+and plus/bracket keys, exclusion of ordinary bracketed notices, intact keycaps
+when wrapping, and bounding boxes in both English and Arabic. Offscreen renders
+also capture the four assigned shortcut example at native tooltip dimensions.
+
+## Integrated reading and optional assets
+
+`cargo test --workspace --all-targets` includes the reader contracts, framed worker protocol, generation cancellation, provider/OCR validation and downloader fixture-server tests. The downloader tests exercise successful atomic activation, checksum rejection, cancellation and archive-path validation without public network or desktop access.
+
+`node scripts/test-settings-reading.cjs` runs headless Playwright against an isolated HTTP fixture. It covers download/cancel controls, reader draft persistence across page changes, Save/reopen, unchanged dictation models and English/Arabic layouts at 360/768/1280px in both themes. Screenshots go to ignored `artifacts/combined-app/settings/`.
+
+`python scripts/test-optional-assets-api.py` exercises the actual authenticated Settings endpoints in a temporary profile. `python scripts/test-reader-workers.py` communicates only through worker stdin/stdout: speech PCM is captured in memory without playback, and OCR uses committed fixture images. It does not use the microphone, clipboard, portals or host input. Optional real speech checks require explicit model/runtime arguments; no assets are installed into the host profile by these tests.
+
+`node scripts/test-settings-auto-selection.cjs` verifies immediate selection updates after a completed install, preservation of unsaved choices, and a Save racing an install. Merely refreshing the catalog does not assign anything.
+
+`node scripts/test-settings-paddle-catalog.cjs` checks the full supported OCR catalog, shared runtime gating/names, pagination, language/version searches, installed-only selection and the preserved Arabic/English recommendation. Set `SETTINGS_VISUAL_REVIEW=1` for English/Arabic screenshots in both themes at 360/768/1280px. Long language lists show three names and a count; the help control exposes the complete supported list.
+
+`python scripts/test-paddle-catalog.py --runtime-cache PATH_TO_VERIFIED_TEST_ASSETS` downloads every supported Paddle model into a private profile and runs each through the real GPU OCR worker. The optional cache must contain genuine verified NVIDIA runtime downloads from another isolated test profile; it does not fabricate receipts. Images are rendered offscreen with Pango, including script-specific text and a numeral round trip. No host clipboard, screenshot portal, input or audio device is used. The harness verifies GPU allocation for each worker and that model changes never leave multiple OCR workers resident. It requires about 1 GB of model/detector downloads and suitable local fonts. Results are written under ignored `artifacts/paddle-catalog/profile`; `--reuse` repeats execution without redownloading already verified assets.
+
+`python scripts/test-nvidia-fresh-install.py --profile artifacts/runtime-download-fix/fresh-gpu-profile` downloads the pinned NVIDIA runtime dependencies and Supertonic/Paddle models through the real Settings API into an empty isolated profile, verifies automatic assignments, then runs English/Arabic WAV rendering and OCR on the GPU. It checks that native libraries came from those downloads. Allow about 1.8 GB of downloads; no host clipboard, microphone or audio output is used. `python scripts/test-stt-fresh-download.py` independently downloads a Vulkan runtime and recognition model and transcribes the public WAV in a private null audio session, checking worker reuse. Both support `--bin-dir` for packaged binaries and `--reuse` for a repeat run; a reused run is not fresh-install evidence.
+
+`python scripts/test-reader-service.py` exercises the real media CLI and a private reader controller; it requires built binaries and local model/runtime assets. `python scripts/test-reader-live.py` additionally requires PipeWire, WirePlumber, a private D-Bus session and GPU assets, and uses a private null sink rather than host playback. Consult each script's `--help` for asset paths and prerequisites. `python scripts/test-linux-selection-copy.py` uses a private Xvfb and D-Bus session to exercise selection reads; its source lists its desktop test dependencies and required built helper. These harnesses do not replace a manual installed-desktop pass. Native Windows runtime checks require a Windows host; cross-compilation alone does not validate them.
+
+### Speech preparation and shared Abort
+
+Run `python3 scripts/test-tts-pronunciation.py` for file-only GPU pronunciation probes when the documented local models are available. It never plays audio; recognizer output is diagnostic, especially for Arabic. The private live-reader harness also exercises capture/control Cancel against active reading and verifies Cancel does not start an absent reader. Rust coverage includes one shared tray Abort action and rejection of late OCR clipboard commits.
+
+Settings single-instance reuse is scoped to the executable build, not just the installation. `python scripts/test-settings-upgrade.py` atomically replaces an isolated running executable, verifies that the new build opens a new server, that repeated launches reuse that new server, and that closing it preserves the older page and saved configuration. An older open page may contain unsaved work and is never killed automatically by an upgrade.
+
+## RemoteDesktop default delivery
+
+On the KDE Wayland desktop, after compiling `simple-stt-linux`, `simple-stt-ctl` and the native helper, run `/usr/bin/python3 scripts/test-linux-portal-input.py`. It creates a temporary editor and isolated settings, and may show the keyboard-control permission dialog. It exercises real default Unicode paste twice, including portal restoration; cached transcription is a fixture. Logs stay in its printed temporary artifacts directory.
+
+Add `--typing` to the same live harness to exercise selectable Type mode instead. This checks exact repeated multilingual insertion and compares clipboard formats and bytes before/after. Current Type uses the shared EIS text broker. Historical AT-SPI results do not validate this path; use the private portal-input E2E above for unattended checks.
+
+Read-along regression desktop pass: `/usr/bin/python3 scripts/test-read-along-desktop.py --overlap --focus-change --transient-empty --unchanged-once`, then repeat with `--no-prefetch`. The target window is created before a competing window, focus is moved away and back, the first Space is ignored, and the next page initially renders blank. Require exact bounded key behavior, no Space in the competitor, and actual second-page OCR/audio. A private test permission token is retained in the user runtime directory to exercise restoration across fresh test processes.
+
+For a rendered dialogue box, run the desktop harness with `--game-dialogue --fullscreen` using Python with GTK3, Cairo and PyOpenGL installed. Its text is uploaded as an OpenGL texture and must survive window capture/OCR/page turning. It records the GL renderer. No commercial game assets are used.
+
+For actual OpenAI interoperability, run `python scripts/test-openai-server-e2e.py` in an environment with the official `openai` SDK and Cairo. It uses installed local model assets with private headless host/client profiles, never OpenAI cloud. It checks SDK authentication/discovery, real WAV TTS, image OCR through chat completions and Responses, multipart STT, warm reuse, app-client TTS/OCR/STT with local fallback disabled, disconnected STT fallback, idle process exit and reload. Server/client logs stay in its printed private temporary directory.
+
+### Portal-only Linux input and privacy regression
+
+```sh
+python scripts/test-portal-input-e2e.py
+python scripts/test-openai-server-e2e.py
+python scripts/test-read-along-desktop.py --overlap --focus-change --transient-empty --unchanged-once
+python scripts/test-read-along-desktop.py --overlap --focus-change --transient-empty --unchanged-once --no-prefetch
+python scripts/test-read-along-desktop.py --game-dialogue --fullscreen
+```
+
+The portal-input harness provisions a private KWin compositor and D-Bus session;
+it relays the private compositor's EIS FD and does not change user permissions.
+The host read-along harness requires an already authorized test grant. The SDK
+harness requires Python `openai` and verifies headless local server/client
+interoperability, lazy worker reuse/unload, fallback, request deadlines,
+temporary-file cleanup and content-free default logs. It makes no cloud calls.
+The game fixture is an actual OpenGL-rendered fullscreen dialogue surface; it
+does not establish compatibility with a specific commercial game or Proton.
+
+### Repeat saved reading area
+
+`python scripts/test-read-along-desktop.py --repeat-region` selects a region once in an isolated test profile, performs real OCR and speech, changes the dialogue manually, and repeats the saved area. It asserts new OCR output and audio frames without a second selection or a page-advance key. Reader unit tests cover stale completion protection; root tests cover choosing the newest reader or dictation action without transferring payloads.
+
+`python scripts/test-read-along-desktop.py --hud-progress` verifies that real playback retains current text while independent next-page capture/OCR/TTS progress is available. HUD formatter tests cover stale activity metadata and suppressing shortcut hints only for read-along. `overlay-e2e --offscreen` includes English and Arabic current-sentence/next-page examples.

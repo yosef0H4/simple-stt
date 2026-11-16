@@ -27,6 +27,7 @@
       <dpiAware>true</dpiAware>
       <ws2:dpiAwareness>PerMonitorV2</ws2:dpiAwareness>
       <ws2:longPathAware>true</ws2:longPathAware>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
     </v3:windowsSettings>
   </v3:application>
   <v3:trustInfo>

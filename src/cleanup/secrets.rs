@@ -4,6 +4,7 @@ use std::process::{Command, Stdio};
 
 const SERVICE: &str = "simple-stt";
 const COMPATIBLE_KEY_ACCOUNT: &str = "cleanup-compatible-api-key";
+const STT_KEY_ACCOUNT: &str = "stt-api-key";
 const CHATGPT_ACCOUNT: &str = "cleanup-chatgpt-oauth";
 
 pub fn compatible_api_key() -> Result<Option<String>> {
@@ -22,6 +23,26 @@ pub fn set_compatible_api_key(value: &str) -> Result<()> {
 
 pub fn delete_compatible_api_key() -> Result<()> {
     delete(COMPATIBLE_KEY_ACCOUNT)
+}
+
+/// Read the dedicated remote speech-to-text API key.
+/// `SIMPLE_STT_STT_API_KEY` overrides the desktop secret store when present.
+pub fn stt_api_key() -> Result<Option<String>> {
+    if let Ok(value) = std::env::var("SIMPLE_STT_STT_API_KEY") {
+        if !value.trim().is_empty() {
+            return Ok(Some(value));
+        }
+    }
+    get(STT_KEY_ACCOUNT)
+}
+
+pub fn set_stt_api_key(value: &str) -> Result<()> {
+    anyhow::ensure!(!value.trim().is_empty(), "STT API key must not be empty");
+    set(STT_KEY_ACCOUNT, value.trim())
+}
+
+pub fn delete_stt_api_key() -> Result<()> {
+    delete(STT_KEY_ACCOUNT)
 }
 
 pub(crate) fn chatgpt_tokens() -> Result<Option<String>> {
@@ -143,8 +164,13 @@ fn get(account: &str) -> Result<Option<String>> {
 #[cfg(target_os = "linux")]
 fn set(account: &str, secret: &str) -> Result<()> {
     use std::io::Write;
+    let label = if account == STT_KEY_ACCOUNT {
+        "Simple STT speech recognition"
+    } else {
+        "Simple STT AI cleanup"
+    };
     let mut child = Command::new("secret-tool")
-        .args(["store", "--label", "Simple STT AI cleanup", "service", SERVICE, "account", account])
+        .args(["store", "--label", label, "service", SERVICE, "account", account])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .spawn()
@@ -189,4 +215,20 @@ fn set(_account: &str, _secret: &str) -> Result<()> {
 #[cfg(not(any(windows, target_os = "linux")))]
 fn delete(_account: &str) -> Result<()> {
     anyhow::bail!("secure AI credentials are not supported on this platform")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stt_key_uses_its_own_environment_override() {
+        let previous = std::env::var_os("SIMPLE_STT_STT_API_KEY");
+        std::env::set_var("SIMPLE_STT_STT_API_KEY", "speech-only-token");
+        assert_eq!(stt_api_key().unwrap().as_deref(), Some("speech-only-token"));
+        match previous {
+            Some(value) => std::env::set_var("SIMPLE_STT_STT_API_KEY", value),
+            None => std::env::remove_var("SIMPLE_STT_STT_API_KEY"),
+        }
+    }
 }

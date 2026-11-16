@@ -9,6 +9,22 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub const CONFIG_SCHEMA_VERSION: u32 = 9;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// Cross-process lock for read-modify-write configuration operations.
+pub fn lock_config() -> Result<fs::File> {
+    let path = AppConfig::config_path().with_extension("lock");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.lock().context("locking configuration")?;
+    Ok(file)
+}
+
 pub fn unique_atomic_temp_path(path: &Path) -> PathBuf {
     let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let name = path
@@ -139,6 +155,15 @@ pub enum SpeechLanguage {
     #[default]
     English,
     Arabic,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SpeechProvider {
+    #[default]
+    Local,
+    #[serde(rename = "remote_openai_compatible")]
+    RemoteOpenAiCompatible,
 }
 
 impl SpeechLanguage {
@@ -289,6 +314,8 @@ pub struct GeneralConfig {
     pub cancel_hotkey: String,
     pub toggle_cleanup_hotkey: String,
     pub retry_delivery_hotkey: String,
+    pub show_shortcuts_hotkey: String,
+    pub shortcut_reminders: bool,
     pub linux_hotkey_backend: LinuxHotkeyBackend,
     pub capslock_behavior: CapsLockBehavior,
     pub start_at_login: bool,
@@ -300,18 +327,31 @@ pub struct GeneralConfig {
 pub struct AudioConfig {
     pub preferred_device_id: String,
     pub gain: f32,
+    pub stop_grace_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SpeechConfig {
+    pub provider: SpeechProvider,
+    pub remote_openai_compatible: RemoteSttConfig,
     pub inference_device: InferenceDevice,
     pub runtime_dir: String,
+    pub language_devices: std::collections::BTreeMap<String, InferenceDevice>,
+    pub language_runtimes: std::collections::BTreeMap<String, Option<String>>,
     pub model_dir: String,
     pub selection_mode: ModelSelectionMode,
     pub single_model_filename: Option<String>,
     pub language_models: std::collections::BTreeMap<String, Option<String>>,
     pub idle_worker_timeout_secs: u64,
     pub worker_shutdown_grace_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoteSttConfig {
+    pub base_url: String,
+    pub model: String,
+    pub fallback_to_local: bool,
+    pub timeout_ms: u64,
 }
 
 impl SpeechConfig {
@@ -435,6 +475,13 @@ impl Default for AppConfig {
                     "CapsLock+V"
                 }
                 .to_owned(),
+                show_shortcuts_hotkey: if cfg!(target_os = "linux") {
+                    "Meta+Ctrl+H"
+                } else {
+                    "CapsLock+H"
+                }
+                .to_owned(),
+                shortcut_reminders: true,
                 linux_hotkey_backend: LinuxHotkeyBackend::Auto,
                 capslock_behavior: CapsLockBehavior::PreserveTap,
                 start_at_login: false,
@@ -444,12 +491,22 @@ impl Default for AppConfig {
             audio: AudioConfig {
                 preferred_device_id: String::new(),
                 gain: 1.0,
+                stop_grace_ms: 250,
             },
             speech: SpeechConfig {
+                provider: SpeechProvider::Local,
+                remote_openai_compatible: RemoteSttConfig {
+                    base_url: String::new(),
+                    model: String::new(),
+                    fallback_to_local: true,
+                    timeout_ms: 180_000,
+                },
                 inference_device: InferenceDevice::Auto,
-                runtime_dir: default_parakeet_runtime_dir(),
+                runtime_dir: String::new(),
+                language_devices: Default::default(),
+                language_runtimes: Default::default(),
                 model_dir: default_model_dir(),
-                selection_mode: ModelSelectionMode::SingleModel,
+                selection_mode: ModelSelectionMode::FollowKeyboard,
                 single_model_filename: None,
                 language_models: Default::default(),
                 idle_worker_timeout_secs: 180,
@@ -516,25 +573,6 @@ impl Default for AppConfig {
     }
 }
 
-fn default_parakeet_runtime_dir() -> String {
-    #[cfg(windows)]
-    {
-        r"external\parakeet-runtime\parakeet-windows-vulkan".to_owned()
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if is_linux_installation(&runtime_root()) {
-            "runtime".to_owned()
-        } else {
-            "external/parakeet-runtime/parakeet-linux-vulkan".to_owned()
-        }
-    }
-    #[cfg(all(not(windows), not(target_os = "linux")))]
-    {
-        "external/parakeet-runtime/parakeet-native".to_owned()
-    }
-}
-
 fn default_model_dir() -> String {
     #[cfg(windows)]
     {
@@ -589,6 +627,10 @@ impl AppConfig {
             CONFIG_SCHEMA_VERSION
         );
         anyhow::ensure!(
+            !self.general.show_shortcuts_hotkey.trim().is_empty(),
+            "show_shortcuts_hotkey must not be empty"
+        );
+        anyhow::ensure!(
             !self.general.retry_delivery_hotkey.trim().is_empty(),
             "retry_delivery_hotkey must not be empty"
         );
@@ -613,8 +655,12 @@ impl AppConfig {
             "audio_gain must be in (0, 10]"
         );
         anyhow::ensure!(
-            (50..=850).contains(&self.output.typing_speed_wpm),
-            "typing_speed_wpm must be in [50, 850]"
+            self.audio.stop_grace_ms <= 10_000,
+            "audio_stop_grace_ms must be in [0, 10000]"
+        );
+        anyhow::ensure!(
+            (50..=1650).contains(&self.output.typing_speed_wpm),
+            "typing_speed_wpm must be in [50, 1650]"
         );
         anyhow::ensure!(
             !self.output.enabled_delivery_modes.is_empty(),
@@ -639,9 +685,18 @@ impl AppConfig {
             "worker_shutdown_grace_ms must be in [250, 30000]"
         );
         anyhow::ensure!(
-            !self.speech.runtime_dir.trim().is_empty(),
-            "parakeet_runtime_dir must not be empty"
+            (1_000..=300_000).contains(&self.speech.remote_openai_compatible.timeout_ms),
+            "remote STT timeout_ms must be in [1000, 300000]"
         );
+        if self.speech.provider == SpeechProvider::RemoteOpenAiCompatible {
+            anyhow::ensure!(
+                !self.speech.remote_openai_compatible.model.trim().is_empty()
+                    && self.speech.remote_openai_compatible.model.len() <= 256,
+                "remote STT model must contain 1 to 256 characters"
+            );
+            validate_remote_stt_base_url(&self.speech.remote_openai_compatible.base_url)?;
+        }
+
         anyhow::ensure!(
             !self.speech.model_dir.trim().is_empty(),
             "model_dir must not be empty"
@@ -745,9 +800,7 @@ impl AppConfig {
         let parsed: serde_json::Value =
             serde_json::from_str(&raw).with_context(|| format!("parsing {}", path.display()))?;
         Self::validate_json_schema(&parsed)?;
-        let value = Self::normalize_json(&parsed);
-        value.save_to(path)?;
-        Ok(value)
+        Ok(Self::normalize_json(&parsed))
     }
 
     pub fn validate_json_schema(input: &serde_json::Value) -> Result<()> {
@@ -795,6 +848,36 @@ impl AppConfig {
                 }
             }
         }
+        if let Some(map) = input["speech"]["language_devices"].as_object() {
+            for (language, value) in map.iter().take(128) {
+                if valid_language_id(language) {
+                    if let Ok(device) = serde_json::from_value(value.clone()) {
+                        normalized
+                            .speech
+                            .language_devices
+                            .insert(language.clone(), device);
+                    }
+                }
+            }
+        }
+        if let Some(map) = input["speech"]["language_runtimes"].as_object() {
+            for (language, value) in map.iter().take(128) {
+                if valid_language_id(language)
+                    && (value.is_null()
+                        || value
+                            .as_str()
+                            .is_some_and(|v| v == "parakeet-vulkan" || v == "parakeet-cuda"))
+                {
+                    normalized
+                        .speech
+                        .language_runtimes
+                        .insert(language.clone(), value.as_str().map(str::to_owned));
+                }
+            }
+        }
+        if normalized.general.show_shortcuts_hotkey.trim().is_empty() {
+            normalized.general.show_shortcuts_hotkey = defaults.general.show_shortcuts_hotkey;
+        }
         if normalized.general.retry_delivery_hotkey.trim().is_empty() {
             normalized.general.retry_delivery_hotkey = defaults.general.retry_delivery_hotkey;
         }
@@ -813,14 +896,29 @@ impl AppConfig {
         if !(normalized.audio.gain > 0.0 && normalized.audio.gain <= 10.0) {
             normalized.audio.gain = defaults.audio.gain;
         }
-        if !(50..=850).contains(&normalized.output.typing_speed_wpm) {
+        if normalized.audio.stop_grace_ms > 10_000 {
+            normalized.audio.stop_grace_ms = defaults.audio.stop_grace_ms;
+        }
+        if !(50..=1650).contains(&normalized.output.typing_speed_wpm) {
             normalized.output.typing_speed_wpm = defaults.output.typing_speed_wpm;
         }
         normalized.output.enabled_delivery_modes.dedup();
         if normalized.output.enabled_delivery_modes.is_empty() {
             normalized.output.enabled_delivery_modes = defaults.output.enabled_delivery_modes;
         }
-        normalized.output.linux_delivery_cycle.dedup();
+        // Legacy backend values remain readable, but all desktop injection now
+        // uses the RemoteDesktop portal. Collapse old per-tool cycle duplicates.
+        normalized.output.linux_automation_backend = LinuxAutomationBackend::Auto;
+        let mut modes = Vec::new();
+        normalized.output.linux_delivery_cycle.retain_mut(|choice| {
+            choice.backend = LinuxAutomationBackend::Auto;
+            if modes.contains(&choice.mode) {
+                false
+            } else {
+                modes.push(choice.mode);
+                true
+            }
+        });
         if normalized.output.linux_delivery_cycle.is_empty() {
             normalized.output.linux_delivery_cycle = defaults.output.linux_delivery_cycle;
         }
@@ -842,11 +940,30 @@ impl AppConfig {
         if !(250..=30_000).contains(&normalized.speech.worker_shutdown_grace_ms) {
             normalized.speech.worker_shutdown_grace_ms = defaults.speech.worker_shutdown_grace_ms;
         }
-        if normalized.speech.runtime_dir.trim().is_empty() {
-            normalized.speech.runtime_dir = defaults.speech.runtime_dir;
-        }
+
         if normalized.speech.model_dir.trim().is_empty() {
             normalized.speech.model_dir = defaults.speech.model_dir;
+        }
+        if !(1_000..=300_000).contains(&normalized.speech.remote_openai_compatible.timeout_ms) {
+            normalized.speech.remote_openai_compatible.timeout_ms =
+                defaults.speech.remote_openai_compatible.timeout_ms;
+        }
+        if validate_remote_stt_base_url(&normalized.speech.remote_openai_compatible.base_url)
+            .is_err()
+        {
+            normalized.speech.remote_openai_compatible.base_url =
+                defaults.speech.remote_openai_compatible.base_url;
+        }
+        if normalized
+            .speech
+            .remote_openai_compatible
+            .model
+            .trim()
+            .is_empty()
+            || normalized.speech.remote_openai_compatible.model.len() > 256
+        {
+            normalized.speech.remote_openai_compatible.model =
+                defaults.speech.remote_openai_compatible.model;
         }
         if normalized
             .speech
@@ -995,6 +1112,31 @@ fn validate_cleanup_base_url(value: &str) -> Result<()> {
             "unencrypted cleanup endpoints are allowed only on this computer"
         );
     }
+    Ok(())
+}
+
+fn validate_remote_stt_base_url(value: &str) -> Result<()> {
+    let url = url::Url::parse(value).context("remote STT base_url must be an absolute URL")?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https"),
+        "remote STT base_url must use HTTP or HTTPS"
+    );
+    let host = url
+        .host_str()
+        .context("remote STT base_url must include a host")?;
+    if url.scheme() == "http" {
+        anyhow::ensure!(
+            matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]"),
+            "unencrypted remote STT endpoints are allowed only on this computer"
+        );
+    }
+    anyhow::ensure!(
+        url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "remote STT base_url must not contain credentials, query, or fragment"
+    );
     Ok(())
 }
 
@@ -1219,6 +1361,52 @@ fn instance_local_data_dir() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_linux_input_backends_migrate_to_one_portal_action_cycle() {
+        let config = AppConfig::normalize_json(&serde_json::json!({"schema_version":9,"output":{
+            "delivery_mode":"paste_ctrl_v", "linux_automation_backend":"ydotool",
+            "linux_delivery_cycle":[{"backend":"ydotool","mode":"type"},{"backend":"xdotool","mode":"type"},{"backend":"native","mode":"paste_ctrl_v"}]
+        }}));
+        assert_eq!(
+            config.output.linux_automation_backend,
+            LinuxAutomationBackend::Auto
+        );
+        assert_eq!(config.output.delivery_mode, TextDeliveryMode::PasteCtrlV);
+        assert_eq!(config.output.linux_delivery_cycle.len(), 2);
+        assert!(config
+            .output
+            .linux_delivery_cycle
+            .iter()
+            .all(|entry| entry.backend == LinuxAutomationBackend::Auto));
+    }
+    #[test]
+    fn stop_grace_defaults_and_values_are_normalized() {
+        use super::AppConfig;
+        use serde_json::json;
+        assert_eq!(
+            AppConfig::normalize_json(&json!({})).audio.stop_grace_ms,
+            250
+        );
+        assert_eq!(
+            AppConfig::normalize_json(&json!({"audio":{"stop_grace_secs": 3}}))
+                .audio
+                .stop_grace_ms,
+            250
+        );
+        assert_eq!(
+            AppConfig::normalize_json(&json!({"audio":{"stop_grace_ms": 250}}))
+                .audio
+                .stop_grace_ms,
+            250
+        );
+        assert_eq!(
+            AppConfig::normalize_json(&json!({"audio":{"stop_grace_ms": 10001}}))
+                .audio
+                .stop_grace_ms,
+            250
+        );
+    }
+
     use super::*;
 
     #[cfg(target_os = "linux")]
@@ -1274,10 +1462,43 @@ mod tests {
     }
 
     #[test]
+    fn finite_typing_bounds_and_instant_round_trip() {
+        for speed in [50, 450, 850, 1650] {
+            let mut config = AppConfig::default();
+            config.output.typing_speed_wpm = speed;
+            config.validate().unwrap();
+            let round_trip = AppConfig::normalize_json(&serde_json::to_value(&config).unwrap());
+            assert_eq!(round_trip.output.typing_speed_wpm, speed);
+        }
+        for speed in [0, 49, 1651] {
+            let mut config = AppConfig::default();
+            config.output.typing_speed_wpm = speed;
+            assert!(config.validate().is_err());
+            let normalized = AppConfig::normalize_json(&serde_json::to_value(&config).unwrap());
+            assert_eq!(normalized.output.typing_speed_wpm, 450);
+        }
+        let mut config = AppConfig::default();
+        config.output.paced_typing_enabled = false;
+        let round_trip = AppConfig::normalize_json(&serde_json::to_value(&config).unwrap());
+        assert!(!round_trip.output.paced_typing_enabled);
+        assert_eq!(round_trip.output.typing_speed_wpm, 450);
+    }
+
+    #[test]
     fn default_config_is_valid() {
         let config = AppConfig::default();
         config.validate().unwrap();
         assert_eq!(config.output.delivery_mode, TextDeliveryMode::SmartPaste);
+        assert_eq!(config.output.typing_speed_wpm, 450);
+        assert!(config.output.paced_typing_enabled);
+        assert_eq!(
+            config.output.linux_delivery_cycle[0].mode,
+            TextDeliveryMode::SmartPaste
+        );
+        assert_eq!(
+            config.output.linux_delivery_cycle[1].mode,
+            TextDeliveryMode::Type
+        );
         assert_eq!(
             config.general.recording_mode,
             if cfg!(target_os = "linux") {
@@ -1310,6 +1531,16 @@ mod tests {
         assert!(LogLevel::Minimal
             .tracing_filter()
             .contains("simple_stt_privacy=info"));
+    }
+
+    #[test]
+    fn loading_existing_config_does_not_rewrite_user_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let original = br#"{ "general": { "ui_language": "auto" }, "user_extra": true }"#;
+        std::fs::write(&path, original).unwrap();
+        AppConfig::load_from(&path).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), original);
     }
 
     #[test]
@@ -1467,13 +1698,14 @@ mod tests {
     }
 
     #[test]
-    fn partial_config_is_normalized_and_unknown_fields_are_removed() {
+    fn partial_config_is_normalized_and_unknown_fields_are_removed_on_save() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
         fs::write(&path, r#"{"general":{"recording_mode":"toggle","typo":true},"audio":{"gain":2.5},"obsolete":1}"#).unwrap();
         let config = AppConfig::load_from(&path).unwrap();
         assert_eq!(config.general.recording_mode, RecordingMode::Toggle);
         assert_eq!(config.audio.gain, 2.5);
+        config.save_to(&path).unwrap();
         let normalized = fs::read_to_string(path).unwrap();
         assert!(!normalized.contains("typo"));
         assert!(!normalized.contains("obsolete"));
@@ -1514,6 +1746,7 @@ mod tests {
         assert!(config.speech.language_models.is_empty());
         assert_eq!(config.speech.inference_device, InferenceDevice::Auto);
         assert_eq!(config.speech.runtime_dir, "/custom/runtime");
+        config.save_to(&path).unwrap();
         let saved: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert!(saved["speech"].get("english_model_filename").is_none());
@@ -1612,5 +1845,38 @@ mod tests {
         assert_ne!(data_a, data_b);
         assert!(config_a.to_string_lossy().contains("instances"));
         assert!(data_a.to_string_lossy().contains("instances"));
+    }
+
+    #[test]
+    fn remote_speech_route_round_trips_and_validates_independently() {
+        let mut config = AppConfig::default();
+        assert!(config.speech.remote_openai_compatible.fallback_to_local);
+        assert_eq!(config.speech.remote_openai_compatible.timeout_ms, 180_000);
+        config.speech.provider = SpeechProvider::RemoteOpenAiCompatible;
+        config.speech.remote_openai_compatible.base_url =
+            "https://speech.example.test/v1".to_owned();
+        config.speech.remote_openai_compatible.model = "whisper-1".to_owned();
+        config.validate().unwrap();
+
+        let value = serde_json::to_value(&config).unwrap();
+        assert_eq!(value["speech"]["provider"], "remote_openai_compatible");
+        let normalized = AppConfig::normalize_json(&value);
+        assert_eq!(
+            normalized.speech.provider,
+            SpeechProvider::RemoteOpenAiCompatible
+        );
+        assert_eq!(
+            normalized.speech.remote_openai_compatible.model,
+            "whisper-1"
+        );
+        assert_eq!(normalized.cleanup, AppConfig::default().cleanup);
+
+        config.speech.remote_openai_compatible.fallback_to_local = false;
+        let normalized = AppConfig::normalize_json(&serde_json::to_value(&config).unwrap());
+        assert!(!normalized.speech.remote_openai_compatible.fallback_to_local);
+
+        config.speech.remote_openai_compatible.base_url =
+            "http://speech.example.test/v1".to_owned();
+        assert!(config.validate().is_err());
     }
 }

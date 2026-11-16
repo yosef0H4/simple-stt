@@ -83,7 +83,10 @@ fn publish_event(status: &std::sync::Mutex<CacheStatus>, generation: u64, phase:
         generation,
         phase,
     });
-    eprintln!("[simple-stt-linux] clipboard buffer generation={generation} phase={phase:?} formats={} bytes={}", status.formats, status.cached_bytes);
+    eprintln!(
+        "[simple-stt-linux] clipboard buffer generation={generation} phase={phase:?} formats={} bytes={}",
+        status.formats, status.cached_bytes
+    );
 }
 
 enum CacheRequest {
@@ -296,7 +299,9 @@ pub fn serve_cache_daemon(socket_path: &Path) -> Result<()> {
                                 &cache,
                                 cache_ready,
                             ) {
-                                eprintln!("[simple-stt-linux] cached clipboard transaction failed: {error:#}");
+                                eprintln!(
+                                    "[simple-stt-linux] cached clipboard transaction failed: {error:#}"
+                                );
                             }
                         }
                         // A transaction may have changed clipboard ownership.
@@ -1025,7 +1030,7 @@ fn read_backups(
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
                 Err(error) => {
                     return Err(error)
-                        .with_context(|| format!("reading clipboard format {}", transfer.mime))
+                        .with_context(|| format!("reading clipboard format {}", transfer.mime));
                 }
             }
             index += 1;

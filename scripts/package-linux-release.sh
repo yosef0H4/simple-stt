@@ -31,6 +31,7 @@ tar -C "$root" --sort=name --mtime="@$source_date_epoch" \
   --exclude='./.git' --exclude='./target' --exclude='./external' \
   --exclude='./.codex' --exclude='./.agents' --exclude='./.claude' \
   --exclude='./.vscode' --exclude='./.idea' --exclude='./lcov.info' \
+  --exclude='./.env' \
   --exclude='__pycache__' --exclude='*.pyc' \
   --exclude='./artifacts' --exclude='./web/settings/node_modules' \
   --exclude='./resources/bin' -czf "$source_archive_tmp" .
@@ -50,16 +51,20 @@ build_one() {
   local source_volume="simple-stt-linux-$distro-work"
   printf 'Source archive: %s sha256=%s\n' \
     "$(basename "$source_archive")" "$(cat "$source_hash_file")" > "$out/BUILD-INFO-$distro.txt"
-  printf 'Runtime: Parakeet v0.5.0 x86_64 Vulkan, archive sha256=a8e7a5af6ef82088a71b0e34708c31bf6ab9f69624bcd2cff2ad7e8c11e7e494\n' >> "$out/BUILD-INFO-$distro.txt"
-  podman build --pull=always --memory=4g --cpu-period=100000 --cpu-quota=200000 --jobs=1 \
-    -f "$root/packaging/linux/$distro/Containerfile" \
-    -t "$image" "$root"
+  printf 'Runtimes: optional verified downloads; base package contains no native inference runtime\n' >> "$out/BUILD-INFO-$distro.txt"
+  if [[ "${SIMPLE_STT_REUSE_BUILDER:-0}" == 1 ]] && podman image exists "$image"; then
+    echo "Reusing local builder: $image"
+  else
+    podman build --pull=always --memory=4g --cpu-period=100000 --cpu-quota=200000 --jobs=1 \
+      -f "$root/packaging/linux/$distro/Containerfile" \
+      -t "$image" "$root"
+  fi
   podman volume inspect "$source_volume" >/dev/null 2>&1 || podman volume create "$source_volume" >/dev/null
   podman run --rm --memory=4g --cpus=2 --userns=keep-id:uid=1000,gid=1000 --user 1000:1000 \
     --security-opt label=disable \
     -v "$source_volume:/work:rw" \
     -v "$snapshot:/source:ro" -v "$out:/out:rw" \
-    "$image"
+    --entrypoint /usr/bin/bash "$image" /source/packaging/linux/container-build.sh "$distro"
 
   local package
   local smoke_command
@@ -91,14 +96,11 @@ build_one() {
   toolchain="$(podman run --rm --memory=4g --cpus=2 --userns=keep-id:uid=1000,gid=1000 --user 1000:1000 \
     --entrypoint rustc "$image" --version)"
   package_hash="$(sha256sum "$package" | cut -d' ' -f1)"
-  local runtime_closure
-  runtime_closure="$(tr '\n' ',' < "$out/parakeet-ldd-$distro.txt")"
   printf '%s\n' \
     "$distro image=$image" \
     "$distro image_id=$image_id" \
     "$distro toolchain=$toolchain" \
     "$distro package=$(basename "$package") sha256=$package_hash" \
-    "$distro parakeet-runtime-closure=$runtime_closure" \
     "$distro smoke=PASS" >> "$out/BUILD-INFO-$distro.txt"
 }
 

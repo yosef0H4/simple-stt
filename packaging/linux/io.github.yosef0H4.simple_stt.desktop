@@ -2,8 +2,8 @@
 Type=Application
 Name=Simple STT
 Name[ar]=Simple STT
-Comment=Offline speech-to-text dictation
-Comment[ar]=إملاء محلي
+Comment=Local dictation, read aloud, and screen text
+Comment[ar]=إملاء وقراءة واستخراج نص الشاشة محليًا
 TryExec=simple-stt
 Exec=simple-stt launch
 Icon=simple-stt

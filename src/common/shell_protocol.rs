@@ -33,7 +33,7 @@ pub enum ServerMessage {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum DeliveryPhase {
     Typing,
@@ -52,7 +52,16 @@ pub enum ShellCommand {
         #[serde(default)]
         target_window: Option<i64>,
     },
+    TranscribeFile {
+        path: String,
+        #[serde(default)]
+        language: Option<String>,
+        job_id: u64,
+    },
     StopRecording {
+        session_id: u64,
+    },
+    BeginDelivery {
         session_id: u64,
     },
     DeliveryProgress {
@@ -67,6 +76,8 @@ pub enum ShellCommand {
         text: String,
     },
     LastDelivery,
+    ShowShortcuts,
+    RefreshShortcuts,
     Cancel,
     PollEvents {
         after_seq: u64,
@@ -79,6 +90,9 @@ pub enum ShellCommand {
         language: crate::config::SpeechLanguage,
     },
     DownloadModel {
+        filename: String,
+    },
+    CancelModelDownload {
         filename: String,
     },
     RemoveModel {
@@ -180,6 +194,21 @@ mod tests {
         let encoded = serde_json::to_string(&event).unwrap();
         let decoded: ServiceEvent = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded, event);
+    }
+
+    #[test]
+    fn shortcut_commands_round_trip_without_changing_protocol() {
+        for command in [
+            ShellCommand::ShowShortcuts,
+            ShellCommand::RefreshShortcuts,
+            ShellCommand::BeginDelivery { session_id: 42 },
+        ] {
+            let encoded = serde_json::to_string(&command).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ShellCommand>(&encoded).unwrap(),
+                command
+            );
+        }
     }
 
     #[test]

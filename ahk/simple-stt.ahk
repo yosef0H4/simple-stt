@@ -35,16 +35,21 @@ class SimpleSttShell {
         this.supervisor := ProcessSupervisor(this.captureExe, this.ctlExe, this.config, this.logger, ObjBindMethod(this, "OnServiceRestart"))
         this.ipc := IpcClient(this.ctlExe, this.supervisor.stateFile, this.supervisor.token, ObjBindMethod(this, "HandleServiceEvent"), this.logger)
         this.supervisor.AttachIpc(this.ipc)
-        this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"), ObjBindMethod(this, "DeliveryFinished"))
+        this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"), ObjBindMethod(this, "DeliveryFinished"), ObjBindMethod(this, "DeliveryProgress"))
         this.capsController := CapsLockTapController(this.logger)
         this.hotkeys := HotkeyManager(ObjBindMethod(this, "RecordDown"), ObjBindMethod(this, "RecordUp"), this.logger, this.capsController)
         this.cancelHotkey := HotkeyManager(ObjBindMethod(this, "CancelAll"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.cleanupToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleCleanupHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
-        this.retryDeliveryHotkey := HotkeyManager(ObjBindMethod(this, "RetryLastDelivery"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.retryDeliveryHotkey := HotkeyManager(ObjBindMethod(this, "RetryLastDelivery"), ObjBindMethod(this, "RetryReleased"), this.logger, this.capsController)
+        this.showShortcutsHotkey := HotkeyManager(ObjBindMethod(this, "ShowShortcuts"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.readerHotkeys := Map()
+        for key, action in Map("reader_read_selection", "read_selection", "reader_read_region", "read_region", "reader_copy_region", "copy_region", "reader_listen_clipboard", "listen_clipboard", "reader_read_along", "read_along")
+            this.readerHotkeys[key] := HotkeyManager(ObjBindMethod(this, "NoopHotkeyUp"), ObjBindMethod(this, "ReaderAction", action), this.logger, this.capsController)
+        this.retryShortcutHeld := false
         this.lastDeliveryText := ""
+        this.lastDeliveryAt := 0
         this.tray := TrayController(this)
-        this.modeTooltipTimer := ObjBindMethod(this, "HideModeTooltip")
         this.ApplyHotkeyConfig()
         this.ApplyStartupRegistration()
         this.supervisor.Start()
@@ -58,11 +63,24 @@ class SimpleSttShell {
             this.cancelHotkey.Configure(this.config.Get("cancel_hotkey", "CapsLock+A"), true, capsMode)
             this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+D"), true, capsMode)
             this.cleanupToggleHotkey.Configure(this.config.Get("toggle_cleanup_hotkey", "None"), true, capsMode)
+            this.showShortcutsHotkey.Configure(this.config.Get("show_shortcuts_hotkey", "CapsLock+H"), true, capsMode)
             this.retryDeliveryHotkey.Configure(this.config.Get("retry_delivery_hotkey", "CapsLock+V"), true, capsMode)
+            for key, manager in this.readerHotkeys
+                manager.Configure(this.config.Get(key, "None"), true, capsMode)
         } catch Error as err {
             this.logger.Write("error", "hotkey configuration failed: " . err.Message)
             MsgBox(err.Message, UiText("error.hotkeys"), "Iconx")
         }
+    }
+
+    ReaderAction(action, *) {
+        try Run(SimpleSttQuote(this.ctlExe) . " reader-action " . action, A_ScriptDir, "Hide")
+        catch Error as err
+            this.logger.Write("error", "reading action failed: " . err.Message)
+    }
+
+    ShowShortcuts() {
+        this.ipc.CallService("show-shortcuts")
     }
 
     RecordDown() {
@@ -157,6 +175,11 @@ class SimpleSttShell {
         this.pendingStops := Map()
     }
 
+    DeliveryProgress(session, phase) {
+        if this.ipc.ready
+            this.ipc.CallService("delivery-progress --session-id " . session . " --phase " . phase)
+    }
+
     DeliveryFinished(session) {
         if this.ipc.ready
             this.ipc.CallService("delivery-complete --session-id " . session)
@@ -178,11 +201,19 @@ class SimpleSttShell {
                 this.sessions.Delete(session)
                 text := this.TransformTranscript(event["text"])
                 text := SimpleSttFinalDeliveryPayload(text, this.config.Bool("trailing_space", true))
-                if text != "" && StrPut(text, "UTF-8") - 1 <= 1048576
+                if text != "" && StrPut(text, "UTF-8") - 1 <= 1048576 {
                     this.lastDeliveryText := text
+                    clock := Buffer(8, 0)
+                    DllCall("GetSystemTimeAsFileTime", "Ptr", clock)
+                    this.lastDeliveryAt := (NumGet(clock, 0, "Int64") - 116444736000000000) // 10000
+                }
                 this.logger.Write("info", "transcript received chars=" . StrLen(text), session)
                 mode := this.DeliveryModeForWindow(target)
-                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
+                if this.retryShortcutHeld {
+            SetTimer(ObjBindMethod(this, "RetryStarted", session, target, text, mode, response), -25)
+            return
+        }
+        this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
             case "notice":
                 this.Notice(event["text"], event["level"])
                 if session && this.sessions.Has(session) && SimpleSttNoticeEndsSession(event)
@@ -245,29 +276,68 @@ class SimpleSttShell {
     NoopHotkeyUp() {
     }
 
+    RetryReleased() {
+        this.retryShortcutHeld := false
+    }
+
     RetryLastDelivery() {
-        if this.lastDeliveryText = "" {
-            this.logger.Write("info", "retry-last-delivery pressed with empty transcript cache")
+        this.retryShortcutHeld := true
+        if !this.config.Bool("hotkey_enabled", true)
             return
-        }
-        if !this.config.Bool("hotkey_enabled", true) {
-            this.logger.Write("info", "retry-last-delivery ignored while app hotkeys are disabled")
-            return
-        }
-        this.CancelAll()
         target := WinActive("A")
-        if !target {
+        mode := target ? this.DeliveryModeForWindow(target) : ""
+        this.ipc.CallService("reader-action repeat_if_newer --since-ms " . this.lastDeliveryAt, ObjBindMethod(this, "RepeatResolved", target, this.lastDeliveryText, mode))
+    }
+
+    RepeatResolved(target, text, mode, response) {
+        if !response["ok"] {
+            this.Notice(UiText("notice.retryFailed"), "warning")
+            return
+        }
+        if response["message"] = "reader_repeated"
+            return
+        if text = "" {
+            this.Notice(UiText("notice.retryEmpty"), "info")
+            return
+        }
+        if !this.config.Bool("hotkey_enabled", true)
+            return
+        if !target || WinActive("A") != target {
             this.Notice(UiText("notice.retryNoTarget"), "warning")
             return
         }
         this.sessionId += 1
         retrySession := this.sessionId
-        mode := this.DeliveryModeForWindow(target)
-        this.logger.Write("info", "retrying last transformed transcript chars=" . StrLen(this.lastDeliveryText), retrySession)
-        this.typist.Begin(retrySession, target, this.lastDeliveryText, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
+        this.logger.Write("info", "retrying last transformed transcript chars=" . StrLen(text), retrySession)
+        this.CancelAllWithCallback(ObjBindMethod(this, "RetryCancelled", retrySession, target, text, mode))
+    }
+
+    RetryCancelled(session, target, text, mode, response) {
+        if !response["ok"] || session != this.sessionId || WinActive("A") != target
+            return
+        this.ipc.CallService("begin-delivery --session-id " . session, ObjBindMethod(this, "RetryStarted", session, target, text, mode))
+    }
+
+    RetryStarted(session, target, text, mode, response) {
+        if !response["ok"]
+            return
+        if session != this.sessionId || WinActive("A") != target {
+            this.DeliveryFinished(session)
+            return
+        }
+        if this.retryShortcutHeld {
+            SetTimer(ObjBindMethod(this, "RetryStarted", session, target, text, mode, response), -25)
+            return
+        }
+        this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
     }
 
     CancelAll(*) {
+        this.sessionId += 1
+        this.CancelAllWithCallback()
+    }
+
+    CancelAllWithCallback(callback := "") {
         hadActive := this.activeRecordingSession || this.sessions.Count || this.pendingStarts.Count || this.pendingStops.Count || this.typist.active || this.typist.queue.Length
         if this.typist.active || this.typist.queue.Length
             this.typist.Cancel("text delivery cancelled by global cancel", false)
@@ -277,12 +347,18 @@ class SimpleSttShell {
         this.sessions := Map()
         this.pendingStarts := Map()
         this.pendingStops := Map()
+        this.ReaderAction("stop")
         if this.ipc.ready
-            this.ipc.CallService("cancel")
+            this.ipc.CallService("cancel", ObjBindMethod(this, "CancelServiceFinished", callback))
         if hadActive
             this.Notice(UiText("notice.cancelled"), "warning")
         else
             this.logger.Write("info", "global cancel pressed with no active shell work")
+    }
+
+    CancelServiceFinished(callback, response) {
+        if IsObject(callback)
+            callback.Call(response)
     }
 
     ToggleDeliveryModeHotkey() {
@@ -310,12 +386,7 @@ class SimpleSttShell {
             "paste_ctrl_v", UiText("delivery.paste_ctrl_v")
         )
         message := UiText("notice.delivery", Map("mode", labels.Has(mode) ? labels[mode] : mode))
-        ToolTip(message)
-        SetTimer(this.modeTooltipTimer, -1200)
-    }
-
-    HideModeTooltip() {
-        ToolTip()
+        this.ipc.CallService("notice --level info --text " . SimpleSttQuote(message))
     }
 
     ToggleHotkey(*) {
@@ -339,8 +410,7 @@ class SimpleSttShell {
         try {
             this.config.SaveSync()
             this.PublishRuntimeConfigChange()
-            ToolTip(UiText(enabled ? "notice.cleanupOn" : "notice.cleanupOff"))
-            SetTimer(this.modeTooltipTimer, -1200)
+            this.ipc.CallService("notice --level info --text " . SimpleSttQuote(UiText(enabled ? "notice.cleanupOn" : "notice.cleanupOff")))
             this.logger.Write("info", "AI cleanup toggled enabled=" . SimpleSttBoolText(enabled))
         } catch Error as err {
             this.logger.Write("error", "AI cleanup toggle failed: " . err.Message)
@@ -420,6 +490,13 @@ class SimpleSttShell {
         this.logger.Write("info", "speech-model unload requested")
     }
 
+    UnloadAllModels(*) {
+        this.CancelAll()
+        this.ipc.CallService("unload-model")
+        this.ReaderAction("unload")
+        this.logger.Write("info", "all-model unload requested")
+    }
+
     TestModel(*) {
         this.ipc.CallService("test-model")
         this.Notice(UiText("notice.testQueued"))
@@ -465,9 +542,11 @@ class SimpleSttShell {
         this.cancelHotkey.DisableBindings()
         this.deliveryToggleHotkey.DisableBindings()
         this.retryDeliveryHotkey.DisableBindings()
+        this.showShortcutsHotkey.DisableBindings()
+        for key, manager in this.readerHotkeys
+            manager.DisableBindings()
+        this.ReaderAction("shutdown")
         this.lastDeliveryText := ""
-        SetTimer(this.modeTooltipTimer, 0)
-        ToolTip()
         this.ipc.Stop()
         this.supervisor.Shutdown()
     }
