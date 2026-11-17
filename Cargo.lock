@@ -3477,6 +3477,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "fasttext",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

@@ -138,6 +138,7 @@ def main():
     parser.add_argument('--fullscreen', action='store_true')
     parser.add_argument('--hud-progress', action='store_true', help='Verify current text and independent next-page work during playback')
     parser.add_argument('--repeat-region', action='store_true', help='Manually change dialogue, then Repeat the saved area without reselecting or advancing')
+    parser.add_argument('--repeat-read-along', action='store_true', help='Repeat a saved read-along area while its initial audio is still playing')
     args = parser.parse_args()
     installed = Path.home() / '.local/share/simple-stt/instances/installed'
     folder = Path(tempfile.mkdtemp(prefix='simple-stt-readalong-e2e-'))
@@ -150,7 +151,7 @@ def main():
     (folder / 'assets').symlink_to(installed / 'assets', target_is_directory=True)
     config = json.loads((installed / 'reader/config.json').read_text())
     config['server'] = {'enabled': False}
-    config['read_along'] = {'prefetch': not args.no_prefetch, 'advance_key': 'Space', 'action': 'key', 'delay_ms': 600, 'retry_count': 2 if args.unchanged_once else 0}
+    config['read_along'] = {'prefetch': not (args.no_prefetch or args.repeat_read_along), 'advance_key': 'Space', 'action': 'key', 'delay_ms': 600, 'retry_count': 2 if args.unchanged_once else 0}
     config['playback']['keep_warm_seconds'] = 2
     config['ocr']['idle_timeout_secs'] = 2
     (data / 'config.json').write_text(json.dumps(config))
@@ -276,11 +277,13 @@ def main():
                         observed_hud_current = True
                         next_phase = (state.get('next_page_activity') or {}).get('phase')
                         observed_hud_next |= next_phase in {'capturing','ocr','tts','ready'}
-                if args.repeat_region:
+                if args.repeat_region or args.repeat_read_along:
                     spoken = (state.get('prepared_text') or '') + ' ' + (state.get('sentence_text') or '')
                     frames = state.get('audio_callback_frames', 0)
                     assert presses[0] == 0, 'manual Repeat unexpectedly sent Space'
                     if not repeated_region and frames > 1000 and 'speech recognition' in spoken.lower():
+                        if args.repeat_read_along:
+                            assert request(ipc, {'op':'action','action':'read-along-stop'}).get('ok')
                         initial_repeat_at = state.get('last_action_at_ms', 0)
                         assert initial_repeat_at > 0, 'screenshot action did not register Repeat metadata'
                         drawn = threading.Event()

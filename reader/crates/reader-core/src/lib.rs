@@ -21,3 +21,5 @@ pub use config::{
 pub use generation::{GenerationGate, JobKey, WorkerIncarnation};
 
 pub mod routing;
+
+pub mod provider_error;

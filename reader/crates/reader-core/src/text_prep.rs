@@ -202,9 +202,74 @@ pub fn normalize_with_context(
     )
 }
 
+/// Literal, case-insensitive whole-word/phrase removal; original OCR text is retained by callers.
+pub fn exclude_words(text: &str, words: &[String]) -> String {
+    let mut entries: Vec<_> = words
+        .iter()
+        .map(|word| word.trim())
+        .filter(|word| !word.is_empty())
+        .collect();
+    entries.sort_by_key(|word| std::cmp::Reverse(word.len()));
+    if entries.is_empty() {
+        return text.to_owned();
+    }
+    let pattern = entries
+        .iter()
+        .map(|word| regex::escape(word))
+        .collect::<Vec<_>>()
+        .join("|");
+    let Ok(expression) = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(true)
+        .build()
+    else {
+        return text.to_owned();
+    };
+    static WORD: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\w").unwrap());
+    let word_char = |c: char| {
+        let mut bytes = [0; 4];
+        WORD.is_match(c.encode_utf8(&mut bytes))
+    };
+    let mut result = String::with_capacity(text.len());
+    let mut end = 0;
+    for found in expression.find_iter(text) {
+        let first = found.as_str().chars().next().unwrap();
+        let last = found.as_str().chars().next_back().unwrap();
+        if (word_char(first)
+            && text[..found.start()]
+                .chars()
+                .next_back()
+                .is_some_and(word_char))
+            || (word_char(last) && text[found.end()..].chars().next().is_some_and(word_char))
+        {
+            continue;
+        }
+        result.push_str(&text[end..found.start()]);
+        end = found.end();
+    }
+    result.push_str(&text[end..]);
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn excluded_words_are_literal_case_insensitive_and_preserve_word_boundaries() {
+        let words = vec![
+            "Ann".into(),
+            "مرحبا".into(),
+            "do not read".into(),
+            "a+b".into(),
+        ];
+        assert_eq!(
+            exclude_words("ANN, annual. مرحبا بالعالم. Do Not Read this a+b.", &words),
+            ", annual.  بالعالم.  this ."
+        );
+        assert_eq!(exclude_words("unchanged", &[]), "unchanged");
+        assert_eq!(exclude_words("everything", &["everything".into()]), "");
+    }
+
     #[test]
     fn emphasis_markers_are_silent_only_when_cleanup_is_enabled() {
         let source = "* I wrote **backend code** for your three tasks. **T22:**";

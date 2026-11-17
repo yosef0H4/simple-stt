@@ -1,5 +1,5 @@
 ; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
-; catalog-sha256: 8370a75fc54d87b485bc2f77c4b2b0181b34f9256adcf96de697fd6ed67f1b95
+; catalog-sha256: f2fb923209b4df22ae81e45e63afb5cc5f1789daf50a8d0471a31b5f05af2dd5
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
     if language = "auto"
@@ -212,6 +212,8 @@ UiText(id, args := unset) {
         "notice.typingStopped", "Typing stopped. Check the field before Retry.",
         "notice.typingUnavailable", "Typing unavailable here. Try Paste or check Output.",
         "reader.waitWindow", "Return to reading window",
+        "reader.next.advancing", "Next page · advancing",
+        "reader.next.waiting", "Next page · waiting",
         "reader.next.capturing", "Next page · capturing",
         "reader.next.ocr", "Next page · recognizing text",
         "reader.next.tts", "Next page · generating speech",
@@ -422,6 +424,8 @@ UiText(id, args := unset) {
         "notice.typingStopped", "توقفت الكتابة. راجع الحقل قبل الإعادة.",
         "notice.typingUnavailable", "تعذّرت الكتابة هنا. جرّب اللصق أو راجع الإخراج.",
         "reader.waitWindow", "ارجع للنافذة",
+        "reader.next.advancing", "الصفحة التالية · تنفيذ الإجراء",
+        "reader.next.waiting", "الصفحة التالية · انتظار",
         "reader.next.capturing", "الصفحة التالية · التقاط الصورة",
         "reader.next.ocr", "الصفحة التالية · التعرف على النص",
         "reader.next.tts", "الصفحة التالية · توليد الصوت",

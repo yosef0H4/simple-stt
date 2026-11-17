@@ -1,6 +1,6 @@
 Name:           simple-stt
 Version:        0.3.1
-Release:        32%{?dist}
+Release:        37%{?dist}
 %global __provides_exclude_from ^/usr/lib/simple-stt/.*\.so.*$
 Summary:        Local dictation, read aloud, and screen text for Linux desktops
 License:        GPL-2.0-only AND MIT AND OFL-1.1 AND CC-BY-SA-3.0

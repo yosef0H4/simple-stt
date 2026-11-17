@@ -588,7 +588,7 @@ fn remote_stream(
     .unwrap_or_default();
     let mut request=client.post(reader_core::provider_url::operation(base,"audio/speech")?).json(&serde_json::json!({"model":model,"input":text,"voice":args.remote_voice.as_deref().unwrap_or(voice),"response_format":args.format,"speed":speed}));
     if !key.is_empty() {
-        request = request.bearer_auth(key)
+        request = request.bearer_auth(&key)
     }
     let response = request.timeout(request_timeout).send().map_err(|error| {
         if error.is_timeout() || error.is_connect() {
@@ -599,7 +599,18 @@ fn remote_stream(
     })?;
     let status = response.status();
     if !status.is_success() {
-        let message = format!("speech provider returned HTTP {status}");
+        let mut error_body = Vec::new();
+        use std::io::Read;
+        response
+            .take(65_536)
+            .read_to_end(&mut error_body)
+            .context("reading speech provider rejection")?;
+        let message = reader_core::provider_error::http_error(
+            "speech provider",
+            &status.to_string(),
+            &error_body,
+            &key,
+        );
         if status.as_u16() == 429 || status.is_server_error() {
             return Err(transient_remote_error(message));
         }

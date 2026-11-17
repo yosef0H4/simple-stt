@@ -436,5 +436,7 @@
   "reading.reset_action": "Reset",
   "settings.language_route": "Route for this language",
   "settings.fallback_server": "Use a fallback server",
-  "settings.default_route": "Use the default route"
+  "settings.default_route": "Use the default route",
+  "reading.excluded_words": "Words and phrases to skip",
+  "reading.excluded_words_help": "One entry per line. Matches whole words or literal phrases, ignoring letter case. Applies to local and remote speech; OCR text stays unchanged."
 }

@@ -46,6 +46,15 @@ pub fn append_pcm(output: &mut Vec<i16>, input: &[i16], rate: u32, limit: usize)
 mod tests {
     use super::*;
     #[test]
+    fn uncertain_chunk_keeps_the_page_language_and_route() {
+        let mut page = AppConfig::default();
+        page.speech.language = "ar".into();
+        page.speech.selection.mode = SelectionMode::AutoDetect;
+        let chunk = unit_route(&page, "123 🙂").unwrap();
+        assert_eq!(chunk.speech.language, "ar");
+        assert_eq!(chunk.speech.provider, page.speech.provider);
+    }
+    #[test]
     fn concatenates_rates_in_order_and_enforces_total_limit() {
         let mut output = Vec::new();
         append_pcm(&mut output, &[10, 20], 24_000, 8).unwrap();

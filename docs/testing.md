@@ -531,3 +531,32 @@ Check prefetch both enabled and disabled, including mixed local/remote OCR and
 speech providers. Portal support depends on the compositor/backend; see
 [recorded-action research](research/recorded-actions.md). Native Windows and
 compositor playback are not established by browser or fake-backend tests.
+
+Read-along streaming: `cargo test -p readerd chunk_stream::tests` verifies early
+first-chunk delivery, FIFO metadata, and cancellation of a full producer queue.
+`cargo test -p reader-core text_prep::tests` covers literal English/Arabic
+exclusions, case folding, phrases and word boundaries. Run
+`node scripts/test-settings-exclusions.cjs` for saved list/clear/RTL layout.
+The native desktop pass `python scripts/test-read-along-desktop.py --repeat-read-along`
+repeats the saved area while audio is active and checks fresh text without input.
+
+`python scripts/test-read-along-remote.py` builds real OCR/TTS helper binaries and
+runs a private-profile HTTP integration test. It verifies client-sized speech
+requests, excluded words, unit metadata, and OCR completing while a TTS request
+is blocked. It uses generated PNG/PCM fixtures and no desktop or playback device.
+A native desktop run is still required for region selection and hotkey input.
+
+HUD regression: `cargo test --workspace normal_and_read_along_huds_share_visible_chunk_progress`
+checks the same visible counter in both reading modes and locales.
+`cargo test -p readerd failed_new_read_does_not_publish` checks stale-session
+cleanup and saved-area retry eligibility after an initial OCR failure.
+
+Portal session ownership: after `cargo build -p readerd`, run
+`python scripts/test-portal-session-lifecycle.py` with `dbus-next` and
+`dbus-run-session` installed. It uses a private bus and no desktop/input devices.
+Ten setup attempts cover denied starts, granted sessions with failed EIS setup,
+canceled consent and cancellation while CreateSession is pending. Require ten
+explicit closes and zero live sessions. The unchanged installed binary provides
+a differential baseline via `SIMPLE_STT_TEST_READERD=/usr/lib/simple-stt/readerd`.
+Run the existing `scripts/test-portal-input-e2e.py` private KWin pass to check
+normal Unicode input, cancellation, macros, pointer use and clipboard recovery.

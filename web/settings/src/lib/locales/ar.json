@@ -436,5 +436,7 @@
   "reading.reset_action": "إعادة الضبط",
   "settings.language_route": "مسار هذه اللغة",
   "settings.fallback_server": "استخدام خادم احتياطي",
-  "settings.default_route": "استخدام المسار الافتراضي"
+  "settings.default_route": "استخدام المسار الافتراضي",
+  "reading.excluded_words": "كلمات وعبارات لا تُقرأ",
+  "reading.excluded_words_help": "إدخال واحد في كل سطر. تُطابق الكلمات الكاملة أو العبارات حرفياً دون تمييز حالة الأحرف. تُطبق على الصوت المحلي والبعيد مع إبقاء نص التعرف الأصلي."
 }

@@ -222,9 +222,20 @@ fn request<T>(
         std::thread::sleep(Duration::from_millis(10));
     }
 }
+// ashpd 0.13 Session has no Drop cleanup. Own the remote resource from the
+// instant CreateSession succeeds, including every subsequent setup error.
+struct SessionLease(Session<RemoteDesktop>);
+impl Drop for SessionLease {
+    fn drop(&mut self) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        if let Err(error) = request(self.0.close(), &|| Instant::now() < deadline) {
+            tracing::debug!(%error, "closing desktop-control session");
+        }
+    }
+}
 struct Connection {
     _portal: RemoteDesktop,
-    _session: Session<RemoteDesktop>,
+    _session: SessionLease,
     context: ei::Context,
     events: EiEventConverter,
     active: Vec<Device>,
@@ -234,7 +245,12 @@ struct Connection {
 impl Connection {
     fn connect(pointer: bool, current: &dyn Fn() -> bool) -> Result<Self> {
         let portal = request(RemoteDesktop::new(), current)?;
-        let session = request(portal.create_session(Default::default()), current)?;
+        // CreateSession has no consent dialog. Obtain its handle even if this
+        // task is canceled meanwhile, so the lease can close it deterministically.
+        // Later consent/handshake waits remain immediately cancellable.
+        let session = SessionLease(request(portal.create_session(Default::default()), &|| {
+            true
+        })?);
         let path = reader_core::config::data_dir().join(if pointer {
             "remote-desktop-pointer-token"
         } else {
@@ -249,7 +265,7 @@ impl Connection {
         };
         request(
             portal.select_devices(
-                &session,
+                &session.0,
                 SelectDevicesOptions::default()
                     .set_devices(Some(device.into()))
                     .set_persist_mode(PersistMode::ExplicitlyRevoked)
@@ -259,7 +275,7 @@ impl Connection {
         )?
         .response()?;
         let granted =
-            request(portal.start(&session, None, Default::default()), current)?.response()?;
+            request(portal.start(&session.0, None, Default::default()), current)?.response()?;
         ensure!(
             granted.devices().contains(device),
             "desktop-control permission was not granted"
@@ -281,8 +297,11 @@ impl Connection {
             }
             result.context("remembering desktop-control permission")?;
         }
-        let fd = request(portal.connect_to_eis(&session, Default::default()), current)
-            .context("This desktop must support RemoteDesktop ConnectToEIS")?;
+        let fd = request(
+            portal.connect_to_eis(&session.0, Default::default()),
+            current,
+        )
+        .context("This desktop must support RemoteDesktop ConnectToEIS")?;
         let context = ei::Context::new(UnixStream::from(fd))?;
         let mut handshake =
             reis::handshake::EiHandshaker::new("Simple STT", ei::handshake::ContextType::Sender);

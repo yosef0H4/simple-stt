@@ -130,6 +130,7 @@ pub struct SpeechRouteDefaults {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpeechSettings {
+    pub excluded_words: Vec<String>,
     #[serde(skip)]
     pub route_defaults: Option<SpeechRouteDefaults>,
     pub saved_remote: Option<SpeechProvider>,
@@ -152,6 +153,7 @@ pub struct SpeechSettings {
 impl Default for SpeechSettings {
     fn default() -> Self {
         Self {
+            excluded_words: Vec::new(),
             route_defaults: None,
             saved_remote: None,
             key_slot: None,
@@ -456,6 +458,15 @@ impl AppConfig {
                 bail!("{name} must contain 1 to 128 bytes");
             }
         }
+        anyhow::ensure!(
+            self.speech.excluded_words.len() <= 500
+                && self
+                    .speech
+                    .excluded_words
+                    .iter()
+                    .all(|word| word.chars().count() <= 128 && !word.contains(['\n', '\r', '\0'])),
+            "Use at most 500 excluded entries, each up to 128 characters on one line"
+        );
         if let Some(slot) = &self.speech.key_slot {
             crate::secrets::validate_slot(slot)?;
         }

@@ -1,4 +1,5 @@
 mod activity;
+mod chunk_stream;
 mod lease_timer;
 mod media_routing;
 mod model_events;
@@ -146,6 +147,7 @@ struct Session {
     generation: u64,
     source: String,
     units: Vec<SpeechUnit>,
+    preparation: Arc<chunk_stream::Progress>,
 }
 
 #[derive(Clone)]
@@ -349,15 +351,26 @@ struct ReadAlongRun {
     settings: reader_core::config::ReadAlongSettings,
     prepared: Option<PreparedReadAlongPage>,
     next_activity: Option<ReadAlongNextActivity>,
+    next_progress: Option<Arc<chunk_stream::Progress>>,
     first_advance: Option<std::sync::mpsc::Receiver<Result<Instant, String>>>,
     preparation: read_along::Preparation,
+    active_stream: Option<Arc<AtomicU64>>,
 }
 #[derive(Clone, Serialize)]
 struct ReadAlongNextActivity {
     phase: &'static str,
+    #[serde(skip)]
+    waiting_until: Option<Instant>,
 }
 struct PreparedReadAlongPage {
     text: String,
+    first: PreparedReadAlongChunk,
+    progress: Arc<chunk_stream::Progress>,
+    remaining: chunk_stream::Receiver<Result<Option<PreparedReadAlongChunk>, String>>,
+    playing_generation: Arc<AtomicU64>,
+}
+struct PreparedReadAlongChunk {
+    unit: SpeechUnit,
     samples: Vec<i16>,
     route: AppConfig,
 }
@@ -1750,6 +1763,7 @@ impl WorkerSupervisor {
         options: SynthesisOptions<'_>,
     ) -> Result<(Vec<i16>, u32)> {
         let SynthesisOptions {
+            priority,
             starts_in_code,
             voice,
             speed,
@@ -1757,6 +1771,10 @@ impl WorkerSupervisor {
             lifetime,
             current,
         } = options;
+        let _priority = priority.then(|| {
+            self.desktop_priority_waiters.fetch_add(1, Ordering::AcqRel);
+            DesktopTtsPriority(&self.desktop_priority_waiters)
+        });
         let units = plan_units(text, 240)?;
         let mut result = Vec::new();
         let mut rate = 24_000u32;
@@ -1772,7 +1790,8 @@ impl WorkerSupervisor {
             // API synthesis yields at each unit boundary. Desktop playback
             // gets a bounded first window to take the shared worker.
             let priority_deadline = Instant::now() + Duration::from_millis(350);
-            while self.desktop_priority_waiters.load(Ordering::Acquire) > 0
+            while !priority
+                && self.desktop_priority_waiters.load(Ordering::Acquire) > 0
                 && Instant::now() < priority_deadline
                 && current()
             {
@@ -2598,6 +2617,12 @@ fn sibling(name: &str) -> Result<PathBuf> {
     let parent = current
         .parent()
         .context("controller executable has no parent")?;
+    #[cfg(test)]
+    let parent = if parent.file_name().is_some_and(|name| name == "deps") {
+        parent.parent().unwrap_or(parent)
+    } else {
+        parent
+    };
     Ok(parent.join(format!("{name}{}", if cfg!(windows) { ".exe" } else { "" })))
 }
 fn device_name(device: DevicePreference) -> &'static str {
@@ -2650,8 +2675,9 @@ fn prepare_speech_text(config: &AppConfig, text: &str, starts_in_code: bool) -> 
     } else {
         ""
     };
+    let spoken = reader_core::text_prep::exclude_words(text, &config.speech.excluded_words);
     reader_core::text_prep::normalize_with_context(
-        text,
+        &spoken,
         model,
         &config.speech.language,
         &config.speech.selection.single,
@@ -3364,8 +3390,13 @@ impl App {
         self.inner.activity.lock().unwrap().set(generation, "error");
         tracing::warn!(%error, label, "reader request failed");
         let detail = error.to_string();
-        let detail: String = detail.chars().take(160).collect();
-        self.set_notice(format!("{label}: {detail}"), Duration::from_secs(4));
+        let detail: String = detail.chars().take(320).collect();
+        let hint = if label.starts_with("Read-along") {
+            " Resume or Repeat retries the saved area."
+        } else {
+            ""
+        };
+        self.set_notice(format!("{label}: {detail}{hint}"), Duration::from_secs(6));
         drop(intent);
         self.show_hud();
         if !keep_pending {
@@ -3603,6 +3634,7 @@ impl App {
             job_id: job_id.clone(),
             generation,
             source: source.clone(),
+            preparation: Arc::new(chunk_stream::Progress::new(units.len())),
             units,
         };
         *self.inner.session.lock().unwrap() = Some(session.clone());
@@ -3625,25 +3657,19 @@ impl App {
             if !self.inner.generation.accepts(session.generation) {
                 break;
             }
-            let unit_config = if config.speech.selection.mode
-                == reader_core::routing::SelectionMode::AutoDetect
-            {
-                reader_core::language::detect(&unit.text)
-                    .map(|language| {
-                        config.routed(reader_core::routing::Feature::Tts, Some(&language))
-                    })
-                    .transpose()
-            } else {
-                Ok(None)
-            };
-            let unit_config = match unit_config {
-                Ok(Some(config)) => config,
-                Ok(None) => config.clone(),
+            let unit_config = match media_routing::unit_route(&config, &unit.text) {
+                Ok(config) => config,
                 Err(error) => {
                     failure = Some(error.to_string());
                     break;
                 }
             };
+            if prepare_speech_text(&unit_config, &unit.text, unit.starts_in_code)
+                .trim()
+                .is_empty()
+            {
+                continue;
+            }
             {
                 let mut activity = self.inner.activity.lock().unwrap();
                 if activity.generation == session.generation {
@@ -3674,6 +3700,7 @@ impl App {
             if !self.inner.generation.accepts(session.generation) {
                 break;
             }
+            session.preparation.mark(index);
             if let Err(error) = reading_hint::record(&unit_config) {
                 tracing::debug!(%error, "could not save last voice route");
             }
@@ -3982,55 +4009,7 @@ impl App {
                     Ok("Repeated screen-region read started".into())
                 }
             }
-            repeat::RepeatPayload::ReadAlong { target } => {
-                let session = self
-                    .inner
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .clone();
-                let is_running = self
-                    .inner
-                    .read_along
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_some()
-                    && session.as_ref().is_some_and(|session| {
-                        session.source == "read-along"
-                            && self.inner.generation.accepts(session.generation)
-                    });
-                if is_running {
-                    self.action_navigate("replay")
-                } else {
-                    let generation = self.begin_read_intent_with_pending(true)?;
-                    self.show_hud();
-                    let app = self.clone();
-                    std::thread::spawn(move || {
-                        let current = || {
-                            app.inner.generation.accepts(generation)
-                                && !app.inner.shutdown.load(Ordering::Acquire)
-                        };
-                        let result = (|| -> Result<()> {
-                            let image = target.capture(&current)?;
-                            let _image_cleanup = privacy::TemporaryFile(image.clone());
-                            anyhow::ensure!(current(), "read-along repeat was canceled");
-                            let text = app.recognize_image_at_source(&image, generation)?;
-                            anyhow::ensure!(current(), "read-along repeat was canceled");
-                            app.start_text_at("read-along".into(), text, generation)?;
-                            Ok(())
-                        })();
-                        if let Err(error) = result {
-                            app.report_intent_failure(
-                                generation,
-                                "Read-along repeat failed",
-                                &error,
-                                false,
-                            );
-                        }
-                    });
-                    Ok("Repeated read-along page started".into())
-                }
-            }
+            repeat::RepeatPayload::ReadAlong { target } => self.start_read_along(Some(target)),
         }
     }
     #[cfg(any(target_os = "linux", windows))]
@@ -4342,10 +4321,24 @@ impl App {
         Ok("Screen-region selector opened".into())
     }
     fn action_read_along(&self) -> Result<String> {
+        if self.inner.read_along_active.load(Ordering::Acquire) {
+            return self.action_stop_read_along();
+        }
+        self.start_read_along(None)
+    }
+    fn start_read_along(&self, saved_target: Option<read_along_capture::Target>) -> Result<String> {
         let config = self.inner.store.load()?;
         let repeat_revision = self.begin_repeat_action("read-along");
         let generation = self.begin_read_intent_with_pending(true)?;
         self.inner.read_along_active.store(true, Ordering::Release);
+        if let Some(target) = &saved_target {
+            self.complete_repeat_action(
+                repeat_revision,
+                repeat::RepeatPayload::ReadAlong {
+                    target: target.clone(),
+                },
+            );
+        }
         self.inner
             .activity
             .lock()
@@ -4355,7 +4348,10 @@ impl App {
         let app = self.clone();
         std::thread::spawn(move || {
             let current = || app.inner.generation.accepts(generation);
-            let selected = read_along_capture::Target::select(current);
+            let selected = match saved_target {
+                Some(target) => target.capture(&current).map(|image| (target, image)),
+                None => read_along_capture::Target::select(current),
+            };
             let (target, image) = match selected {
                 Ok(selected) => selected,
                 Err(error) => {
@@ -4456,17 +4452,49 @@ impl App {
                 settings: config.read_along.clone(),
                 prepared: None,
                 next_activity: None,
+                next_progress: None,
                 first_advance,
                 preparation: read_along::Preparation::new(config.read_along.prefetch),
+                active_stream: None,
             });
             if config.read_along.prefetch {
                 app.start_read_along_prefetch(read_along_generation);
             }
             app.wait_for_read_along_audio(read_along_generation);
         });
-        Ok("Select the window and the page region to start read-along".into())
+        Ok("Read-along started".into())
+    }
+    fn failed_read_along_area_is_saved(&self) -> bool {
+        let inactive = self
+            .inner
+            .read_along
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none();
+        let failed = self
+            .inner
+            .activity
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .phase
+            == "error";
+        let saved = self
+            .inner
+            .repeat_action
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .has_read_along_target();
+        inactive && failed && saved
     }
     fn action_read_along_next(&self) -> Result<String> {
+        if self.failed_read_along_area_is_saved() {
+            return self.action_repeat();
+        }
+
+        if audio_is_paused(&self.inner.audio) {
+            self.action_resume()?;
+            return Ok("Read-along resumed".into());
+        }
         let failed = self
             .inner
             .read_along
@@ -4566,7 +4594,10 @@ impl App {
             {
                 return;
             }
-            run.next_activity = Some(ReadAlongNextActivity { phase: "capturing" });
+            run.next_activity = Some(ReadAlongNextActivity {
+                phase: "advancing",
+                waiting_until: None,
+            });
             (
                 run.target.clone(),
                 run.settings.clone(),
@@ -4645,6 +4676,22 @@ impl App {
                         settings.retry_count,
                         &current,
                         || {
+                            app.set_read_along_next_activity(generation, app_generation, "waiting");
+                            if let Some(run) = app
+                                .inner
+                                .read_along
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .as_mut()
+                                .filter(|run| run.controller.accepts(generation))
+                            {
+                                if let Some(activity) = &mut run.next_activity {
+                                    activity.waiting_until = Some(
+                                        advanced
+                                            + Duration::from_millis(u64::from(settings.delay_ms)),
+                                    );
+                                }
+                            }
                             wait_read_along_settle(advanced, settings.delay_ms, &current)?;
                             app.set_read_along_next_activity(
                                 generation,
@@ -4689,36 +4736,126 @@ impl App {
                     )?
                 };
                 app.set_read_along_next_activity(generation, app_generation, "tts");
-                let (samples, route) = read_along::retry(
-                    settings.retry_count,
-                    &current,
-                    || {
-                        let saved = app.inner.store.load()?;
-                        let config = saved.routed_text(
-                            &text,
-                            app.inner.route_language.lock().unwrap().as_deref(),
-                        )?;
-                        collect_routed_media(
-                            &app.inner.tts,
-                            config,
-                            &text,
-                            MediaOptions {
-                                voice: None,
-                                speed: saved.speech.speed,
-                                max_samples: media_routing::MAX_SAMPLES,
-                                request_id: None,
-                                lifetime: None,
-                                current: &current,
-                            },
-                            |_, _, _| {},
-                        )
-                    },
-                    retrying,
-                )?;
+                let units = plan_units(&text, 240)?;
+                let progress = Arc::new(chunk_stream::Progress::new(units.len()));
+                if let Some(run) = app
+                    .inner
+                    .read_along
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_mut()
+                    .filter(|run| run.controller.accepts(generation))
+                {
+                    run.next_progress = Some(progress.clone());
+                }
+                let page_route = app
+                    .inner
+                    .store
+                    .load()?
+                    .routed_text(&text, app.inner.route_language.lock().unwrap().as_deref())?;
+                let playing_generation = Arc::new(AtomicU64::new(0));
+                let mut pending = units.into_iter().enumerate();
+                let first = loop {
+                    let (index, unit) = pending
+                        .next()
+                        .context("no speech remains after applying exclusions")?;
+                    let chunk = app.prepare_read_along_chunk(
+                        &page_route,
+                        &unit,
+                        settings.retry_count,
+                        false,
+                        &current,
+                    )?;
+                    if !chunk.samples.is_empty() {
+                        progress.mark(index);
+                        break chunk;
+                    }
+                };
+                let first_samples = first.samples.len();
+                let (sender, remaining) = chunk_stream::channel();
+                let producer = app.clone();
+                let playing = playing_generation.clone();
+                let producer_progress = progress.clone();
+                std::thread::spawn(move || {
+                    let current = || {
+                        sender.active()
+                            && producer.inner.read_along_active.load(Ordering::Acquire)
+                            && producer
+                                .inner
+                                .read_along
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .as_ref()
+                                .is_some_and(|run| run.controller.accepts(generation))
+                    };
+                    let mut total = first_samples;
+                    for (index, unit) in pending {
+                        loop {
+                            if !current() {
+                                return;
+                            }
+                            let priority = producer
+                                .inner
+                                .generation
+                                .accepts(playing.load(Ordering::Acquire));
+                            let chunk = producer
+                                .prepare_read_along_chunk(
+                                    &page_route,
+                                    &unit,
+                                    settings.retry_count,
+                                    priority,
+                                    &current,
+                                )
+                                .and_then(|chunk| {
+                                    anyhow::ensure!(
+                                        total.saturating_add(chunk.samples.len())
+                                            <= media_routing::MAX_SAMPLES,
+                                        "read-along page audio exceeds the five-minute limit"
+                                    );
+                                    Ok(chunk)
+                                });
+                            match chunk {
+                                Ok(chunk) => {
+                                    if !chunk.samples.is_empty() {
+                                        producer_progress.mark(index);
+                                    }
+                                    total += chunk.samples.len();
+                                    if !chunk.samples.is_empty()
+                                        && !sender.send(Ok(Some(chunk)), &current)
+                                    {
+                                        return;
+                                    }
+                                    break;
+                                }
+                                Err(error) if current() => {
+                                    // Only the failed, uncommitted chunk is retried after Resume.
+                                    let resume_after = producer
+                                        .inner
+                                        .pause_lease_epoch
+                                        .load(Ordering::Acquire)
+                                        .saturating_add(2);
+                                    if !sender.send(Err(error.to_string()), &current) {
+                                        return;
+                                    }
+                                    while current()
+                                        && producer.inner.pause_lease_epoch.load(Ordering::Acquire)
+                                            < resume_after
+                                    {
+                                        std::thread::sleep(Duration::from_millis(10));
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                        }
+                    }
+                    sender.send(Ok(None), &current);
+                });
                 Ok(PreparedReadAlongPage {
                     text,
-                    samples,
-                    route,
+                    first,
+                    progress,
+                    remaining,
+                    playing_generation,
                 })
             })();
             let prepared = match result {
@@ -4741,7 +4878,10 @@ impl App {
                 return;
             };
             run.prepared = Some(prepared);
-            run.next_activity = Some(ReadAlongNextActivity { phase: "ready" });
+            run.next_activity = Some(ReadAlongNextActivity {
+                phase: "ready",
+                waiting_until: None,
+            });
             if audio_is_idle(&app.inner.audio) {
                 let decision = run.controller.audio_finished(generation);
                 drop(state);
@@ -4752,6 +4892,58 @@ impl App {
                 }
             }
         });
+    }
+    fn prepare_read_along_chunk(
+        &self,
+        page_route: &AppConfig,
+        unit: &SpeechUnit,
+        retries: u8,
+        priority: bool,
+        current: &dyn Fn() -> bool,
+    ) -> Result<PreparedReadAlongChunk> {
+        read_along::retry(
+            retries,
+            current,
+            || {
+                let route = media_routing::unit_route(page_route, &unit.text)?;
+                if prepare_speech_text(&route, &unit.text, unit.starts_in_code)
+                    .trim()
+                    .is_empty()
+                {
+                    return Ok(PreparedReadAlongChunk {
+                        unit: unit.clone(),
+                        samples: Vec::new(),
+                        route,
+                    });
+                }
+                let (samples, rate) = self.inner.tts.collect(
+                    &route,
+                    &unit.text,
+                    SynthesisOptions {
+                        priority,
+                        starts_in_code: unit.starts_in_code,
+                        voice: &route.speech.voice,
+                        speed: route.speech.speed,
+                        request_id: None,
+                        lifetime: None,
+                        current,
+                    },
+                )?;
+                let mut pcm = Vec::new();
+                media_routing::append_pcm(
+                    &mut pcm,
+                    &samples,
+                    rate,
+                    media_routing::OUTPUT_RATE as usize * 60,
+                )?;
+                Ok(PreparedReadAlongChunk {
+                    unit: unit.clone(),
+                    samples: pcm,
+                    route,
+                })
+            },
+            |_| {},
+        )
     }
     fn set_read_along_next_activity(
         &self,
@@ -4767,7 +4959,10 @@ impl App {
         if let Some(run) = state.as_mut().filter(|run| {
             run.app_generation == app_generation && run.controller.accepts(generation)
         }) {
-            run.next_activity = Some(ReadAlongNextActivity { phase });
+            run.next_activity = Some(ReadAlongNextActivity {
+                phase,
+                waiting_until: None,
+            });
         }
     }
     fn read_along_is_current(&self, generation: u64, app_generation: u64) -> bool {
@@ -4800,6 +4995,7 @@ impl App {
             }
             run.prepared = None;
             run.next_activity = None;
+            run.next_progress = None;
             run.controller.capture_failed(generation)
         };
         tracing::warn!(%error, "read-along next page failed");
@@ -4887,6 +5083,7 @@ impl App {
             job_id: Uuid::new_v4().to_string(),
             generation: app_generation,
             source: "read-along".into(),
+            preparation: prepared.progress.clone(),
             units,
         };
         *self
@@ -4902,29 +5099,95 @@ impl App {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let run = state.as_mut().context("read-along was stopped")?;
             run.app_generation = app_generation;
+            run.active_stream = Some(prepared.playing_generation.clone());
             run.controller.promote(generation);
             run.controller.set_current_page(generation, fingerprint);
             run.preparation = read_along::Preparation::default();
             run.next_activity = None;
+            run.next_progress = None;
             run.controller.request_advance(generation, false, false);
         }
-        let current = || self.inner.generation.accepts(app_generation);
-        let samples = resample(
-            &prepared.samples,
-            media_routing::OUTPUT_RATE,
-            self.inner.audio.output_rate(),
-        );
-        self.inner.audio.push(
-            AudioFrame {
-                generation: app_generation,
-                sentence: 0,
-                unit: 0,
-                samples: &samples,
-            },
-            &prepared.route.playback,
-            current,
-        )?;
-        self.inner.audio.finish(app_generation);
+        prepared
+            .playing_generation
+            .store(app_generation, Ordering::Release);
+        let app = self.clone();
+        std::thread::spawn(move || {
+            let current = || app.inner.generation.accepts(app_generation);
+            let mut next = Some(prepared.first);
+            let mut previous: Option<(u32, u32)> = None;
+            let result = (|| -> Result<()> {
+                loop {
+                    let chunk = match next.take() {
+                        Some(chunk) => chunk,
+                        None => match prepared.remaining.receive(&current)? {
+                            Some(Ok(Some(chunk))) => chunk,
+                            Some(Ok(None)) => break,
+                            Some(Err(error)) => {
+                                app.set_notice(format!("Speech chunk failed: {error}. Resume or Next retries this chunk."), Duration::from_secs(60));
+                                app.action_pause()?;
+                                app.show_hud();
+                                continue;
+                            }
+                            None => break,
+                        },
+                    };
+                    let (sentence, unit) = chunk_stream::tags(&chunk.unit);
+                    if let Some((prior_sentence, prior_unit)) =
+                        previous.filter(|(prior, _)| *prior != sentence)
+                    {
+                        let silence = vec![
+                            0;
+                            app.inner.audio.output_rate() as usize
+                                * chunk.route.playback.sentence_gap_ms as usize
+                                / 1000
+                        ];
+                        app.inner.audio.push(
+                            AudioFrame {
+                                generation: app_generation,
+                                sentence: prior_sentence,
+                                unit: prior_unit,
+                                samples: &silence,
+                            },
+                            &chunk.route.playback,
+                            current,
+                        )?;
+                    }
+                    let samples = resample(
+                        &chunk.samples,
+                        media_routing::OUTPUT_RATE,
+                        app.inner.audio.output_rate(),
+                    );
+                    app.inner.audio.push(
+                        AudioFrame {
+                            generation: app_generation,
+                            sentence,
+                            unit,
+                            samples: &samples,
+                        },
+                        &chunk.route.playback,
+                        current,
+                    )?;
+                    previous = Some((sentence, unit));
+                }
+                Ok(())
+            })();
+            if current() {
+                app.inner.audio.finish(app_generation);
+                if let Some(run) = app
+                    .inner
+                    .read_along
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .as_mut()
+                    .filter(|run| run.app_generation == app_generation)
+                {
+                    run.active_stream = None;
+                }
+                if let Err(error) = result {
+                    app.read_along_failed(generation, app_generation, error);
+                }
+            }
+        });
         self.inner
             .activity
             .lock()
@@ -4988,7 +5251,7 @@ impl App {
         self.inner.audio.pause(true, generation);
         {
             let mut activity = self.inner.activity.lock().unwrap();
-            if activity.generation == generation {
+            if activity.generation == generation && activity.phase != "paused" {
                 activity.before_pause = activity.phase;
                 activity.set(generation, "paused");
             }
@@ -4999,6 +5262,10 @@ impl App {
         Ok("Reading paused".into())
     }
     fn action_resume(&self) -> Result<String> {
+        if self.failed_read_along_area_is_saved() {
+            return self.action_repeat();
+        }
+
         let lifecycle = self
             .inner
             .pause_lifecycle_gate
@@ -5013,11 +5280,23 @@ impl App {
             let resumed = activity.before_pause;
             activity.set(generation, resumed);
         }
+        let streaming = self
+            .inner
+            .read_along
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|run| {
+                run.active_stream
+                    .as_ref()
+                    .is_some_and(|stream| stream.load(Ordering::Acquire) == generation)
+            });
         if self
             .inner
             .paused_restart_generation
             .compare_exchange(generation, 0, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
+            && !streaming
         {
             let session = self
                 .inner
@@ -5393,7 +5672,13 @@ impl App {
         Ok(())
     }
     fn status(&self) -> serde_json::Value {
-        let session = self.inner.session.lock().unwrap().clone();
+        let session = self
+            .inner
+            .session
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|session| self.inner.generation.accepts(session.generation));
         let (sentence, unit) = self.inner.audio.cursor();
         let sentence_text = session
             .as_ref()
@@ -5491,7 +5776,7 @@ impl App {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
-            .map(|run| (true, run.next_activity.clone()))
+            .map(|run| (true, run.next_activity.as_ref().map(|activity| serde_json::json!({"phase": activity.phase, "wait_remaining_ms": activity.waiting_until.map(|deadline| deadline.saturating_duration_since(Instant::now()).as_millis() as u64).unwrap_or(0), "generated_chunks": run.next_progress.as_ref().map(|p| p.generated()).unwrap_or(0), "chunk_total": run.next_progress.as_ref().map(|p| p.total()).unwrap_or(0)}))))
             .unwrap_or((self.inner.read_along_active.load(Ordering::Acquire), None));
         let prepared_text = session
             .as_ref()
@@ -5506,7 +5791,7 @@ impl App {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .metadata();
-        serde_json::json!({"activity":activity,"ocr_activity":ocr_activity,"read_along_active":read_along_active,"next_page_activity":next_page_activity,"controller_online":true,"state":phase,"last_action_at_ms":last_action_at_ms,"last_action_kind":last_action_kind,"job_id":session.as_ref().map(|s|s.job_id.clone()),"generation":session.as_ref().map(|s|s.generation),"read_pending":self.inner.read_pending.load(Ordering::Acquire),"clipboard_listening":self.inner.clipboard_listening.load(Ordering::Acquire),"keep_warm_seconds":warm_timeout_seconds,"idle_unload_remaining_seconds":idle_unload_remaining_seconds,"sentence":sentence,"sentence_text":sentence_text,"sentence_total":total,"unit":unit,"chunk":chunk_index,"chunk_total":chunk_total,"chunk_text":chunk_text,"prepared_text":prepared_text,"model_events":self.inner.model_events.snapshot(),"residency":{"tts":self.inner.tts.residency.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),"ocr":self.inner.ocr_residency.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()},"model_status":model_lifecycle.status,"model_status_revision":model_lifecycle.revision,"notice_text":notice_text,"notice_revision":notice_revision,"notice_expires_in_ms":notice_expires_in_ms,"source":session.map(|s|s.source),"device":device.unwrap_or_else(||if paused{"Voice worker released during pause".into()}else{"Voice model is preparing".into()}),"route":if matches!(self.inner.store.load().map(|c|c.speech.provider),Ok(SpeechProvider::LocalKokoro | SpeechProvider::LocalSupertonic)){"local"}else{"remote"},"auto_dismiss_seconds":auto_dismiss_seconds,"audio_queued_samples":self.inner.audio.queued(),"audio_callback_buffers":self.inner.audio.inner.callback_buffers.load(Ordering::Relaxed),"audio_callback_frames":self.inner.audio.inner.callback_frames.load(Ordering::Relaxed),"audio_callback_contention":self.inner.audio.inner.callback_contention.load(Ordering::Relaxed),"audio_callback_errors":self.inner.audio.inner.callback_errors.load(Ordering::Relaxed),"audio_error":self.inner.audio.inner.fatal_error.lock().unwrap().clone()})
+        serde_json::json!({"activity":activity,"ocr_activity":ocr_activity,"read_along_active":read_along_active,"next_page_activity":next_page_activity,"controller_online":true,"state":phase,"last_action_at_ms":last_action_at_ms,"last_action_kind":last_action_kind,"job_id":session.as_ref().map(|s|s.job_id.clone()),"generation":session.as_ref().map(|s|s.generation),"read_pending":self.inner.read_pending.load(Ordering::Acquire),"clipboard_listening":self.inner.clipboard_listening.load(Ordering::Acquire),"keep_warm_seconds":warm_timeout_seconds,"idle_unload_remaining_seconds":idle_unload_remaining_seconds,"sentence":sentence,"sentence_text":sentence_text,"sentence_total":total,"unit":unit,"chunk":chunk_index,"chunk_total":chunk_total,"chunks_ready_ahead":session.as_ref().map(|s| s.preparation.ready_after(chunk_index)).unwrap_or(0),"chunks_generated":session.as_ref().map(|s| s.preparation.generated()).unwrap_or(0),"chunk_text":chunk_text,"prepared_text":prepared_text,"model_events":self.inner.model_events.snapshot(),"residency":{"tts":self.inner.tts.residency.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone(),"ocr":self.inner.ocr_residency.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone()},"model_status":model_lifecycle.status,"model_status_revision":model_lifecycle.revision,"notice_text":notice_text,"notice_revision":notice_revision,"notice_expires_in_ms":notice_expires_in_ms,"source":session.map(|s|s.source),"device":device.unwrap_or_else(||if paused{"Voice worker released during pause".into()}else{"Voice model is preparing".into()}),"route":if matches!(self.inner.store.load().map(|c|c.speech.provider),Ok(SpeechProvider::LocalKokoro | SpeechProvider::LocalSupertonic)){"local"}else{"remote"},"auto_dismiss_seconds":auto_dismiss_seconds,"audio_queued_samples":self.inner.audio.queued(),"audio_callback_buffers":self.inner.audio.inner.callback_buffers.load(Ordering::Relaxed),"audio_callback_frames":self.inner.audio.inner.callback_frames.load(Ordering::Relaxed),"audio_callback_contention":self.inner.audio.inner.callback_contention.load(Ordering::Relaxed),"audio_callback_errors":self.inner.audio.inner.callback_errors.load(Ordering::Relaxed),"audio_error":self.inner.audio.inner.fatal_error.lock().unwrap().clone()})
     }
     fn read_image(&self, path: &str) -> Result<String> {
         let generation = self.begin_read_intent_with_pending(true)?;
@@ -5539,7 +5824,14 @@ impl App {
             reader_core::routing::Feature::Ocr,
             self.inner.route_language.lock().unwrap().as_deref(),
         )?;
-        {
+        let background = self
+            .inner
+            .read_along
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|run| run.app_generation == generation);
+        if !background {
             let mut activity = self.inner.activity.lock().unwrap();
             if activity.generation == generation {
                 activity.language = Some(config.ocr.language.clone());
@@ -6380,6 +6672,7 @@ struct MediaOptions<'a> {
 }
 
 struct SynthesisOptions<'a> {
+    priority: bool,
     starts_in_code: bool,
     voice: &'a str,
     speed: f32,
@@ -6401,10 +6694,17 @@ fn collect_routed_media(
     for unit in plan_units(text, 240)? {
         anyhow::ensure!((options.current)(), "speech rendering was cancelled");
         route = media_routing::unit_route(&route, &unit.text)?;
+        if prepare_speech_text(&route, &unit.text, unit.starts_in_code)
+            .trim()
+            .is_empty()
+        {
+            continue;
+        }
         let (pcm, rate) = worker.collect(
             &route,
             &unit.text,
             SynthesisOptions {
+                priority: false,
                 starts_in_code: unit.starts_in_code,
                 voice: options.voice.unwrap_or(&route.speech.voice),
                 speed: options.speed,
@@ -6433,6 +6733,20 @@ fn server_tts_models() -> Vec<serde_json::Value> {
         models.push(serde_json::json!({"id":"supertonic3","object":"model","owned_by":"simple-tts","capabilities":["tts"]}));
     }
     models
+}
+// The selected model fixes a monolingual route. Re-detecting tiny client chunks
+// otherwise changes an English request into an unsupported language mid-page.
+fn server_speech_language(languages: &[String], input: &serde_json::Value, text: &str) -> String {
+    input["language"]
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            if languages.len() == 1 {
+                languages[0].clone()
+            } else {
+                reader_core::language::resolve(text)
+            }
+        })
 }
 fn server_tts_route(
     config: &AppConfig,
@@ -6494,7 +6808,7 @@ fn server_tts_route(
     };
     selected.speech.selection.mode = reader_core::routing::SelectionMode::SingleModel;
     selected.speech.selection.single = binding;
-    selected.speech.language = reader_core::language::resolve(text);
+    selected.speech.language = server_speech_language(&entry.languages, input, text);
     selected.routed_text(text, None)
 }
 
@@ -10243,6 +10557,212 @@ mod server_model_tests {
     }
 
     #[test]
+    #[ignore = "run scripts/test-read-along-remote.py with built helper binaries and a private profile"]
+    fn remote_read_along_chunks_overlap_independent_ocr() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc, Arc, Mutex,
+        };
+        use std::time::Duration;
+        let server = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let base = format!("http://{}", server.server_addr());
+        let observed = Arc::new(Mutex::new(Vec::new()));
+        let captured = observed.clone();
+        let (blocked_tx, blocked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release_rx = Arc::new(Mutex::new(release_rx));
+        let serving = std::thread::spawn(move || {
+            let mut children = Vec::new();
+            let mut speech = 0;
+            for _ in 0..3 {
+                let mut request = server
+                    .recv_timeout(Duration::from_secs(15))
+                    .unwrap()
+                    .expect("client request missing");
+                let path = request.url().to_owned();
+                let body: serde_json::Value = serde_json::from_reader(request.as_reader()).unwrap();
+                let is_speech = path.contains("audio/speech");
+                if is_speech {
+                    speech += 1;
+                }
+                let block = is_speech && speech == 2;
+                captured.lock().unwrap().push((path, body));
+                let blocked_tx = blocked_tx.clone();
+                let release_rx = release_rx.clone();
+                children.push(std::thread::spawn(move || {
+                    if block { blocked_tx.send(()).unwrap(); release_rx.lock().unwrap().recv_timeout(Duration::from_secs(15)).unwrap(); }
+                    if is_speech {
+                        request.respond(tiny_http::Response::from_data(vec![0;4800]).with_header(tiny_http::Header::from_bytes("Content-Type", "audio/pcm;rate=24000;channels=1").unwrap())).unwrap();
+                    } else {
+                        request.respond(super::server_json(200, &serde_json::json!({"choices":[{"message":{"content":"Next page OCR completed during speech synthesis."}}]}))).unwrap();
+                    }
+                }));
+            }
+            for child in children {
+                child.join().unwrap();
+            }
+        });
+        let mut config = super::AppConfig::default();
+        config.speech.selection.mode = reader_core::routing::SelectionMode::SingleModel;
+        config.speech.provider = reader_core::SpeechProvider::OpenAiCompatible {
+            base_url: format!("{base}/tts/v1"),
+            model: "remote-tts".into(),
+            voice: "test-voice".into(),
+            format: "pcm".into(),
+        };
+        config.speech.use_feature_key = false;
+        config.speech.fallback_to_local = false;
+        config.speech.excluded_words = vec!["SKIPME".into()];
+        config.ocr.provider = reader_core::OcrProvider::OpenAiCompatible {
+            base_url: format!("{base}/ocr/v1"),
+            model: "remote-ocr".into(),
+            api: reader_core::config::OcrApi::ChatCompletions,
+        };
+        config.ocr.fallback_to_local = false;
+        let path = reader_core::config::config_path();
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let app = super::App::new(reader_core::ConfigStore::new(path));
+        app.inner.desktop_enabled.store(false, Ordering::Release);
+        let units =
+            reader_core::text::plan_units(&format!("{}.", "SKIPME ordinaryword ".repeat(80)), 240)
+                .unwrap();
+        assert!(units.len() > 2);
+        let first = app
+            .prepare_read_along_chunk(&config, &units[0], 0, false, &|| true)
+            .unwrap();
+        assert_eq!(first.samples.len(), 2400);
+        let producer = app.clone();
+        let unit = units[1].clone();
+        let done = Arc::new(AtomicBool::new(false));
+        let finished = done.clone();
+        let producer_config = config.clone();
+        let second = std::thread::spawn(move || {
+            let result =
+                producer.prepare_read_along_chunk(&producer_config, &unit, 0, true, &|| true);
+            finished.store(true, Ordering::Release);
+            result
+        });
+        blocked_rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        let image = reader_core::config::data_dir().join("capture/mock.png");
+        let started = std::time::Instant::now();
+        let text = super::run_ocr(&app, &config, &image, 20_000_000, false, || true, None).unwrap();
+        assert!(text.contains("Next page OCR"));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            !done.load(Ordering::Acquire),
+            "OCR must complete while TTS is still blocked"
+        );
+        release_tx.send(()).unwrap();
+        let next = second.join().unwrap().unwrap();
+        assert_eq!(next.samples.len(), 2400);
+        assert_eq!(next.unit.unit_index, units[1].unit_index);
+        serving.join().unwrap();
+        let requests = observed.lock().unwrap();
+        let speech: Vec<_> = requests
+            .iter()
+            .filter(|(path, _)| path.contains("audio/speech"))
+            .collect();
+        assert_eq!(speech.len(), 2);
+        for (_, body) in speech {
+            let input = body["input"].as_str().unwrap();
+            assert!(input.len() <= 240);
+            assert!(!input.contains("SKIPME"));
+            assert_eq!(body["model"], "remote-tts");
+        }
+        app.action_unload().unwrap();
+    }
+
+    #[test]
+    fn failed_new_read_does_not_publish_the_previous_session_as_live() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = super::App::new(reader_core::ConfigStore::new(
+            directory.path().join("config.json"),
+        ));
+        app.inner
+            .desktop_enabled
+            .store(false, std::sync::atomic::Ordering::Release);
+        let old = app.inner.generation.advance();
+        *app.inner.session.lock().unwrap() = Some(super::Session {
+            job_id: "old".into(),
+            generation: old,
+            source: "read-along".into(),
+            units: reader_core::text::plan_units("Old page.", 240).unwrap(),
+            preparation: std::sync::Arc::new(super::chunk_stream::Progress::new(1)),
+        });
+        let current = app.inner.generation.advance();
+        app.inner.activity.lock().unwrap().begin(current);
+        app.report_intent_failure(
+            current,
+            "Read-along OCR failed",
+            &anyhow::anyhow!("provider returned HTTP 400"),
+            false,
+        );
+        let status = app.status();
+        assert_eq!(status["state"], "idle");
+        assert_eq!(status["chunk_total"], 0);
+        assert_eq!(status["chunk_text"], "");
+        app.inner.notice.lock().unwrap().expires = Some(std::time::Instant::now());
+        assert_eq!(app.status()["notice_text"], "");
+        assert!(!app.failed_read_along_area_is_saved());
+        let revision = app.begin_repeat_action("read-along");
+        assert!(!app.failed_read_along_area_is_saved());
+        app.complete_repeat_action(
+            revision,
+            super::repeat::RepeatPayload::ReadAlong {
+                target: super::read_along_capture::Target {
+                    window: super::read_along_capture::WindowId::X11(77),
+                    region: super::read_along_capture::Rect {
+                        x: 2,
+                        y: 3,
+                        width: 400,
+                        height: 200,
+                    },
+                },
+            },
+        );
+        assert!(app.failed_read_along_area_is_saved());
+        app.inner.activity.lock().unwrap().set(current, "idle");
+        assert!(!app.failed_read_along_area_is_saved());
+    }
+    #[test]
+    fn read_along_hotkey_stops_an_active_run_without_selecting_again() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = super::App::new(reader_core::ConfigStore::new(
+            directory.path().join("config.json"),
+        ));
+        app.inner
+            .desktop_enabled
+            .store(false, std::sync::atomic::Ordering::Release);
+        app.inner
+            .read_along_active
+            .store(true, std::sync::atomic::Ordering::Release);
+        assert!(app.action_read_along().unwrap().contains("stopped"));
+        assert!(!app
+            .inner
+            .read_along_active
+            .load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn exclusions_apply_to_remote_speech_without_mutating_source_text() {
+        let mut config = super::AppConfig::default();
+        config.speech.provider = reader_core::SpeechProvider::OpenAiCompatible {
+            base_url: "https://example.com/v1".into(),
+            model: "tts".into(),
+            voice: "voice".into(),
+            format: "wav".into(),
+        };
+        config.speech.excluded_words = vec!["marker".into()];
+        let original = "Read MARKER this.".to_owned();
+        assert_eq!(
+            super::prepare_speech_text(&config, &original, false),
+            "Read  this."
+        );
+        assert_eq!(original, "Read MARKER this.");
+        assert!(super::prepare_speech_text(&config, "marker", false).is_empty());
+    }
+
+    #[test]
     fn prepared_speech_reaches_the_wire_after_model_selection() {
         let mut config = super::AppConfig::default();
         config.speech.selection.single.model = Some("kokoro".into());
@@ -10514,9 +11034,14 @@ mod server_model_tests {
             app_generation,
             settings: Default::default(),
             prepared: None,
-            next_activity: Some(super::ReadAlongNextActivity { phase: "capturing" }),
+            next_progress: None,
+            next_activity: Some(super::ReadAlongNextActivity {
+                phase: "capturing",
+                waiting_until: None,
+            }),
             first_advance: None,
             preparation,
+            active_stream: None,
         });
         app.read_along_failed(
             generation,
@@ -10584,6 +11109,24 @@ mod server_model_tests {
         );
     }
 
+    #[test]
+    fn selected_monolingual_model_does_not_redetect_each_remote_chunk() {
+        let languages = vec!["en".to_string()];
+        let text = "Questa è una frase italiana molto chiara.";
+        assert_eq!(reader_core::language::resolve(text), "it");
+        assert_eq!(
+            super::server_speech_language(
+                &languages,
+                &serde_json::json!({"model":"kokoro-v1"}),
+                text
+            ),
+            "en"
+        );
+        assert_eq!(
+            super::server_speech_language(&languages, &serde_json::json!({"language":"ar"}), text),
+            "ar"
+        );
+    }
     #[test]
     fn model_validation_defaults_and_rejects_unknown_ids() {
         let request = serde_json::json!({});

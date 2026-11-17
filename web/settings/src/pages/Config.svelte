@@ -77,6 +77,7 @@
 />
 <label class="json-label" for="json">config.json</label><textarea
   id="json"
+  disabled={ui.configLoading}
   class="json-editor"
   spellcheck="false"
   value={ui.jsonText}

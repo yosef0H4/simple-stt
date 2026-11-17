@@ -25,6 +25,7 @@ export const ui = $state({
   saving: false,
   ready: false,
   jsonText: "",
+  configLoading: false,
   jsonPending: false,
   jsonInvalid: false,
   downloads: {} as Record<string, { downloaded: number; total: number; phase?: string }>,
@@ -160,6 +161,8 @@ export async function refreshAutomaticSelections():Promise<boolean> {
   return true;
 }
 export async function load() {
+  ui.configLoading = true;
+  try {
   ui.jsonPending = false;
   ui.jsonInvalid = false;
   ui.dirty = false;
@@ -188,6 +191,7 @@ export async function load() {
   initializeLanguages();
   markDirty();
   ui.ready = true;
+  } finally {ui.configLoading = false;}
 }
 export async function save(retried = false) {
   ui.saving = true;

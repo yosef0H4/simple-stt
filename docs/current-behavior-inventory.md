@@ -214,3 +214,44 @@ credentials invalidates remote voice workers before their next request.
 The server exposes installed Supertonic 3 as `supertonic3` in the TTS model
 catalog, with `sid:0` through `sid:9` voices. Explicit speech model requests select
 the matching installed engine rather than reusing an unrelated default model.
+
+Read-along Repeat always captures the current contents of its last saved area,
+including during active playback. It cancels the previous pipeline and reads
+the full read-along pipeline there without reselecting the area. Its initial
+capture precedes its first advance, just like a fresh run. Pressing the
+read-along shortcut again stops active reading or pending region selection.
+Pending-page speech becomes playable on its first completed chunk; subsequent
+chunks use a one-slot cancellable queue, retaining sentence/unit tags and gaps.
+Current playback has synthesis priority. Producer completion and audio drain
+both gate the next promotion. Failed uncommitted chunks retry within the limit,
+then wait for Resume/Next without replaying spoken chunks or discarding the
+pending page. Long pauses resume the existing stream rather than starting a
+second speech job. Chunks and total page audio retain explicit duration bounds.
+Reading settings include a saved case-insensitive literal word/phrase exclusion
+list. Matches respect Unicode word boundaries, apply before model cleanup for
+both local and remote speech, and leave the original OCR text unchanged. Empty
+spoken chunks are skipped; an entirely excluded pending page pauses explicitly.
+
+The shared reading HUD shows `current/total` beside the current chunk for
+normal reading and read-along, including paused playback. Background next-page
+OCR updates its own status without replacing current playback activity. Failed
+new captures do not publish a superseded session as live. Resume, Next or Repeat
+can retry an initial failed read-along capture at its saved area. Structured
+provider rejection messages are bounded and redact credentials and image data.
+
+Read-along separates action replay, the remaining settling countdown, capture,
+OCR, and speech preparation in the HUD. Short ambiguous speech chunks inherit
+the whole page route, using the same unit routing as ordinary reading. A selected
+monolingual server model fixes its default language instead of redetecting every
+client chunk; an explicit request language still undergoes capability validation.
+
+The HUD shows the playing chunk (`1/6`) and a simple pending-page phase, with a
+remaining countdown during settling. Generation/queue metrics remain available
+in status diagnostics and are omitted from the compact HUD.
+
+Linux desktop input retains separate keyboard and pointer connections for their
+authorized capabilities. Each owns an explicit, bounded Session.Close lease: a
+failed setup, canceled action, broken EIS connection or replacement closes its
+portal session. CreateSession obtains its handle before honoring cancellation
+so cleanup can close a session created during that race. Healthy sessions remain
+reusable, and saved restore tokens remain separate from live sessions.

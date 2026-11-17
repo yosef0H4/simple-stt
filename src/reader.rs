@@ -109,6 +109,18 @@ pub fn status() -> Option<Value> {
     }
 }
 
+/// Shared progress suffix for ordinary reading and read-along, including RTL text.
+fn append_chunk_counter(line: &mut String, status: &Value) {
+    if let Some(total) = status["chunk_total"].as_u64().filter(|total| *total > 0) {
+        let index = status["chunk"]
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_add(1)
+            .min(total);
+        line.push_str(&format!(" · \u{2066}{index}/{total}\u{2069}"));
+    }
+}
+
 /// The HUD renders live backend state. It never queues completed phases merely
 /// to keep them visible, and never includes source text when privacy is enabled.
 pub fn activity_text(
@@ -167,14 +179,8 @@ pub fn activity_text(
             };
             line.push_str(&format!(" · {label}"));
         }
-        if name == "activity" && phase == "reading" {
-            if let Some(total) = status["chunk_total"].as_u64().filter(|total| *total > 0) {
-                line.push_str(&format!(
-                    " · \u{2066}{}/{}\u{2069}",
-                    status["chunk"].as_u64().unwrap_or(0) + 1,
-                    total
-                ));
-            }
+        if name == "activity" && matches!(phase, "reading" | "playing" | "paused") {
+            append_chunk_counter(&mut line, status);
         }
         lines.push(line);
     }
@@ -198,16 +204,26 @@ pub fn hud_text(
                 .as_str()
                 .filter(|text| !text.trim().is_empty())
         });
-    if let Some(current_text) =
-        current_text.filter(|_| matches!(status["state"].as_str(), Some("reading" | "preparing")))
-    {
-        lines.push(format!(
-            "🔊 \u{2068}{}\u{2069}",
+    if let Some(current_text) = current_text.filter(|_| {
+        matches!(
+            status["state"].as_str(),
+            Some("reading" | "preparing" | "paused")
+        )
+    }) {
+        let icon = if status["state"] == "paused" {
+            "⏸️"
+        } else {
+            "🔊"
+        };
+        let mut line = format!(
+            "{icon} \u{2068}{}\u{2069}",
             current_text
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" ")
-        ));
+        );
+        append_chunk_counter(&mut line, status);
+        lines.push(line);
     } else if !activity.is_empty() {
         lines.push(activity);
     } else if status["read_pending"] == true
@@ -221,16 +237,22 @@ pub fn hud_text(
     if status["read_along_active"] == true {
         if let Some(phase) = status["next_page_activity"]["phase"].as_str() {
             let label = match phase {
+                "advancing" => "reader.next.advancing",
+                "waiting" => "reader.next.waiting",
                 "capturing" => "reader.next.capturing",
                 "ocr" => "reader.next.ocr",
                 "tts" => "reader.next.tts",
                 "ready" => "reader.next.ready",
                 _ => "reader.next.preparing",
             };
-            lines.push(format!(
-                "📄 {}",
-                crate::localization::translate(locale, label, &[])
-            ));
+            let mut line = format!("📄 {}", crate::localization::translate(locale, label, &[]));
+            if phase == "waiting" {
+                let milliseconds = status["next_page_activity"]["wait_remaining_ms"]
+                    .as_u64()
+                    .unwrap_or(0);
+                line.push_str(&format!(" · {:.1}s", milliseconds as f64 / 1000.0));
+            }
+            lines.push(line);
         }
     }
     if let Some(notice) = status["notice_text"].as_str().filter(|s| !s.is_empty()) {
@@ -260,7 +282,7 @@ pub fn hud_text(
             ));
             if notice.starts_with("Read-along") {
                 if let Some((_, detail)) = notice.split_once(": ") {
-                    lines.push(detail.chars().take(160).collect());
+                    lines.push(detail.chars().take(320).collect());
                 }
             }
         }
@@ -436,6 +458,34 @@ mod hud_formatter_tests {
         )));
         let (text, active) = super::hud_text(&json!({"state":"idle"}), Locale::En, 0);
         assert!(!active && text.is_empty());
+    }
+    #[test]
+    fn normal_and_read_along_huds_share_visible_chunk_progress() {
+        for read_along in [false, true] {
+            let mut status = json!({"state":"reading","activity":{"phase":"playing","message_id":"idle"},"chunk_text":"Current passage","chunk":0,"chunk_total":6,"read_along_active":read_along,"next_page_activity":{"phase":"ocr"}});
+            let first = super::hud_text(&status, Locale::En, 0).0;
+            assert!(first.contains("1/6"), "{first}");
+            status["chunk"] = json!(4);
+            let next = super::hud_text(&status, Locale::Ar, 0).0;
+            assert!(next.contains("5/6"), "{next}");
+            assert_eq!(next.matches("5/6").count(), 1);
+        }
+    }
+    #[test]
+    fn hud_keeps_simple_progress_when_buffer_metrics_are_available() {
+        let status = json!({"state":"reading","chunk_text":"Current passage","chunk":0,"chunk_total":6,"read_along_active":true,"chunks_ready_ahead":2,"next_page_activity":{"phase":"ready","generated_chunks":2,"chunk_total":8}});
+        let text = super::hud_text(&status, Locale::En, 0).0;
+        assert!(text.contains("1/6") && !text.contains("[1/6]"), "{text}");
+        assert!(text.contains("Next page · ready"), "{text}");
+        assert!(!text.contains("queued") && !text.contains("2/8"), "{text}");
+    }
+    #[test]
+    fn settling_hud_shows_remaining_wait_instead_of_capturing() {
+        let status = json!({"state":"reading","chunk_text":"Current passage","chunk":1,"chunk_total":6,"read_along_active":true,"next_page_activity":{"phase":"waiting","wait_remaining_ms":1250}});
+        let text = super::hud_text(&status, Locale::En, 0).0;
+        assert!(text.contains("2/6") && !text.contains("[2/6]"));
+        assert!(text.contains("waiting") && text.contains("1.2s"), "{text}");
+        assert!(!text.contains("capturing"));
     }
     #[test]
     fn reading_falls_back_to_current_sentence_when_activity_metadata_is_stale() {

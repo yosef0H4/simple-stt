@@ -57,6 +57,10 @@ impl RepeatActionState {
         }
     }
 
+    pub fn has_read_along_target(&self) -> bool {
+        matches!(self.payload, Some(RepeatPayload::ReadAlong { .. }))
+    }
+
     pub fn metadata(&self) -> (u64, String) {
         (self.last_action_at_ms, self.last_action_kind.clone())
     }
@@ -78,6 +82,35 @@ use anyhow::Context;
 mod tests {
     use super::*;
 
+    #[test]
+    fn repeated_read_along_keeps_the_saved_area_across_invocations() {
+        let target = Target {
+            window: crate::read_along_capture::WindowId::X11(77),
+            region: crate::read_along_capture::Rect {
+                x: 2,
+                y: 3,
+                width: 400,
+                height: 200,
+            },
+        };
+        let mut state = RepeatActionState::default();
+        let revision = state.begin("read-along", 1);
+        state.complete(
+            revision,
+            RepeatPayload::ReadAlong {
+                target: target.clone(),
+            },
+        );
+        for at in [2, 3] {
+            match state.repeat(at).unwrap().1 {
+                RepeatPayload::ReadAlong { target: saved } => {
+                    assert_eq!(saved.window, target.window);
+                    assert_eq!(saved.region, target.region);
+                }
+                _ => panic!("repeat must retain a capture target rather than cached speech"),
+            }
+        }
+    }
     #[test]
     fn metadata_is_available_while_explicit_action_is_pending() {
         let mut state = RepeatActionState::default();

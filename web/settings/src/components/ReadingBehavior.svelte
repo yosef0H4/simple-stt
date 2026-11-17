@@ -21,5 +21,6 @@ const choices=[{value:"on",label:"settings.on"},{value:"off",label:"settings.off
  {#each [["clean_text","module.clean_text"],["currency_words","module.currency_words"]] as [key,label]}
  <Combo {label} disabled={key==="currency_words"&&value("clean_text")==="off"} path={`reading.${key}`} value={value(key as "clean_text"|"currency_words")} items={value(key as "clean_text"|"currency_words")==="mixed"?[{value:"mixed",label:"settings.mixed"},...choices]:choices} help={key==="clean_text"?"module.clean_text_help":"module.currency_words_help"} onselect={selected=>{if(selected!=="mixed")update(key as "clean_text"|"currency_words",selected);}}/>
  {/each}
+ <div class="field"><div class="field-copy"><label for="tts-excluded-words">{t('reading.excluded_words')}</label><p class="inline-status">{t('reading.excluded_words_help')}</p></div><div class="control"><textarea id="tts-excluded-words" rows="4" value={(reading.config.speech.excluded_words??[]).join('\n')} oninput={event=>{if(reading.config)reading.config.speech.excluded_words=event.currentTarget.value.split('\n');}}></textarea></div></div>
 </Group>
 {/if}
