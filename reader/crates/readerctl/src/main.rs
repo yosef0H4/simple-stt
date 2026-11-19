@@ -1,6 +1,5 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
-#[cfg(unix)]
 use reader_core::config::data_dir;
 use reader_core::text::MAX_TEXT_BYTES;
 use reader_core::wire::{read_json_frame, write_json_frame};
@@ -80,20 +79,6 @@ struct LocalReply {
     state: Option<serde_json::Value>,
 }
 
-#[cfg(unix)]
-fn socket_path() -> PathBuf {
-    data_dir().join("simple-tts.sock")
-}
-#[cfg(windows)]
-fn pipe_name() -> Vec<u16> {
-    format!(
-        r"\\.\pipe\simple-stt-reader-{}",
-        std::env::var("USERNAME").unwrap_or_else(|_| "current-user".into())
-    )
-    .encode_utf16()
-    .chain(std::iter::once(0))
-    .collect()
-}
 fn readerd_path() -> Result<PathBuf> {
     let exe = std::env::current_exe()?;
     let dir = exe.parent().context("readerctl executable has no parent")?;
@@ -104,12 +89,7 @@ fn readerd_path() -> Result<PathBuf> {
     }))
 }
 fn ensure_daemon() -> Result<()> {
-    #[cfg(unix)]
-    if std::os::unix::net::UnixStream::connect(socket_path()).is_ok() {
-        return Ok(());
-    }
-    #[cfg(windows)]
-    if connect_pipe().is_ok() {
+    if reader_core::local_ipc::connect(&data_dir()).is_ok() {
         return Ok(());
     }
     let executable = readerd_path()?;
@@ -137,79 +117,44 @@ fn ensure_daemon() -> Result<()> {
         options.mode(0o600);
     }
     let log = options.open(path)?;
-    command
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000); // CREATE_NO_WINDOW
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::from(log.try_clone()?))
         .stderr(Stdio::from(log))
         .spawn()
         .context("starting resident Simple TTS controller")?;
     for _ in 0..100 {
-        #[cfg(unix)]
-        if std::os::unix::net::UnixStream::connect(socket_path()).is_ok() {
+        if reader_core::local_ipc::connect(&data_dir()).is_ok() {
             return Ok(());
         }
-        #[cfg(windows)]
-        if connect_pipe().is_ok() {
-            return Ok(());
+        if let Some(status) = child.try_wait()? {
+            if reader_core::local_ipc::connect(&data_dir()).is_ok() {
+                return Ok(());
+            }
+            bail!("reader controller exited with {status}; see the daemon log");
         }
         std::thread::sleep(Duration::from_millis(40));
     }
-    bail!("controller did not create its local IPC socket; see the daemon log")
+    let _ = child.kill();
+    let _ = child.wait();
+    bail!("controller did not open its local IPC endpoint; see the daemon log")
 }
 fn send(request: &LocalRequest, start_daemon: bool) -> Result<LocalReply> {
     if start_daemon {
         ensure_daemon()?
     }
+    let mut stream = reader_core::local_ipc::connect(&data_dir())
+        .context("connecting to the resident controller")?;
     #[cfg(unix)]
-    {
-        use std::os::unix::net::UnixStream;
-        let mut stream =
-            UnixStream::connect(socket_path()).context("connecting to the resident controller")?;
-        stream.set_read_timeout(Some(Duration::from_secs(90)))?;
-        write_json_frame(&mut stream, request)?;
-        let response: LocalReply = read_json_frame(&mut stream)?;
-        if !response.ok {
-            bail!("{}", response.message)
-        }
-        Ok(response)
+    stream.set_read_timeout(Some(Duration::from_secs(90)))?;
+    write_json_frame(&mut stream, request)?;
+    let response: LocalReply = read_json_frame(&mut stream)?;
+    if !response.ok {
+        bail!("{}", response.message);
     }
-    #[cfg(windows)]
-    {
-        let mut stream = connect_pipe()?;
-        write_json_frame(&mut stream, request)?;
-        let response: LocalReply = read_json_frame(&mut stream)?;
-        if !response.ok {
-            bail!("{}", response.message)
-        }
-        Ok(response)
-    }
-    #[cfg(not(any(unix, windows)))]
-    bail!("unsupported local IPC platform")
-}
-#[cfg(windows)]
-fn connect_pipe() -> Result<std::fs::File> {
-    use std::os::windows::io::{FromRawHandle, RawHandle};
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-    use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
-    };
-    let name = pipe_name();
-    let handle = unsafe {
-        CreateFileW(
-            name.as_ptr(),
-            FILE_GENERIC_READ | FILE_GENERIC_WRITE,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-    anyhow::ensure!(
-        handle != INVALID_HANDLE_VALUE,
-        "Simple TTS named pipe is unavailable"
-    );
-    Ok(unsafe { std::fs::File::from_raw_handle(handle as RawHandle) })
+    Ok(response)
 }
 fn read_text(source: &str, text: &str) -> Result<()> {
     if text.len() > MAX_TEXT_BYTES {
@@ -371,6 +316,8 @@ fn restart_controller() -> Result<()> {
     ensure_daemon()
 }
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    reader_core::local_ipc::prevent_stdio_handle_inheritance();
     let args = Args::parse();
     dispatch(args.command, args.json)
 }
@@ -425,7 +372,7 @@ fn dispatch(command: CommandKind, json: bool) -> Result<()> {
         | CommandKind::ServerStart
         | CommandKind::ServerStop => run_control(command),
         CommandKind::Status => show_status(json),
-        CommandKind::Shutdown => show_reply(send(&LocalRequest::Shutdown, true)?),
+        CommandKind::Shutdown => show_reply(send(&LocalRequest::Shutdown, false)?),
         CommandKind::Settings => open_settings(),
         CommandKind::ConfigureShortcuts
         | CommandKind::TestSpeech

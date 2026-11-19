@@ -18,6 +18,7 @@ export const ui = $state({
   baseline: null as Config | null,
   hash: "",
   dirty: false,
+  loading: false,
   page: "general" as Page,
   notice: "",
   noticeDetails: "",
@@ -162,6 +163,7 @@ export async function refreshAutomaticSelections():Promise<boolean> {
 }
 export async function load() {
   ui.configLoading = true;
+
   try {
   ui.jsonPending = false;
   ui.jsonInvalid = false;
@@ -192,6 +194,7 @@ export async function load() {
   markDirty();
   ui.ready = true;
   } finally {ui.configLoading = false;}
+
 }
 export async function save(retried = false) {
   ui.saving = true;

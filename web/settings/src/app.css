@@ -840,12 +840,9 @@ dialog::backdrop {
     grid-template-columns: minmax(0, 1fr) 34px;
   }
   .savebar {
-    inset-inline-start: calc(58px + (100vw - 58px) / 2);
-    width: calc(100vw - 80px);
+    inset-inline-start: 50%;
+    width: min(600px, calc(100% - 36px));
     bottom: 12px;
-  }
-  :root[dir="rtl"] .savebar {
-    transform: translateX(50%);
   }
   .savebar span {
     font-size: 11px;

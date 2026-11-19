@@ -91,8 +91,9 @@
     }
     ui.page = page;
     query = "";
+    await tick();
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
     if (path) {
-      await tick();
       const field = document.querySelector(`[data-setting-path="${path}"]`) || document.getElementById(path) || document.querySelector(`[data-setting-path$=".${path.split('.').at(-1)}"]`);
       if (field) {
         for (let p = field.parentElement; p; p = p.parentElement)
@@ -216,6 +217,8 @@
     <header class="page-head"><h1>{t(current.name)}</h1><p class="page-description">{t(current.description)}</p></header>
     <form
       id="settings"
+      inert={ui.configLoading}
+      aria-busy={ui.configLoading}
       onsubmit={(event) => {
         event.preventDefault();
         void save();
@@ -228,7 +231,7 @@
             />{:else if ui.page === "reading"}<Reading />{:else if ui.page === "cleanup"}<Cleanup />{:else}<Advanced />{/if}
         </section>{:else}<div
           class="loading-skeleton"
-          aria-label={t("ui.loading_settings.2ee974")}
+          aria-label={t("ui.configLoading_settings.2ee974")}
         >
           <span></span><span></span><span></span>
         </div>{/if}

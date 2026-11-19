@@ -7,6 +7,7 @@
 #Include ..\lib\Config.ahk
 #Include ..\lib\TextTransform.ahk
 #Include ..\lib\Typist.ahk
+#Include ..\lib\IpcClient.ahk
 
 global SmokeCtl := ""
 global SmokeCapture := ""
@@ -17,6 +18,7 @@ global SmokePid := 0
 global SmokeLatestSeq := 0
 global SmokeTypingGui := ""
 global DelayedClipboardMarkers := ""
+global PasteFeedback := ""
 
 Info(message) {
     SimpleSttConsoleLine("INFO: " . message)
@@ -110,11 +112,11 @@ PollEvents() {
     return response["events"]
 }
 
-WaitForEvent(kind, timeoutMs := 120000) {
+WaitForEvent(kind, timeoutMs := 120000, sessionId := 0) {
     deadline := A_TickCount + timeoutMs
     while A_TickCount < deadline {
         for event in PollEvents() {
-            if event["kind"] = kind
+            if event["kind"] = kind && (!sessionId || event["session_id"] + 0 = sessionId)
                 return event
             if event["kind"] = "notice" && event["level"] = "error"
                 Fail("service notice: " . event["text"])
@@ -164,15 +166,21 @@ KeyboardLanguageSmoke() {
     originalLayout := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
     try {
         for language in [Map("klid", "00000409", "name", "en", "session", 7201), Map("klid", "00000401", "name", "ar", "session", 7202)] {
+            WinActivate("ahk_id " . window.Hwnd)
+            Assert(WinWaitActive("ahk_id " . window.Hwnd, , 3), "language target did not become active")
+            edit.Focus()
             layout := DllCall("LoadKeyboardLayoutW", "Str", language["klid"], "UInt", 1, "Ptr")
             Assert(layout != 0, "test keyboard layout unavailable: " . language["name"])
             DllCall("ActivateKeyboardLayout", "Ptr", layout, "UInt", 0, "Ptr")
             Sleep(150)
             activeLayout := DllCall("GetKeyboardLayout", "UInt", threadId, "Ptr")
             Assert((activeLayout & 0x3ff) = (layout & 0x3ff), "test window did not switch keyboard layout")
+            detected := CallCtl("keyboard-language")
+            Assert(detected["ok"] && detected["message"] = language["name"], "foreground detection disagreed with target layout: " . detected["message"])
             response := CallCtl("start-recording --session-id " . language["session"] . " --target-window " . window.Hwnd)
             Assert(response["ok"], "language recording start failed: " . response["message"])
-            event := WaitForEvent("recording_started")
+            Assert(!response["values"].Has("recording") || response["values"]["recording"] != "skipped", "language recording was skipped: " . language["name"])
+            event := WaitForEvent("recording_started", 30000, language["session"])
             Assert(event["values"]["language"] = language["name"], "recording selected the wrong speech language")
             response := CallCtl("cancel")
             Assert(response["ok"], "language test cancellation failed")
@@ -217,7 +225,15 @@ TypingSmoke() {
 
 SetClipboardMarker() {
     format := DllCall("user32\RegisterClipboardFormatW", "Str", "SimpleSttSmokeObject", "UInt")
-    if !DllCall("user32\OpenClipboard", "Ptr", 0, "Int")
+    clipboardOpened := false
+    Loop 30 {
+        if DllCall("user32\OpenClipboard", "Ptr", A_ScriptHwnd, "Int") {
+            clipboardOpened := true
+            break
+        }
+        Sleep(10)
+    }
+    if !clipboardOpened
         throw Error("unable to open clipboard for marker")
     try {
         DllCall("user32\EmptyClipboard")
@@ -236,8 +252,18 @@ SetClipboardMarker() {
     return format
 }
 
-PastePlain(*) {
-    Send("^v")
+PasteChordProc(hwnd, message, wParam, lParam, subclassId, refData) {
+    ; React to the delivered Win32 keystroke as an editor implementing these
+    ; shortcuts would. An AHK hotkey hook can suppress synthetic input.
+    if message = 0x0100 && wParam = 0x2D {
+        shift := DllCall("user32\GetKeyState", "Int", 0x10, "Short") < 0
+        ctrl := DllCall("user32\GetKeyState", "Int", 0x11, "Short") < 0
+        if shift && !ctrl {
+            DllCall("user32\SendMessageW", "Ptr", hwnd, "UInt", 0x0302, "UPtr", 0, "Ptr", 0, "Ptr")
+            return 0
+        }
+    }
+    return DllCall("comctl32\DefSubclassProc", "Ptr", hwnd, "UInt", message, "UPtr", wParam, "Ptr", lParam, "Ptr")
 }
 
 DelayedEditPasteProc(hwnd, message, wParam, lParam, subclassId, refData) {
@@ -335,8 +361,12 @@ DelayedPasteSmoke(logger, concurrentCopy, cleanClipboard := true, payload := "he
 
 PasteSmoke() {
     global SmokeTypingGui
+    global PastePhases := Array()
+    global SmokeCtl, SmokeState, SmokeToken, PasteFeedback
     logger := ShellLog(A_Temp . "\\simple-stt-full-smoke-paste.log")
-    Hotkey("^+v", PastePlain, "On")
+    PasteFeedback := IpcClient(SmokeCtl, SmokeState, SmokeToken, NoopNotice, logger, true)
+    relayPid := PasteFeedback.statusPid
+    Assert(relayPid && ProcessExist(relayPid), "persistent desktop feedback relay did not start")
     for item in [["smart_paste", 9100], ["paste_ctrl_v", 9101], ["paste_ctrl_shift_v", 9102], ["paste_shift_insert", 9103]] {
         format := SetClipboardMarker()
         window := Gui("+AlwaysOnTop", "SimpleStt Full Smoke Paste")
@@ -347,7 +377,11 @@ PasteSmoke() {
         Assert(WinActive("A") = window.Hwnd, item[1] . " window did not become active")
         edit.Focus()
         Sleep(100)
-        typistInstance := Typist(logger, NoopNotice)
+        PastePhases := Array()
+        Assert(CallCtl("begin-delivery --session-id " . item[2])["ok"], "relay delivery session did not start")
+        pasteChord := CallbackCreate(PasteChordProc, , 6)
+        Assert(DllCall("comctl32\SetWindowSubclass", "Ptr", edit.Hwnd, "Ptr", pasteChord, "UPtr", 1, "UPtr", 0), "could not attach the fixture's paste shortcuts")
+        typistInstance := Typist(logger, NoopNotice, FinishPasteFeedback, RecordPastePhase)
         startedAt := A_TickCount
         typistInstance.Begin(item[2], window.Hwnd, "hello world", false, 100, false, item[1])
         deadline := A_TickCount + 5000
@@ -355,14 +389,25 @@ PasteSmoke() {
             Sleep(25)
         Assert(!typistInstance.active, item[1] . " smoke timed out")
         Assert(edit.Value = "hello world", item[1] . " smoke mismatch: " . edit.Value)
+        elapsedMs := A_TickCount - startedAt
+        Info(item[1] . " delivery_ms=" . elapsedMs)
+        Assert(elapsedMs < 1000, item[1] . " responsive target paste exceeded 1 second")
+        Assert(PastePhases.Length = 3 && PastePhases[1] = "preparing-clipboard" && PastePhases[2] = "pasting" && PastePhases[3] = "waiting-for-paste", item[1] . " omitted detailed paste phases")
+        Assert(PasteFeedback.statusPid = relayPid && ProcessExist(relayPid), "delivery feedback restarted its helper")
         Assert(DllCall("user32\IsClipboardFormatAvailable", "UInt", format, "Int"), item[1] . " did not restore non-text clipboard format")
         window.Destroy()
+        CallbackFree(pasteChord)
         SmokeTypingGui := ""
     }
     DelayedPasteSmoke(logger, false)
     DelayedPasteSmoke(logger, false, false)
     DelayedPasteSmoke(logger, false, true, "界")
     DelayedPasteSmoke(logger, true)
+    PasteFeedback.Stop()
+    deadline := A_TickCount + 3000
+    while ProcessExist(relayPid) && A_TickCount < deadline
+        Sleep(10)
+    Assert(!ProcessExist(relayPid), "feedback relay did not exit after shell cleanup")
     window := Gui("+AlwaysOnTop", "SimpleStt Unknown Paste Target")
     button := window.AddButton("w180 h40", "No Edit Control")
     window.Show("w220 h80")
@@ -379,7 +424,17 @@ PasteSmoke() {
     Assert(A_Clipboard = "retain transcript", "unknown-control paste did not retain the transcript clipboard")
     window.Destroy()
     SmokeTypingGui := ""
-    Hotkey("^+v", PastePlain, "Off")
+}
+RecordPastePhase(sessionId, phase) {
+    global PastePhases, PasteFeedback
+    PastePhases.Push(phase)
+    startedAt := A_TickCount
+    Assert(PasteFeedback.DeliveryStatus(sessionId, phase), "unable to queue feedback")
+    Assert(A_TickCount - startedAt < 100, "feedback blocked text delivery")
+}
+FinishPasteFeedback(sessionId) {
+    global PasteFeedback
+    Assert(PasteFeedback.DeliveryStatus(sessionId, "complete"), "unable to queue completion")
 }
 
 DeliveryCachePayloadSmoke() {
@@ -389,7 +444,9 @@ DeliveryCachePayloadSmoke() {
 }
 
 Cleanup(*) {
-    global SmokePid, SmokeTypingGui
+    global SmokePid, SmokeTypingGui, PasteFeedback
+    if IsObject(PasteFeedback)
+        try PasteFeedback.Stop()
     if IsObject(SmokeTypingGui)
         try SmokeTypingGui.Destroy()
     if SmokePid
@@ -419,8 +476,12 @@ try {
     for event in PollEvents()
         Assert(event["kind"] != "recording_started" && event["kind"] != "transcript" && event["kind"] != "model_loading", "None caused recording or inference")
     Assert(!CallCtl("ping")["values"].Has("worker_pid"), "None launched an inference worker")
+    settings.Set("parakeet_runtime_dir", "external\parakeet-runtime\parakeet-windows-vulkan")
+    settings.Set("model_dir", "external\parakeet-runtime\models")
+    settings.Set("selection_mode", "single_model")
     settings.Set("single_model_filename", "tdt_ctc-110m-q8_0.gguf")
     settings.Set("language_models", '{"en":"tdt_ctc-110m-q8_0.gguf","ar":"lemura-arabic-asr-lite-q8_0.gguf"}')
+    settings.Set("language_runtimes", '{"en":"parakeet-vulkan","ar":"parakeet-vulkan"}')
     settings.SaveSync()
     Assert(CallCtl("reload-config")["ok"], "model selection reload failed")
     response := CallCtl("list-inputs")
@@ -452,6 +513,7 @@ try {
     Info("warming speech model at recording start")
     response := CallCtl("start-recording --session-id 7001")
     Assert(response["ok"], "start-recording warm-up failed: " . response["message"])
+    Assert(!response["values"].Has("recording") || response["values"]["recording"] != "skipped", "explicit fixture recording was skipped")
     Assert(WaitForWorkerLoaded(), "worker PID not visible while recording was still active")
 
     Info("testing foreground keyboard language in a controlled edit window")

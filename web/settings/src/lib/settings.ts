@@ -249,12 +249,19 @@ export const hotkeys = [
   ["general.retry_delivery_hotkey", "ui.retry_last_dictation.a48897"],
   ["general.show_shortcuts_hotkey", "ui.show_shortcuts"],
 ] as const;
+export const readerHotkeys = [
+  ["read-selection", "read_selection"],
+  ["read-region", "read_region"],
+  ["copy-region", "copy_region"],
+  ["listen-clipboard", "listen_clipboard"],
+  ["read-along", "read_along"],
+] as const;
 const pageFor = (path: string): Page =>
  path.startsWith("diagnostics.") || ["speech.idle_worker_timeout_secs","speech.worker_shutdown_grace_ms"].includes(path) ? "advanced" :
  path.startsWith("speech.") || ["cleanup.provider","cleanup.openai_compatible.base_url"].includes(path) ? "models" :
- path.startsWith("audio.") || path.startsWith("output.") || path==="general.recording_mode" ? "audio" :
+ path.startsWith("audio.") || path.startsWith("output.") ? "audio" :
  path.startsWith("general.") ? "general" : "cleanup";
-export const searchEntries = [
+export const searchEntries: {path: string; label: string; page: Page; help?: string; aliases?: string}[] = [
  {path:"tts.voice",label:"reading.voice",page:"models" as Page,aliases:"voice accent speaker language صوت نبرة لغة"},
  {path:"tts.steps",label:"module.steps",page:"models" as Page,aliases:"Supertonic quality synthesis جودة"},
  {path:"read_along.delay_ms",label:"reading.read_along_delay",page:"reading" as Page,aliases:"read along page advance space screenshot delay قراءة متتابعة صفحة"},
@@ -267,7 +274,8 @@ export const searchEntries = [
   { path: "selection_copy.shortcut", label: "reading.copy_title", page: "reading" as Page, aliases: "copy selection clipboard نسخ تحديد حافظة" },
   { path: "model-search", label: "assets.title", page: "models" as Page, aliases: "download runtime model installed recommended NVIDIA CUDA Vulkan voice recognition read aloud image text تنزيل نماذج بيئات مثبت موصى إنفيديا" },
   ...Object.values(fields).map((f) => ({ ...f, page: pageFor(f.path) })),
-  ...hotkeys.map(([path, label]) => ({ path, label, page: "audio" as Page })),
+  ...hotkeys.map(([path, label]) => ({ path, label, page: pageFor(path) })),
+  ...readerHotkeys.map(([, key]) => ({ path: `reader.shortcuts.${key}`, label: `reading.${key}`, page: "general" as Page })),
   {
     path: "general.ui_language",
     label: "ui.language.89b86a",

@@ -19,8 +19,13 @@ capture := SimpleSttResolveExe("simple-stt-capture")
 if !FileExist(ctl) || !FileExist(capture) {
     Fail("Build simple-stt-ctl.exe and simple-stt-capture.exe first.")
 }
+configFile := SimpleSttTempFile("ipc-smoke-config")
+state := SimpleSttTempFile("ipc-smoke-state")
+pid := 0
+EnvSet("SIMPLE_STT_CONFIG", configFile)
+OnExit(Cleanup)
+OnError(ReportError)
 config := ConfigStore(ctl)
-state := config.Get("service_state_path")
 token := SimpleSttRandomToken()
 try FileDelete(state)
 Info("starting capture service")
@@ -50,3 +55,16 @@ try FileDelete(output)
 try ProcessWaitClose(pid, 3)
 SimpleSttConsoleLine("PASS: authenticated ping and graceful shutdown")
 ExitApp(0)
+
+ReportError(err, mode) {
+    SimpleSttConsoleError("FAIL: " . err.Message)
+    ExitApp(2)
+    return true
+}
+Cleanup(*) {
+    global pid, state, configFile
+    if pid && ProcessExist(pid)
+        try ProcessClose(pid)
+    try FileDelete(state)
+    try FileDelete(configFile)
+}

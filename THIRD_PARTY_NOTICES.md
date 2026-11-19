@@ -65,3 +65,11 @@ The unmodified Facebook AI Research `lid.176.ftz` model is distributed under CC 
 The Rust EIS client uses [reis](https://github.com/ids1024/reis) 0.7.1,
 licensed under the MIT license. It carries compositor-authorized RemoteDesktop
 input over the EI protocol; no libei binaries are bundled.
+
+## Windows tray menu artwork
+
+The color menu icons in `ahk/icons/` are resized PNG images from
+[Google Noto Emoji](https://github.com/googlefonts/noto-emoji/tree/99701e07d3d1fe1bdbcdb14964547f0fd592966f),
+converted to ICO format. The upstream copyright notice and Apache License 2.0
+are included in `ahk/icons/LICENSE-NOTO-EMOJI.txt`.
+`scripts/build-windows-icons.cjs` records the source revision and image names.

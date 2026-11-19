@@ -62,6 +62,17 @@ enum Mode {
         no_desktop: bool,
     },
     Server,
+    #[cfg(windows)]
+    #[command(hide = true)]
+    CaptureWindow {
+        hwnd: isize,
+        process_id: u32,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -242,6 +253,11 @@ struct MediaBridge {
     #[cfg(windows)]
     job: windows_sys::Win32::Foundation::HANDLE,
 }
+
+// Windows job handles are process-wide and may move between threads. The bridge
+// owns this handle exclusively, is held under a Mutex, and closes it only in Drop.
+#[cfg(windows)]
+unsafe impl Send for MediaBridge {}
 
 struct MediaBridgeRequest {
     value: serde_json::Value,
@@ -2441,27 +2457,10 @@ fn spawn_tts(
     if let Some(library) = &config.speech.worker_library {
         command.arg("--library").arg(library);
     }
-    command.env(
-        "LD_LIBRARY_PATH",
-        reader_core::native_paths::library_search_path(
-            &config.speech.runtime_dir,
-            std::env::var_os("LD_LIBRARY_PATH").as_deref(),
-        )?,
-    );
-    #[cfg(windows)]
-    {
-        let mut path = config
-            .speech
-            .runtime_dir
-            .join("bin")
-            .to_string_lossy()
-            .into_owned();
-        if let Some(existing) = std::env::var_os("PATH") {
-            path.push(';');
-            path.push_str(&existing.to_string_lossy());
-        }
-        command.env("PATH", path);
-    }
+    reader_core::native_paths::configure_worker_libraries(
+        &mut command,
+        &config.speech.runtime_dir,
+    )?;
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -3380,18 +3379,23 @@ impl App {
         if !self.inner.generation.accepts(generation) {
             return;
         }
-        if label.starts_with("Read-along") {
+        let read_along_failed = label.starts_with("Read-along");
+        if read_along_failed {
             self.inner.read_along_active.store(false, Ordering::Release);
         }
         self.clear_idle_lease();
         if !keep_pending {
             self.inner.read_pending.store(false, Ordering::Release);
         }
-        self.inner.activity.lock().unwrap().set(generation, "error");
+        {
+            let mut activity = self.inner.activity.lock().unwrap();
+            activity.set(generation, "error");
+            activity.recover_read_along = read_along_failed;
+        }
         tracing::warn!(%error, label, "reader request failed");
         let detail = error.to_string();
         let detail: String = detail.chars().take(320).collect();
-        let hint = if label.starts_with("Read-along") {
+        let hint = if read_along_failed {
             " Resume or Retry last action retries the saved area."
         } else {
             ""
@@ -4350,7 +4354,10 @@ impl App {
             let current = || app.inner.generation.accepts(generation);
             let selected = match saved_target {
                 Some(target) => target.capture(&current).map(|image| (target, image)),
-                None => read_along_capture::Target::select(current),
+                None => {
+                    let _ = start_region_prewarm(&app, generation);
+                    read_along_capture::Target::select(current)
+                }
             };
             let (target, image) = match selected {
                 Ok(selected) => selected,
@@ -4476,8 +4483,7 @@ impl App {
             .activity
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .phase
-            == "error";
+            .recover_read_along;
         let saved = self
             .inner
             .repeat_action
@@ -5043,11 +5049,11 @@ impl App {
         self.inner.read_along_active.store(false, Ordering::Release);
         drop(state);
         *self.inner.session.lock().unwrap() = None;
-        self.inner
-            .activity
-            .lock()
-            .unwrap()
-            .set(app_generation, "idle");
+        {
+            let mut activity = self.inner.activity.lock().unwrap();
+            activity.set(app_generation, "idle");
+            activity.recover_read_along = true;
+        }
         self.set_notice(
             format!("Read-along stopped: {error}. Use Retry last action for the saved area."),
             Duration::from_secs(5),
@@ -5555,8 +5561,10 @@ impl App {
                 }
             }
         };
-        let server = tiny_http::Server::http(host)
-            .map_err(|e| anyhow::anyhow!("binding server listener: {e}"))?;
+        let listener = std::net::TcpListener::bind(host).context("binding server listener")?;
+        let server = tiny_http::Server::from_listener(listener, None)
+            .map_err(anyhow::Error::from_boxed)
+            .context("starting HTTP server")?;
         let stop = Arc::new(AtomicBool::new(false));
         *active = Some(stop.clone());
         let app = self.clone();
@@ -6414,12 +6422,11 @@ fn with_ocr_worker<T>(
         if let Some(library) = &config.ocr.worker_library {
             command.arg("--library").arg(library);
         }
-        let paths = reader_core::native_paths::library_search_path(
+        reader_core::native_paths::configure_worker_libraries(
+            &mut command,
             &config.ocr.runtime_dir,
-            std::env::var_os("LD_LIBRARY_PATH").as_deref(),
         )?;
         command
-            .env("LD_LIBRARY_PATH", paths)
             .env("SIMPLE_TTS_CAPTURE_DIR", &allowed)
             .env(
                 "SIMPLE_TTS_OCR_API_KEY",
@@ -8075,7 +8082,7 @@ fn serve_daemon(app: App, no_desktop: bool) -> Result<()> {
     app.inner
         .desktop_enabled
         .store(!no_desktop, Ordering::Relaxed);
-    let path = data_dir().join("simple-tts.sock");
+    let path = reader_core::local_ipc::address(&data_dir());
     std::fs::create_dir_all(data_dir())?;
     std::fs::set_permissions(data_dir(), std::fs::Permissions::from_mode(0o700))?;
     if path.exists() {
@@ -8144,42 +8151,13 @@ fn request_daemon_shutdown(app: &App) {
 }
 #[cfg(unix)]
 fn wake_unix_socket() {
-    if let Ok(stream) = std::os::unix::net::UnixStream::connect(data_dir().join("simple-tts.sock"))
-    {
+    if let Ok(stream) = reader_core::local_ipc::connect(&data_dir()) {
         drop(stream);
     }
 }
 #[cfg(windows)]
-fn pipe_name() -> Vec<u16> {
-    format!(
-        r"\\.\pipe\simple-stt-reader-{}",
-        std::env::var("USERNAME").unwrap_or_else(|_| "current-user".into())
-    )
-    .encode_utf16()
-    .chain(std::iter::once(0))
-    .collect()
-}
-#[cfg(windows)]
 fn wake_pipe() {
-    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
-    let name = pipe_name();
-    let handle = unsafe {
-        CreateFileW(
-            name.as_ptr(),
-            0,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle != INVALID_HANDLE_VALUE {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(handle);
-        }
-    }
+    let _ = reader_core::local_ipc::connect(&data_dir());
 }
 #[cfg(windows)]
 fn serve_daemon(app: App, no_desktop: bool) -> Result<()> {
@@ -8198,12 +8176,23 @@ fn serve_daemon(app: App, no_desktop: bool) -> Result<()> {
         start_desktop_integrations(app.clone());
     }
     if app.inner.store.load()?.server.enabled {
-        app.start_server()?;
+        if let Err(error) = app.start_server() {
+            let occupied = error.downcast_ref::<std::io::Error>().is_some_and(|err| {
+                matches!(
+                    err.kind(),
+                    std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+                )
+            });
+            if !occupied || std::env::var_os("SIMPLE_STT_MANAGED_API").is_some() {
+                return Err(error);
+            }
+            tracing::warn!(%error, "API address is already in use; reader IPC stays available");
+        }
     }
     let signal_app = app.clone();
     ctrlc::set_handler(move || request_daemon_shutdown(&signal_app))?;
     let active = Arc::new(AtomicUsize::new(0));
-    let name = pipe_name();
+    let name = reader_core::local_ipc::wide_address(&data_dir())?;
     while !app.inner.shutdown.load(Ordering::Relaxed) {
         let handle = unsafe {
             CreateNamedPipeW(
@@ -9313,11 +9302,6 @@ fn read_region_hotkey_inner(app: &App, generation: u64, repeat_revision: u64) ->
     std::fs::create_dir_all(&directory)?;
     let current =
         || app.inner.generation.accepts(generation) && !app.inner.shutdown.load(Ordering::Acquire);
-    let _region = app
-        .inner
-        .region_gate
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let path = if read_along_capture::Target::supported_on_current_desktop() {
         let (target, image) = read_along_capture::Target::select(current)?;
         app.complete_repeat_action(
@@ -10235,37 +10219,8 @@ fn run_server(store: ConfigStore) -> Result<()> {
     Ok(())
 }
 
-#[cfg(unix)]
 fn local_daemon_is_running() -> bool {
-    std::os::unix::net::UnixStream::connect(data_dir().join("simple-tts.sock")).is_ok()
-}
-
-#[cfg(windows)]
-fn local_daemon_is_running() -> bool {
-    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
-    use windows_sys::Win32::Storage::FileSystem::{CreateFileW, OPEN_EXISTING};
-    use windows_sys::Win32::System::Pipes::WaitNamedPipeW;
-    let name = pipe_name();
-    if unsafe { WaitNamedPipeW(name.as_ptr(), 100) } == 0 {
-        return false;
-    }
-    let handle = unsafe {
-        CreateFileW(
-            name.as_ptr(),
-            0x8000_0000 | 0x4000_0000,
-            0,
-            std::ptr::null(),
-            OPEN_EXISTING,
-            0,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        false
-    } else {
-        unsafe { CloseHandle(handle) };
-        true
-    }
+    reader_core::local_ipc::connect(&data_dir()).is_ok()
 }
 
 fn start_media_bridge() -> Result<MediaBridge> {
@@ -10355,6 +10310,29 @@ fn start_media_bridge_command(mut command: Command) -> Result<MediaBridge> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    #[cfg(windows)]
+    if let Mode::CaptureWindow {
+        hwnd,
+        process_id,
+        x,
+        y,
+        width,
+        height,
+        ref path,
+    } = args.command
+    {
+        return read_along_capture::capture_windows_region(
+            hwnd,
+            process_id,
+            read_along_capture::Rect {
+                x,
+                y,
+                width,
+                height,
+            },
+            path,
+        );
+    }
     let store = ConfigStore::new(args.config.unwrap_or_else(config_path));
     privacy::set_content_logging(
         store
@@ -10375,6 +10353,8 @@ fn main() -> Result<()> {
             serve_daemon(app, no_desktop)
         }
         Mode::Server => run_server(store),
+        #[cfg(windows)]
+        Mode::CaptureWindow { .. } => unreachable!("dispatched before loading configuration"),
     }
 }
 
@@ -10774,7 +10754,7 @@ mod server_model_tests {
             },
         );
         assert!(app.failed_read_along_area_is_saved());
-        app.inner.activity.lock().unwrap().set(current, "idle");
+        app.inner.activity.lock().unwrap().begin(current + 1);
         assert!(!app.failed_read_along_area_is_saved());
     }
     #[test]
@@ -11073,17 +11053,25 @@ mod server_model_tests {
         controller.audio_finished(generation);
         let mut preparation = super::read_along::Preparation::new(true);
         preparation.text = Some("pending speech text".into());
+        let target = super::read_along_capture::Target {
+            window: super::read_along_capture::WindowId::X11(1),
+            region: super::read_along_capture::Rect {
+                x: 0,
+                y: 0,
+                width: 10,
+                height: 10,
+            },
+        };
+        let revision = app.begin_repeat_action("read-along");
+        app.complete_repeat_action(
+            revision,
+            super::repeat::RepeatPayload::ReadAlong {
+                target: target.clone(),
+            },
+        );
         *app.inner.read_along.lock().unwrap() = Some(super::ReadAlongRun {
             controller,
-            target: super::read_along_capture::Target {
-                window: super::read_along_capture::WindowId::X11(1),
-                region: super::read_along_capture::Rect {
-                    x: 0,
-                    y: 0,
-                    width: 10,
-                    height: 10,
-                },
-            },
+            target,
             app_generation,
             settings: Default::default(),
             prepared: None,
@@ -11113,6 +11101,9 @@ mod server_model_tests {
         app.inner.notice.lock().unwrap().expires = Some(std::time::Instant::now());
         assert_eq!(app.status()["notice_text"], "");
         assert_eq!(app.status()["state"], "idle");
+        assert!(app.failed_read_along_area_is_saved());
+        app.inner.activity.lock().unwrap().begin(app_generation + 1);
+        assert!(!app.failed_read_along_area_is_saved());
     }
 
     #[test]

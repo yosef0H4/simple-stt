@@ -96,13 +96,21 @@ impl Rect {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowId {
+    #[cfg_attr(
+        all(windows, not(test)),
+        expect(
+            dead_code,
+            reason = "Portable window IDs are retained for backend safety tests"
+        )
+    )]
     X11(u32),
+    #[cfg_attr(
+        windows,
+        expect(dead_code, reason = "The KWin adapter is only constructed on Linux")
+    )]
     KWin(String),
     #[cfg(windows)]
-    Windows {
-        hwnd: isize,
-        process_id: u32,
-    },
+    Windows { hwnd: isize, process_id: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,7 +285,7 @@ impl std::error::Error for FocusChanged {}
 
 #[cfg(windows)]
 fn native_backend() -> Result<Box<dyn WindowBackend>> {
-    Ok(Box::new(windows_backend::WindowsBackend::new()?))
+    Ok(Box::new(windows_backend::WindowsBackend::default()))
 }
 
 #[cfg(target_os = "linux")]
@@ -302,27 +310,42 @@ fn native_backend() -> Result<Box<dyn WindowBackend>> {
 }
 
 #[cfg(windows)]
+mod windows_picker;
+
+#[cfg(windows)]
+pub(crate) fn capture_windows_region(
+    hwnd: isize,
+    process_id: u32,
+    region: Rect,
+    path: &std::path::Path,
+) -> Result<()> {
+    windows_picker::capture_window(&WindowId::Windows { hwnd, process_id }, region, path)
+}
+
+#[cfg(windows)]
 mod windows_backend {
     use super::*;
     use anyhow::Context;
     use std::fs;
-    use std::process::{Command, Output};
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Output, Stdio};
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
     const HELPER: &str = include_str!("../../../assets/windows-read-along.ps1");
 
-    pub(super) struct WindowsBackend(PathBuf);
+    #[derive(Default)]
+    pub(super) struct WindowsBackend {
+        selection_image: Option<PathBuf>,
+    }
 
     impl WindowsBackend {
-        pub(super) fn new() -> Result<Self> {
-            let path = std::env::temp_dir().join(format!(
+        fn advance_legacy(args: &[(&str, String)], current: &dyn Fn() -> bool) -> Result<Output> {
+            let helper = crate::privacy::TemporaryFile(std::env::temp_dir().join(format!(
                 "simple-stt-read-along-{}.ps1",
                 uuid::Uuid::new_v4()
-            ));
-            fs::write(&path, HELPER).context("writing Windows read-along helper")?;
-            Ok(Self(path))
-        }
-
-        fn run(&self, args: &[(&str, String)]) -> Result<Output> {
+            )));
+            fs::write(&helper.0, HELPER).context("writing Windows read-along helper")?;
             let mut command = Command::new("powershell.exe");
             command.args([
                 "-NoProfile",
@@ -331,13 +354,76 @@ mod windows_backend {
                 "Bypass",
                 "-File",
             ]);
-            command.arg(&self.0);
+            command.arg(&helper.0);
             for (key, value) in args {
                 command.arg(format!("-{key}")).arg(value);
             }
-            command
-                .output()
-                .context("running Windows read-along helper")
+            let mut child = command
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .context("running Windows read-along helper")?;
+            while child.try_wait()?.is_none() {
+                if !current() {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    bail!("read-along operation canceled");
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+            child
+                .wait_with_output()
+                .context("reading Windows read-along result")
+        }
+
+        fn capture_child(
+            window: &WindowSnapshot,
+            region: Rect,
+            path: &std::path::Path,
+            current: &dyn Fn() -> bool,
+        ) -> Result<()> {
+            let WindowId::Windows { hwnd, process_id } = window.id else {
+                bail!("target is not a Windows window")
+            };
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut child = Command::new(std::env::current_exe()?)
+                .arg("capture-window")
+                .args([
+                    hwnd.to_string(),
+                    process_id.to_string(),
+                    region.x.to_string(),
+                    region.y.to_string(),
+                    region.width.to_string(),
+                    region.height.to_string(),
+                ])
+                .arg(path)
+                .creation_flags(CREATE_NO_WINDOW)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .context("starting Windows window capture")?;
+            loop {
+                let canceled = !current();
+                if canceled || Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    if canceled {
+                        bail!("read-along capture canceled");
+                    }
+                    bail!("the selected window took too long to capture");
+                }
+                if let Some(status) = child.try_wait()? {
+                    ensure!(
+                        status.success(),
+                        "the selected window could not be captured"
+                    );
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
         }
 
         fn recorded(
@@ -457,63 +543,13 @@ mod windows_backend {
             current: &dyn Fn() -> bool,
         ) -> Result<(WindowSnapshot, Rect)> {
             ensure!(current(), "read-along selection canceled");
-            let output = self.run(&[("Mode", "Select".into())])?;
-            ensure!(
-                output.status.success(),
-                "window-region selection canceled or failed"
-            );
-            let selected: serde_json::Value = serde_json::from_slice(&output.stdout)
-                .context("parsing selected window and region")?;
-            let number = |key: &str| {
-                selected
-                    .get(key)
-                    .and_then(serde_json::Value::as_i64)
-                    .ok_or_else(|| anyhow::anyhow!("selector returned invalid {key}"))
-            };
-            let id = WindowId::Windows {
-                hwnd: number("hwnd")? as isize,
-                process_id: number("pid")? as u32,
-            };
-            let region = Rect {
-                x: number("x")? as i32,
-                y: number("y")? as i32,
-                width: number("width")? as u32,
-                height: number("height")? as u32,
-            };
-            let window = self.inspect(&id)?.context("selected window was closed")?;
-            Ok((window, region))
+            let image = private_capture_path()?;
+            self.selection_image = Some(image.clone());
+            windows_picker::select(&image, current)
         }
 
         fn inspect(&mut self, id: &WindowId) -> Result<Option<WindowSnapshot>> {
-            let WindowId::Windows { hwnd, process_id } = id else {
-                return Ok(None);
-            };
-            let data = serde_json::json!({ "hwnd": hwnd, "pid": process_id, "x": 0, "y": 0, "width": 1, "height": 1 })
-                .to_string();
-            let output = self.run(&[("Mode", "Inspect".into()), ("TargetJson", data)])?;
-            if !output.status.success() {
-                return Ok(None);
-            }
-            let value: serde_json::Value =
-                serde_json::from_slice(&output.stdout).context("parsing window geometry")?;
-            let field = |key: &str| {
-                value
-                    .get(key)
-                    .and_then(serde_json::Value::as_i64)
-                    .ok_or_else(|| anyhow::anyhow!("helper returned invalid window {key}"))
-            };
-            let width = field("width")?;
-            let height = field("height")?;
-            Ok(Some(WindowSnapshot {
-                id: id.clone(),
-                bounds: Rect {
-                    x: field("left")? as i32,
-                    y: field("top")? as i32,
-                    width: width as u32,
-                    height: height as u32,
-                },
-                minimized: width <= 0 || height <= 0,
-            }))
+            Ok(windows_picker::inspect(id))
         }
 
         fn capture(
@@ -523,16 +559,13 @@ mod windows_backend {
             current: &dyn Fn() -> bool,
         ) -> Result<PathBuf> {
             ensure!(current(), "read-along capture canceled");
-            let path = private_capture_path()?;
-            let result = self.run(&[
-                ("Mode", "Capture".into()),
-                ("TargetJson", Self::target_json(window, region)?),
-                ("OutputPath", path.to_string_lossy().into_owned()),
-            ])?;
-            if !result.status.success() {
-                let _ = fs::remove_file(&path);
-                bail!("window screenshot failed");
+            if let Some(path) = self.selection_image.take().filter(|path| path.is_file()) {
+                return Ok(path);
             }
+            let path = private_capture_path()?;
+            Self::capture_child(window, region, &path, current).inspect_err(|_| {
+                let _ = fs::remove_file(&path);
+            })?;
             if !current() {
                 let _ = fs::remove_file(&path);
                 bail!("read-along capture canceled");
@@ -541,24 +574,13 @@ mod windows_backend {
         }
 
         fn input_ready(&mut self, window: &WindowSnapshot) -> Result<bool> {
-            let output = self.run(&[
-                ("Mode", "Inspect".into()),
-                (
-                    "TargetJson",
-                    Self::target_json(
-                        window,
-                        Rect {
-                            x: 0,
-                            y: 0,
-                            width: 1,
-                            height: 1,
-                        },
-                    )?,
-                ),
-            ])?;
-            ensure!(output.status.success(), "selected window is unavailable");
-            let state: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-            Ok(state["active"].as_bool().unwrap_or(false))
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetAncestor, GetForegroundWindow, GA_ROOT,
+            };
+            let WindowId::Windows { hwnd, .. } = window.id else {
+                bail!("target is not a Windows window")
+            };
+            Ok(unsafe { GetForegroundWindow() == GetAncestor(hwnd as _, GA_ROOT) })
         }
 
         fn advance(
@@ -569,24 +591,27 @@ mod windows_backend {
             current: &dyn Fn() -> bool,
         ) -> Result<()> {
             ensure!(current(), "read-along action canceled");
-            if let AdvanceAction::Sequence(sequence) = action {
-                return self.recorded(window, sequence, current);
-            }
-            let (kind, key, x, y) = match action {
-                AdvanceAction::Key(key) => ("key", key.clone(), String::new(), String::new()),
-                AdvanceAction::Sequence(_) => unreachable!(),
-                AdvanceAction::Click { x, y } => {
-                    ("click", String::new(), x.to_string(), y.to_string())
+            let mut args = vec![("TargetJson", Self::target_json(window, region)?)];
+            match action {
+                AdvanceAction::Sequence(sequence) => {
+                    return self.recorded(window, sequence, current)
                 }
-            };
-            let output = self.run(&[
-                ("Mode", "Advance".into()),
-                ("TargetJson", Self::target_json(window, region)?),
-                ("Action", kind.into()),
-                ("Key", key),
-                ("X", x),
-                ("Y", y),
-            ])?;
+                AdvanceAction::Key(key) if key.eq_ignore_ascii_case("space") => {
+                    return windows_picker::advance_space(&window.id, region, current);
+                }
+                AdvanceAction::Key(key) => {
+                    args.extend([("Action", "key".into()), ("Key", key.clone())])
+                }
+                AdvanceAction::Click { x, y } => args.extend([
+                    ("Action", "click".into()),
+                    ("X", x.to_string()),
+                    ("Y", y.to_string()),
+                ]),
+            }
+            let output = Self::advance_legacy(&args, current)?;
+            if output.status.code() == Some(3) {
+                return Err(FocusChanged.into());
+            }
             ensure!(output.status.success(), "window-bound input failed");
             Ok(())
         }
@@ -598,7 +623,9 @@ mod windows_backend {
 
     impl Drop for WindowsBackend {
         fn drop(&mut self) {
-            let _ = fs::remove_file(&self.0);
+            if let Some(path) = &self.selection_image {
+                let _ = fs::remove_file(path);
+            }
         }
     }
 }

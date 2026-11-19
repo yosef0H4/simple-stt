@@ -167,6 +167,10 @@ fn service_is_running() -> Result<bool> {
         return Ok(false);
     }
     let state = ServiceState::load(&path).context("reading capture service state")?;
+    #[cfg(windows)]
+    if capture_process_exited(state.pid) {
+        return Ok(false);
+    }
     let address: std::net::SocketAddr = state
         .address
         .parse()
@@ -185,6 +189,22 @@ fn service_is_running() -> Result<bool> {
     }
 }
 
+#[cfg(windows)]
+fn capture_process_exited(pid: u32) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
+    if handle.is_null() {
+        // Access denied is inconclusive. Only an invalid PID proves absence.
+        return std::io::Error::last_os_error().raw_os_error()
+            == Some(ERROR_INVALID_PARAMETER as i32);
+    }
+    let exited = unsafe { WaitForSingleObject(handle, 0) } == WAIT_OBJECT_0;
+    unsafe { CloseHandle(handle) };
+    exited
+}
+
 /// Transcribe a prepared WAV through the running capture service and its warm worker.
 pub fn transcribe(wav: &Path, language: Option<&str>) -> Result<String> {
     let state = ServiceState::load(&AppConfig::service_state_path())
@@ -193,9 +213,7 @@ pub fn transcribe(wav: &Path, language: Option<&str>) -> Result<String> {
         state.protocol == SHELL_PROTOCOL_VERSION,
         "capture service protocol is incompatible; restart Simple STT"
     );
-    let token_path = AppConfig::local_data_dir().join("linux-token");
-    let token = std::fs::read_to_string(token_path)
-        .context("capture service authentication token unavailable; start the installed Simple STT desktop app")?;
+    let token = state.authentication_token()?;
     let mut stream = TcpStream::connect(&state.address)
         .context("cannot connect to capture service; start or restart Simple STT")?;
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;

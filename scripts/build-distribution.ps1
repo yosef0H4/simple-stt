@@ -1,21 +1,18 @@
 param(
     [switch]$SkipTests,
-    [switch]$IncludeModel,
     [string]$AhkBase,
     [string]$Iscc,
     [string]$CargoTargetDir
 )
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
+$PackageVersionMatch = [regex]::Match((Get-Content -LiteralPath (Join-Path $Root 'Cargo.toml') -Raw), '(?m)^version\s*=\s*"([^"]+)"')
+if (-not $PackageVersionMatch.Success) { throw 'Unable to read package version from Cargo.toml' }
+$PackageVersion = $PackageVersionMatch.Groups[1].Value
 $Artifacts = Join-Path $Root 'artifacts'
 $Portable = Join-Path $Artifacts 'simple-stt-portable'
 $Dist = Join-Path $Artifacts 'dist'
 $Runtime = Join-Path $Portable 'runtime'
-$ParakeetSource = Join-Path $Root 'external\parakeet-runtime\parakeet-windows-vulkan'
-$ParakeetDest = Join-Path $Runtime 'external\parakeet-runtime\parakeet-windows-vulkan'
-$ModelSource = Join-Path $Root 'external\parakeet-runtime\models'
-$ModelDest = Join-Path $Runtime 'external\parakeet-runtime\models'
-$ArabicModel = Join-Path $ModelSource 'lemura-arabic-asr-lite-q8_0.gguf'
 $ResolvedTargetDir = if ($CargoTargetDir) {
     [System.IO.Path]::GetFullPath($CargoTargetDir)
 } elseif ($env:CARGO_TARGET_DIR) {
@@ -40,14 +37,6 @@ function Get-Sha256([string]$Path) {
         $Stream.Dispose()
     }
 }
-function Copy-DirectoryExcludingModels([string]$Source, [string]$Destination) {
-    if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    Get-ChildItem -LiteralPath $Source -Force | Where-Object { $_.Name -ne 'models' } | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $Destination -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path (Join-Path $Destination 'models') -Force | Out-Null
-}
 function Resolve-Tool([string]$Provided, [string[]]$Candidates, [string]$Label) {
     if ($Provided) { Require-File $Provided; return $Provided }
     foreach ($Candidate in $Candidates) { if (Test-Path -LiteralPath $Candidate -PathType Leaf) { return $Candidate } }
@@ -66,17 +55,9 @@ $Iscc = Resolve-Tool $Iscc @(
 ) 'Inno Setup compiler (ISCC.exe)'
 Require-File (Join-Path $Root 'ahk\simple-stt.ahk')
 Require-File (Join-Path $Root 'ahk\hotkey-recorder.ahk')
+Require-File (Join-Path $Root 'ahk\action-replay.ahk')
 Require-File (Join-Path $Root 'fixtures\parakeet-smoke.wav')
 Require-File (Join-Path $Root 'fixtures\asr\arabic-sa.wav')
-Require-File (Join-Path $ParakeetSource 'bin\parakeet.dll')
-if ($IncludeModel) {
-    Require-File $ArabicModel
-    if ((Get-Sha256 $ArabicModel) -ne 'B0AA3F0F316551A45BBD76D1AC7674102A3B221D5FD8C4CD6CAC1C2BC4CCCE86') {
-        throw 'Arabic model checksum differs from the validated Q8 conversion.'
-    }
-    Require-File (Join-Path $ModelSource 'tdt_ctc-110m-q8_0.gguf')
-}
-
 $BuildRelease = Join-Path $PSScriptRoot 'build-release.ps1'
 if ($SkipTests) {
     & $BuildRelease -SkipTests -CargoTargetDir $ResolvedTargetDir
@@ -88,7 +69,9 @@ if (Test-Path -LiteralPath $Portable) { Remove-Item -LiteralPath $Portable -Recu
 New-Item -ItemType Directory -Path $Runtime -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\simple-stt.ahk') -Destination $Runtime -Force
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\hotkey-recorder.ahk') -Destination $Runtime -Force
+Copy-Item -LiteralPath (Join-Path $Root 'ahk\action-replay.ahk') -Destination $Runtime -Force
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\lib') -Destination (Join-Path $Runtime 'lib') -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $Root 'ahk\icons') -Destination (Join-Path $Runtime 'icons') -Recurse -Force
 Copy-Item -LiteralPath $AhkBase -Destination (Join-Path $Runtime 'AutoHotkey64.exe') -Force
 
 foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe','simple-stt-settings.exe','readerd.exe','readerctl.exe','reader-tts.exe','reader-ocr.exe','reader-hud.exe')) {
@@ -107,19 +90,17 @@ Set-Content -LiteralPath (Join-Path $Portable 'simple-stt.cmd') -Encoding ASCII 
 New-Item -ItemType Directory -Path (Join-Path $Runtime 'fixtures') -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root 'fixtures\parakeet-smoke.wav') -Destination (Join-Path $Runtime 'fixtures') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'fixtures\asr') -Destination (Join-Path $Runtime 'fixtures\asr') -Recurse -Force
-New-Item -ItemType Directory -Path (Split-Path -Parent $ParakeetDest) -Force | Out-Null
-if ($IncludeModel) {
-    Copy-Item -LiteralPath $ParakeetSource -Destination $ParakeetDest -Recurse -Force
-    New-Item -ItemType Directory -Path $ModelDest -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $ModelSource 'tdt_ctc-110m-q8_0.gguf') -Destination $ModelDest -Force
-    Copy-Item -LiteralPath $ArabicModel -Destination $ModelDest -Force
-} else {
-    Copy-DirectoryExcludingModels $ParakeetSource $ParakeetDest
-    New-Item -ItemType Directory -Path $ModelDest -Force | Out-Null
-}
+$ModelFiles = @(Get-ChildItem -LiteralPath $Portable -File -Recurse | Where-Object { $_.Extension -in @('.gguf', '.onnx', '.safetensors', '.tflite', '.pt', '.pth') })
+if ($ModelFiles.Count) { throw 'Distribution payload unexpectedly contains an inference model' }
+$InferenceLibraries = @(Get-ChildItem -LiteralPath $Portable -File -Recurse -Filter '*.dll' | Where-Object { $_.Name -match '^(parakeet|ggml|onnxruntime|sherpa-onnx)' })
+if ($InferenceLibraries.Count) { throw 'Distribution payload unexpectedly contains an inference runtime' }
 $Required = @(
     'runtime\simple-stt.ahk',
     'runtime\hotkey-recorder.ahk',
+    'runtime\action-replay.ahk',
+    'runtime\icons\simple-stt.ico',
+    'runtime\icons\book.ico',
+    'runtime\icons\LICENSE-NOTO-EMOJI.txt',
     'runtime\AutoHotkey64.exe',
     'runtime\simple-stt-capture.exe',
     'runtime\simple-stt-infer.exe',
@@ -130,13 +111,8 @@ $Required = @(
     'runtime\reader-tts.exe',
     'runtime\reader-ocr.exe',
     'runtime\reader-hud.exe',
-    'runtime\fixtures\parakeet-smoke.wav',
-    'runtime\external\parakeet-runtime\parakeet-windows-vulkan\bin\parakeet.dll'
+    'runtime\fixtures\parakeet-smoke.wav'
 )
-if ($IncludeModel) {
-    $Required += 'runtime\external\parakeet-runtime\models\tdt_ctc-110m-q8_0.gguf'
-    $Required += 'runtime\external\parakeet-runtime\models\lemura-arabic-asr-lite-q8_0.gguf'
-}
 foreach ($RelativePath in $Required) { Require-File (Join-Path $Portable $RelativePath) }
 
 New-Item -ItemType Directory -Path $Dist -Force | Out-Null
@@ -147,7 +123,7 @@ Copy-Item -LiteralPath (Join-Path $Root 'resources\simple-stt.iss') -Destination
 foreach ($Output in @($Setup, $Zip)) {
     if (Test-Path -LiteralPath $Output) { Remove-Item -LiteralPath $Output -Force }
 }
-& $Iscc $InnoScript
+& $Iscc "/DSimpleSttVersion=$PackageVersion" $InnoScript
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE" }
 Require-File $Setup
 Get-ChildItem -LiteralPath $Portable | Compress-Archive -DestinationPath $Zip -CompressionLevel Optimal

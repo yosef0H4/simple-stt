@@ -179,8 +179,16 @@ fn load_ocr(args: &Args, force_cpu: bool) -> Result<OcrEngine> {
             ..TextDetectionConfig::default()
         });
     }
+    // Dense screen regions have many lines to recognize before speech can start.
+    // Keep CPU OCR bounded so it can run alongside the voice worker without
+    // taking over all available cores.
+    let intra_threads = if use_cuda {
+        2
+    } else {
+        std::thread::available_parallelism().map_or(2, |threads| threads.get().min(4))
+    };
     let ort_config = OrtSessionConfig::new()
-        .with_intra_threads(2)
+        .with_intra_threads(intra_threads)
         .with_inter_threads(1)
         .add_config_entry("session.intra_op.allow_spinning", "0")
         .add_config_entry("session.inter_op.allow_spinning", "0")
@@ -209,66 +217,6 @@ fn load_ocr(args: &Args, force_cpu: bool) -> Result<OcrEngine> {
     })
 }
 
-fn cuda_allocation_proven() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::{Command, Stdio};
-        use std::time::{Duration, Instant};
-        if !std::fs::read_to_string("/proc/self/maps")
-            .unwrap_or_default()
-            .contains("libonnxruntime_providers_cuda")
-        {
-            return false;
-        }
-        let Ok(mut child) = Command::new("nvidia-smi")
-            .args([
-                "--query-compute-apps=pid,used_gpu_memory",
-                "--format=csv,noheader,nounits",
-            ])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
-            return false;
-        };
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) if status.success() => break,
-                Ok(Some(_)) | Err(_) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(25))
-                }
-                Ok(None) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return false;
-                }
-            }
-        }
-        let Ok(output) = child.wait_with_output() else {
-            return false;
-        };
-        let pid = std::process::id().to_string();
-        String::from_utf8_lossy(&output.stdout).lines().any(|line| {
-            let mut parts = line.split(',').map(str::trim);
-            parts.next() == Some(pid.as_str())
-                && parts
-                    .next()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .is_some_and(|mb| mb > 0)
-        })
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        false
-    }
-}
-
 fn native_ocr(
     cache: &mut Option<OcrEngine>,
     args: &Args,
@@ -281,7 +229,7 @@ fn native_ocr(
     let mut results = predict(cache.as_ref().unwrap())?;
     let engine = cache.as_mut().unwrap();
     if engine.cuda && !engine.proven {
-        if cuda_allocation_proven() {
+        if reader_core::cuda::onnx_cuda_verified() {
             engine.proven = true;
             eprintln!("PaddleOCR CUDA verified: provider loaded and worker owns GPU allocation");
         } else if args.device == "gpu" {

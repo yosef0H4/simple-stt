@@ -1,4 +1,5 @@
 {
+  "overlay.screenContext": "Screen",
   "overlay.transcribing": "🎙 Transcribing...",
   "overlay.typing": "🎙 Typing...",
   "notice.microphoneDisconnected": "Microphone disconnected — reconnecting…",
@@ -37,6 +38,7 @@
   "notice.cleanupEmpty": "AI cleanup provider returned no text — original text used",
   "notice.cleanupFailed": "AI cleanup provider request failed — original text used",
   "menu.tip": "Right-click for recording, settings, and exit",
+  "reading.read_along_start": "Start read-along",
   "menu.start": "Start recording",
   "menu.stop": "Stop recording",
   "menu.settings": "Settings",

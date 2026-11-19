@@ -1,32 +1,44 @@
 class TrayController {
+    static IconDirectory := A_ScriptDir . "\icons"
+
     __New(app) {
         this.app := app
-        A_IconTip := UiText("menu.iconTip")
+        icon := TrayController.IconDirectory . "\simple-stt.ico"
+        if FileExist(icon)
+            TraySetIcon(icon)
         this.Rebuild()
+    }
+
+    Add(menu, id, icon, callback) {
+        label := UiText(id)
+        menu.Add(label, callback)
+        path := TrayController.IconDirectory . "\" . icon . ".ico"
+        if FileExist(path)
+            menu.SetIcon(label, path)
+        return label
     }
 
     Rebuild() {
         A_IconTip := UiText("menu.iconTip")
         menu := A_TrayMenu
         menu.Delete()
-        menu.Add(UiText("menu.readSelection"), ObjBindMethod(this.app, "ReaderAction", "read_selection"))
-        menu.Add(UiText("menu.readRegion"), ObjBindMethod(this.app, "ReaderAction", "read_region"))
-        menu.Add(UiText("menu.copyRegion"), ObjBindMethod(this.app, "ReaderAction", "copy_region"))
-        menu.Add("Read along", ObjBindMethod(this.app, "ReaderAction", "read_along"))
-        menu.Add(UiText("menu.abort"), ObjBindMethod(this.app, "CancelAll"))
+        this.Add(menu, "menu.readSelection", "speaker", ObjBindMethod(this.app, "ReaderAction", "read_selection"))
+        this.Add(menu, "menu.readRegion", "camera", ObjBindMethod(this.app, "ReaderAction", "read_region"))
+        this.Add(menu, "reading.read_along_start", "book", ObjBindMethod(this.app, "ReaderAction", "read_along"))
+        this.Add(menu, "menu.copyRegion", "clipboard", ObjBindMethod(this.app, "ReaderAction", "copy_region"))
+        this.Add(menu, "menu.abort", "stop", ObjBindMethod(this.app, "CancelAll"))
         menu.Add()
-        menu.Add(UiText("menu.openSettings"), ObjBindMethod(this.app, "OpenSettings"))
-        menu.Default := UiText("menu.openSettings")
-        menu.Add(UiText("menu.unloadAll"), ObjBindMethod(this.app, "UnloadAllModels"))
+        menu.Default := this.Add(menu, "menu.openSettings", "settings", ObjBindMethod(this.app, "OpenSettings"))
+        this.Add(menu, "menu.unloadAll", "unload", ObjBindMethod(this.app, "UnloadAllModels"))
         menu.Add()
-        menu.Add(this.app.config.Bool("hotkey_enabled", true) ? UiText("menu.disable") : UiText("menu.enable"), ObjBindMethod(this.app, "ToggleHotkey"))
-        menu.Add(UiText("menu.reloadSettings"), ObjBindMethod(this.app, "ReloadSettings"))
-        menu.Add(UiText("menu.reloadApp"), ObjBindMethod(this.app, "ReloadApp"))
+        this.Add(menu, this.app.config.Bool("hotkey_enabled", true) ? "menu.disable" : "menu.enable", "keyboard", ObjBindMethod(this.app, "ToggleHotkey"))
+        this.Add(menu, "menu.reloadSettings", "reload", ObjBindMethod(this.app, "ReloadSettings"))
+        this.Add(menu, "menu.reloadApp", "reload", ObjBindMethod(this.app, "ReloadApp"))
         menu.Add()
-        menu.Add(UiText("menu.latestLog"), ObjBindMethod(this.app, "OpenLatestLog"))
-        menu.Add(UiText("menu.restartAudio"), ObjBindMethod(this.app, "RestartAudioService"))
-        menu.Add(UiText("menu.test"), ObjBindMethod(this.app, "TestModel"))
+        this.Add(menu, "menu.latestLog", "log", ObjBindMethod(this.app, "OpenLatestLog"))
+        this.Add(menu, "menu.restartAudio", "speaker", ObjBindMethod(this.app, "RestartAudioService"))
+        this.Add(menu, "menu.test", "test", ObjBindMethod(this.app, "TestModel"))
         menu.Add()
-        menu.Add(UiText("menu.exit"), (*) => ExitApp())
+        this.Add(menu, "menu.exit", "exit", (*) => ExitApp())
     }
 }

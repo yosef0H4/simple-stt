@@ -96,8 +96,14 @@ simple-stt-ctl credentials generate server --activate
 
 On a packaged Linux server, `credentials generate server --activate` writes the
 new key to the private service environment file and restarts the background
-service before printing it. `--stdout` prints a key without saving or activating
-it, and emits a reminder on stderr. Remote STT connections may be saved before
+service before printing it. On Windows, it saves the key in Credential Manager
+and starts or restarts the background API process before printing it. Enable
+server mode in Settings first. Use `serve --background` to start the API with the
+saved key and `serve --stop` to stop it. The Windows background process lasts
+until you stop it or sign out.
+
+`--stdout` prints a key without saving or activating it, and emits a reminder on
+stderr. Remote STT connections may be saved before
 choosing a model, but transcription still requires a model. This server
 advertises `configured-stt`, `kokoro-v1`, and `simple-tts-ocr`, with feature hints
 so STT discovery does not offer OCR or TTS aliases.

@@ -38,6 +38,15 @@ pub fn command(args: &[&str]) -> Result<String> {
     command_input(args, None)
 }
 fn command_input(args: &[&str], input: Option<&[u8]>) -> Result<String> {
+    command_in_profile(args, input, &data_dir(), false)
+}
+
+fn command_in_profile(
+    args: &[&str],
+    input: Option<&[u8]>,
+    profile: &std::path::Path,
+    headless: bool,
+) -> Result<String> {
     use std::io::Write;
     let executable = std::env::current_exe()?
         .parent()
@@ -49,10 +58,15 @@ fn command_input(args: &[&str], input: Option<&[u8]>) -> Result<String> {
         });
     anyhow::ensure!(executable.is_file(), "Reading components are not installed");
     initialize()?;
-    let mut child = Command::new(executable)
+    let mut command = Command::new(executable);
+    if headless {
+        command.env("SIMPLE_TTS_NO_DESKTOP", "1");
+        command.env("SIMPLE_STT_MANAGED_API", "1");
+    }
+    let mut child = command
         .args(args)
         .env("SIMPLE_STT_EMBEDDED_READER", "1")
-        .env("SIMPLE_STT_READER_DATA", data_dir())
+        .env("SIMPLE_STT_READER_DATA", profile)
         .env("SIMPLE_TTS_CONFIG", store().path())
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -86,29 +100,59 @@ fn command_input(args: &[&str], input: Option<&[u8]>) -> Result<String> {
     );
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
+
+#[cfg(windows)]
+fn server_profile() -> PathBuf {
+    let profile = data_dir();
+    let mut name = profile.file_name().unwrap_or_default().to_os_string();
+    name.push("-server");
+    profile.with_file_name(name)
+}
+
+#[cfg(windows)]
+pub fn background_server_running() -> bool {
+    reader_core::local_ipc::connect(&server_profile()).is_ok()
+}
+
+#[cfg(windows)]
+pub fn start_background_server() -> Result<()> {
+    anyhow::ensure!(
+        load()?.server.enabled,
+        "enable server mode in Settings before starting it"
+    );
+    command_in_profile(&["ensure"], None, &server_profile(), true)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn stop_background_server() -> Result<()> {
+    let profile = server_profile();
+    if !background_server_running() {
+        return Ok(());
+    }
+    command_in_profile(&["shutdown"], None, &profile, true)?;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while background_server_running() {
+        anyhow::ensure!(Instant::now() < deadline, "background server did not stop");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
+}
 pub fn status() -> Option<Value> {
+    let mut stream = reader_core::local_ipc::connect(&data_dir()).ok()?;
     #[cfg(unix)]
     {
-        let mut stream =
-            std::os::unix::net::UnixStream::connect(data_dir().join("simple-tts.sock")).ok()?;
         stream
             .set_read_timeout(Some(Duration::from_millis(500)))
             .ok()?;
         stream
             .set_write_timeout(Some(Duration::from_millis(500)))
             .ok()?;
-        reader_core::wire::write_json_frame(&mut stream, &json!({"op":"status"})).ok()?;
-        let reply: Value = reader_core::wire::read_json_frame(&mut stream).ok()?;
-        reply.get("state").cloned()
     }
-    #[cfg(not(unix))]
-    {
-        command(&["status", "--json"])
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-    }
+    reader_core::wire::write_json_frame(&mut stream, &json!({"op":"status"})).ok()?;
+    let reply: Value = reader_core::wire::read_json_frame(&mut stream).ok()?;
+    reply.get("state").filter(|state| !state.is_null()).cloned()
 }
-
 /// Shared progress suffix for ordinary reading and read-along, including RTL text.
 fn append_chunk_counter(line: &mut String, status: &Value) {
     if let Some(total) = status["chunk_total"].as_u64().filter(|total| *total > 0) {
@@ -531,9 +575,7 @@ mod hud_formatter_tests {
 pub fn pause_for_dictation() -> Result<()> {
     #[cfg(unix)]
     {
-        let Ok(mut stream) =
-            std::os::unix::net::UnixStream::connect(data_dir().join("simple-tts.sock"))
-        else {
+        let Ok(mut stream) = reader_core::local_ipc::connect(&data_dir()) else {
             return Ok(());
         };
         stream.set_write_timeout(Some(Duration::from_millis(150)))?;
@@ -742,21 +784,12 @@ impl crate::cli::Backend for ConfiguredBackend {
 }
 fn local_request(request: Value) -> Result<Value> {
     command(&["ensure"])?;
+    let mut stream = reader_core::local_ipc::connect(&data_dir())?;
     #[cfg(unix)]
-    let mut stream = {
-        let stream = std::os::unix::net::UnixStream::connect(data_dir().join("simple-tts.sock"))?;
+    {
         stream.set_read_timeout(Some(Duration::from_secs(600)))?;
         stream.set_write_timeout(Some(Duration::from_secs(10)))?;
-        stream
-    };
-    #[cfg(windows)]
-    let mut stream = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(format!(
-            r"\\.\pipe\simple-stt-reader-{}",
-            std::env::var("USERNAME").unwrap_or_else(|_| "current-user".into())
-        ))?;
+    }
     reader_core::wire::write_json_frame(&mut stream, &request)?;
     let reply: Value = reader_core::wire::read_json_frame(&mut stream)?;
     anyhow::ensure!(

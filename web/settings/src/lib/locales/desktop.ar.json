@@ -1,4 +1,5 @@
 {
+  "overlay.screenContext": "الشاشة",
   "overlay.transcribing": "🎙 جارٍ التفريغ…",
   "overlay.typing": "🎙 جارٍ الإدراج…",
   "notice.microphoneDisconnected": "انقطع الميكروفون — جارٍ الاتصال…",
@@ -37,6 +38,7 @@
   "notice.cleanupEmpty": "لم يُرجع التنقيح نصًا — استُخدم النص الأصلي",
   "notice.cleanupFailed": "تعذّر التنقيح — استُخدم النص الأصلي",
   "menu.tip": "انقر يمينًا للتسجيل والإعدادات",
+  "reading.read_along_start": "بدء القراءة مع التنقل",
   "menu.start": "بدء التسجيل",
   "menu.stop": "إيقاف التسجيل",
   "menu.settings": "الإعدادات",

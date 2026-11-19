@@ -41,8 +41,9 @@ const downloads = require('../assets/catalog/downloads.json');
       await page.locator(`[data-catalog="${feature}.model"]`).waitFor();
     };
     const refresh = async () => {
-      await page.locator('#runtime-section .catalog-toolbar button').click();
-      await page.waitForFunction(() => document.querySelector('#runtime-section .catalog-toolbar button')?.getAttribute('aria-busy') === 'false');
+      const inventory = page.waitForResponse('**/api/modules');
+      await page.locator('.catalog .catalog-toolbar button').click();
+      await inventory;
     };
     const row = id => page.locator(`[data-model-id="${id}"]`);
     const section = page.locator('[data-catalog="ocr.model"]');
@@ -57,15 +58,17 @@ const downloads = require('../assets/catalog/downloads.json');
       return entry.id;
     };
     await choose('ocr');
-    await section.getByText('Install a runtime first.', { exact: true }).waitFor();
-    assert.equal(await section.locator('.model-result').count(), 0);
+    await page.getByText('Install a runtime first.', { exact: true }).waitFor();
+    await row('paddle-ar-en').waitFor();
+    await page.locator('[data-download-kind=runtime]').click();
     for (const feature of ['tts', 'ocr']) {
-      await choose(feature);
+      await page.locator(`[data-catalog-feature=${feature}]`).click();
       const runtimeSection = page.locator(`[data-catalog="${feature}.runtime"]`);
       for (const [id, label] of [[feature === 'tts' ? 'sherpa-cpu' : 'paddle-cpu', 'Sherpa ONNX · CPU'], [feature === 'tts' ? 'sherpa-cuda' : 'paddle-cuda', 'Sherpa ONNX · CUDA']]) {
         assert.equal((await runtimeSection.locator(`[data-model-id="${id}"] small`).textContent()).trim(), label);
       }
     }
+    await page.locator('[data-download-kind=model]').click();
     f.installFixture('sherpa-cpu');
     await refresh();
     await choose('ocr');
@@ -106,7 +109,7 @@ const downloads = require('../assets/catalog/downloads.json');
     await modelInput.fill('v6');
     assert.equal(await choices.getByRole('option', { name: /v6/i }).count(), 0, 'uninstalled model is not selectable');
     await modelInput.fill('Latin');
-    const speechBefore = structuredClone(f.getReaderConfig().speech);
+    const speechBefore = { fallback_to_local: true, ...structuredClone(f.getReaderConfig().speech) };
     const sttBefore = structuredClone(f.getConfig().speech);
     await choices.getByRole('option', { name: /Latin/ }).click();
     await page.locator('#savebar button').click();
@@ -127,7 +130,8 @@ const downloads = require('../assets/catalog/downloads.json');
         await page.locator('[data-page=general]').click();
         await page.locator('#ui-language').selectOption(locale);
         for (const theme of ['light', 'dark']) {
-          await page.locator('[data-setting-path="general.ui_theme"] select').selectOption(theme);
+        await page.locator('[data-setting-path="general.ui_theme"] [role=combobox]').click();
+        await page.getByRole('option', { name: new RegExp(theme === 'light' ? 'Light|فاتح' : 'Dark|داكن', 'i') }).click();
           for (const width of [360, 768, 1280]) {
             await page.setViewportSize({ width, height: 900 });
             await page.locator('[data-page=models]').click();

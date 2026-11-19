@@ -112,8 +112,14 @@ const { chromium } = require("playwright");
     );
   } finally {
     await browser?.close();
-    child.kill();
-    fs.rmSync(temp, { recursive: true, force: true });
+    if (child.exitCode === null) {
+      await new Promise((resolve, reject) => {
+        const deadline = setTimeout(() => reject(new Error("Settings server did not exit")), 5000);
+        child.once("close", () => { clearTimeout(deadline); resolve(); });
+        child.kill();
+      });
+    }
+    fs.rmSync(temp, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 });
   }
 })().catch((e) => {
   console.error(e);

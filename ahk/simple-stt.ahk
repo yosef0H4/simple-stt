@@ -33,7 +33,7 @@ class SimpleSttShell {
         this.pendingStarts := Map()
         this.pendingStops := Map()
         this.supervisor := ProcessSupervisor(this.captureExe, this.ctlExe, this.config, this.logger, ObjBindMethod(this, "OnServiceRestart"))
-        this.ipc := IpcClient(this.ctlExe, this.supervisor.stateFile, this.supervisor.token, ObjBindMethod(this, "HandleServiceEvent"), this.logger)
+        this.ipc := IpcClient(this.ctlExe, this.supervisor.stateFile, this.supervisor.token, ObjBindMethod(this, "HandleServiceEvent"), this.logger, true)
         this.supervisor.AttachIpc(this.ipc)
         this.typist := Typist(this.logger, ObjBindMethod(this, "Notice"), ObjBindMethod(this, "DeliveryFinished"), ObjBindMethod(this, "DeliveryProgress"))
         this.capsController := CapsLockTapController(this.logger)
@@ -177,12 +177,13 @@ class SimpleSttShell {
 
     DeliveryProgress(session, phase) {
         if this.ipc.ready
-            this.ipc.CallService("delivery-progress --session-id " . session . " --phase " . phase)
+            this.ipc.DeliveryStatus(session, phase)
     }
 
     DeliveryFinished(session) {
         if this.ipc.ready
-            this.ipc.CallService("delivery-complete --session-id " . session)
+            if !this.ipc.DeliveryStatus(session, "complete")
+                this.ipc.CallService("delivery-complete --session-id " . session)
     }
 
     HandleServiceEvent(event) {
@@ -209,11 +210,7 @@ class SimpleSttShell {
                 }
                 this.logger.Write("info", "transcript received chars=" . StrLen(text), session)
                 mode := this.DeliveryModeForWindow(target)
-                if this.retryShortcutHeld {
-            SetTimer(ObjBindMethod(this, "RetryStarted", session, target, text, mode, response), -25)
-            return
-        }
-        this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
+                this.typist.Begin(session, target, text, this.config.Bool("paced_typing_enabled", true), this.config.Int("typing_speed_wpm", 450), false, mode, this.config.Bool("preserve_clipboard", true))
             case "notice":
                 this.Notice(event["text"], event["level"])
                 if session && this.sessions.Has(session) && SimpleSttNoticeEndsSession(event)
@@ -518,13 +515,13 @@ class SimpleSttShell {
         if enabled {
             try {
                 if A_IsCompiled
-                    FileCreateShortcut(A_ScriptFullPath, shortcut, A_ScriptDir)
+                    FileCreateShortcut(A_ScriptFullPath, shortcut, A_ScriptDir,,, TrayController.IconDirectory . "\simple-stt.ico")
                 else {
                     packagedLauncher := A_ScriptDir . "\..\simple-stt.cmd"
                     if FileExist(packagedLauncher)
-                        FileCreateShortcut(packagedLauncher, shortcut, A_ScriptDir . "\..")
+                        FileCreateShortcut(packagedLauncher, shortcut, A_ScriptDir . "\..",,, TrayController.IconDirectory . "\simple-stt.ico")
                     else
-                        FileCreateShortcut(A_AhkPath, shortcut, A_ScriptDir, SimpleSttQuote(A_ScriptFullPath))
+                        FileCreateShortcut(A_AhkPath, shortcut, A_ScriptDir, SimpleSttQuote(A_ScriptFullPath),, TrayController.IconDirectory . "\simple-stt.ico")
                 }
             }
             catch Error as err

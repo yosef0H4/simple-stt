@@ -540,6 +540,21 @@ exclusions, case folding, phrases and word boundaries. Run
 The native desktop pass `python scripts/test-read-along-desktop.py --repeat-read-along`
 repeats the saved area while audio is active and checks fresh text without input.
 
+On Windows, run `python scripts/test-read-along-windows.py --read-screen` and
+repeat with `--fullscreen` for a borderless fullscreen window. The test verifies
+picker cancellation, startup latency, tooltip hiding, the dimmed preview, and
+speech from the selected pixels even when the target changes after the picker
+opens. It samples the preview during a drag and checks for black frames.
+Use `--prewarm-assets <assets-directory>` with installed Kokoro, PaddleOCR,
+and Sherpa CPU assets to check that both workers load while the picker is
+open and that consecutive screen reads reuse them.
+Add `--local-read-along` to check that those workers stay loaded through
+first audio, a single next page is ready before current playback ends, and
+Next plays the prepared page. Repeat with `--ocr-device cuda` and installed
+CUDA runtime assets to exercise CUDA OCR with CPU Kokoro. Without local
+assets, use `--advance space` for the native Windows Space advance path. The default recorded-action test checks that the page
+settle delay starts after the final modifier release.
+
 `python scripts/test-read-along-remote.py` builds real OCR/TTS helper binaries and
 runs a private-profile HTTP integration test. It verifies client-sized speech
 requests, excluded words, unit metadata, and OCR completing while a TTS request

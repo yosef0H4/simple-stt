@@ -6,7 +6,10 @@
       "engine": "parakeet",
       "backend": "vulkan",
       "label": "Parakeet · Vulkan",
-      "asset": "parakeet-vulkan"
+      "asset": "parakeet-vulkan",
+      "platform_assets": {
+        "windows": "parakeet-vulkan-windows"
+      }
     },
     {
       "id": "parakeet-cuda",
@@ -14,7 +17,10 @@
       "engine": "parakeet",
       "backend": "cuda",
       "label": "Parakeet · CUDA",
-      "asset": "parakeet-cuda"
+      "asset": "parakeet-cuda",
+      "platform_assets": {
+        "windows": "parakeet-cuda-windows"
+      }
     },
     {
       "id": "sherpa-cpu",
@@ -33,7 +39,10 @@
       "engine": "sherpa",
       "backend": "cuda",
       "label": "Sherpa ONNX · CUDA",
-      "asset": "sherpa-cuda"
+      "asset": "sherpa-cuda",
+      "platform_assets": {
+        "windows": "sherpa-cuda-windows"
+      }
     },
     {
       "id": "paddle-cpu",
@@ -52,7 +61,10 @@
       "engine": "paddleocr",
       "backend": "cuda",
       "label": "Sherpa ONNX · CUDA",
-      "asset": "sherpa-cuda"
+      "asset": "sherpa-cuda",
+      "platform_assets": {
+        "windows": "sherpa-cuda-windows"
+      }
     }
   ],
   "models": [

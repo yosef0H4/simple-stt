@@ -22,6 +22,8 @@ pub struct Activity {
     pub prepared_text: Option<String>,
     #[serde(skip)]
     pub before_pause: &'static str,
+    #[serde(skip)]
+    pub recover_read_along: bool,
 }
 
 impl Default for Activity {
@@ -37,6 +39,7 @@ impl Default for Activity {
             events: VecDeque::new(),
             prepared_text: None,
             before_pause: "synthesizing",
+            recover_read_along: false,
         }
     }
 }
@@ -56,6 +59,7 @@ impl Activity {
         self.state = "idle";
         self.prepared_text = None;
         self.before_pause = "synthesizing";
+        self.recover_read_along = false;
         self.record("start");
     }
     pub fn set_prepared_text(&mut self, generation: u64, text: String) {

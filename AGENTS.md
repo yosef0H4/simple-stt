@@ -26,6 +26,13 @@ docs/memory-cleanup-validation.md
 
 ## Hard architecture boundaries
 
+Share Windows and Linux feature logic, action identifiers, state transitions,
+and English and Arabic strings. Add desktop strings to
+`web/settings/src/lib/locales/desktop.{en,ar}.json` and regenerate the AHK
+adapter with `node web/settings/tools/locales.mjs`. Check both entry points
+when changing a shortcut, tray action, Settings workflow, or status message.
+Keep OS-specific windowing, input, and packaging in their existing adapters.
+
 ```text
 AHK owns tray, GUI, hotkeys, startup registration, target-window safety,
 text transforms, final typing, clipboard-preserving paste delivery, and app reload.

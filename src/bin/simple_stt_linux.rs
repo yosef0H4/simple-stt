@@ -736,11 +736,11 @@ impl ksni::Tray for LinuxTray {
             }
             .into(),
             StandardItem {
-                label: if self.locale == Locale::Ar {
-                    "بدء القراءة مع التنقل".to_owned()
-                } else {
-                    "Start read-along".to_owned()
-                },
+                label: simple_stt::localization::translate(
+                    self.locale,
+                    "reading.read_along_start",
+                    &[],
+                ),
                 icon_name: "view-paged".into(),
                 activate: Box::new(|_| {
                     std::thread::spawn(|| {
@@ -2452,7 +2452,7 @@ fn deliver_text(text: &str, force_shift_insert: bool, session_id: u64) -> Result
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn run_clipboard_free_input(
     mut command: ProcessCommand,
     text: &str,
@@ -2997,7 +2997,7 @@ fn type_text(
 
 /// Once a child starts it may have typed a prefix, so failures and cancellation
 /// must never fall back to another delivery method or replay the full text.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn run_typing_child(command: &mut ProcessCommand, is_current: &impl Fn() -> bool) -> Result<()> {
     anyhow::ensure!(is_current(), "dictation superseded before typing");
     let mut child = command

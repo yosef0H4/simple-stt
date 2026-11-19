@@ -1,8 +1,10 @@
 //! Dependency-light contracts shared by the controller and disposable workers.
 //! This crate deliberately does not depend on audio, OCR, HTTP clients, or model runtimes.
 pub mod config;
+pub mod cuda;
 pub mod generation;
 pub mod language;
+pub mod local_ipc;
 pub mod native_paths;
 pub mod paddle;
 pub mod provider_url;

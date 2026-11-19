@@ -1,5 +1,4 @@
 <script lang="ts">
-  import General from "./General.svelte";
   import Output from "./Output.svelte";
   import { languageName, t } from "../lib/i18n";
   import {
@@ -50,5 +49,4 @@
     onselect={(v) => set("audio.preferred_device_id", v)}
   /><Field spec={fields.gain} /><Field spec={fields.stopGrace} />
 </Group>
-<General section="dictation" />
 <Output />

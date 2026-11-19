@@ -2,11 +2,23 @@
   import { onDestroy } from "svelte";
   import { api } from "../lib/api";
   import { get, set, run, ui } from "../lib/state.svelte";
+  import { reading } from "../lib/reading-state.svelte";
   import { hotkeys } from "../lib/settings";
   import IconButton from "./IconButton.svelte";
   import Icon from "./Icon.svelte";
   import { t } from "../lib/i18n";
-  let { path, label }: { path: string; label: string } = $props();
+  let {
+    path,
+    label,
+    inputId = path,
+    value,
+    onchange,
+  }: { path: string; label: string; inputId?: string; value?: string; onchange?: (value: string) => void } = $props();
+  const shortcut = $derived(value ?? String(get(path) || "None"));
+  function change(value: string) {
+    if (onchange) onchange(value);
+    else set(path, value);
+  }
   let dialog: HTMLDialogElement;
   let controller: AbortController | undefined;
   onDestroy(() => controller?.abort());
@@ -21,15 +33,16 @@
           controller?.signal,
         );
         if (
-          hotkeys.some(
-            ([p]) =>
-              p !== path &&
-              get(p) === result.hotkey &&
-              result.hotkey.toLowerCase() !== "none",
+          result.hotkey.toLowerCase() !== "none" && [
+            ...hotkeys.map(([p]) => [p, get(p)]),
+            ...Object.entries(reading.config?.shortcuts ?? {}).map(([key, value]) => [`reader.shortcuts.${key}`, value]),
+          ].some(([p, assigned]) =>
+            p !== path && typeof assigned === "string" &&
+            assigned.toLowerCase() === result.hotkey.toLowerCase(),
           )
         )
           throw Error(t("ui.that_shortcut_is_already_assigned.fa1844"));
-        set(path, result.hotkey);
+        change(result.hotkey);
       } finally {
         dialog.close();
       }
@@ -38,14 +51,14 @@
 </script>
 
 <div class="field" data-setting-path={path}>
-  <label for={path}>{t(label)}</label>
+  <label for={inputId}>{t(label)}</label>
   <div class="control">
     <input
       dir="ltr"
-      id={path}
-      value={String(get(path) || "None")}
+      id={inputId}
+      value={shortcut}
       readonly={ui.state?.platform === "windows"}
-      oninput={(event) => set(path, event.currentTarget.value)}
+      oninput={(event) => change(event.currentTarget.value)}
     />{#if ui.state?.platform === "windows"}<IconButton
         icon="keyboard"
         label={t("ui.record_shortcut_label.dc749f", { label: t(label) })}
@@ -53,8 +66,8 @@
       />{/if}<IconButton
       icon="close"
       label={t("ui.disable_shortcut_label.918007", { label: t(label) })}
-      disabled={get(path) === "None"}
-      onclick={() => set(path, "None")}
+      disabled={shortcut === "None"}
+      onclick={() => change("None")}
     />
   </div>
 </div>

@@ -40,6 +40,51 @@ pub fn set_server_key(value: &str) -> Result<()> {
     set("server-auth-token", value)
 }
 
+#[cfg(windows)]
+pub fn delete_server_key() -> Result<()> {
+    delete("server-auth-token")
+}
+
+#[cfg(windows)]
+fn capture_account(instance: &str, pid: u32) -> Result<String> {
+    validate_slot(instance)?;
+    anyhow::ensure!(pid != 0, "invalid capture process identity");
+    Ok(format!("capture-auth-{instance}-{pid}"))
+}
+#[cfg(windows)]
+pub fn capture_token(instance: &str, pid: u32) -> Result<Option<String>> {
+    get(&capture_account(instance, pid)?)
+}
+#[cfg(windows)]
+pub fn set_capture_token(instance: &str, pid: u32, token: &str) -> Result<()> {
+    anyhow::ensure!(
+        !token.is_empty() && token.len() <= 512,
+        "invalid capture token length"
+    );
+    set(&capture_account(instance, pid)?, token)
+}
+#[cfg(windows)]
+pub fn delete_capture_token(instance: &str, pid: u32) -> Result<()> {
+    delete(&capture_account(instance, pid)?)
+}
+#[cfg(all(windows, test))]
+#[test]
+fn capture_credentials_are_scoped_to_profile_and_process() {
+    let instance = format!("test-{}", uuid::Uuid::new_v4());
+    set_capture_token(&instance, 1, "old-test-token").unwrap();
+    set_capture_token(&instance, 2, "new-test-token").unwrap();
+    assert_eq!(
+        capture_token(&instance, 1).unwrap().as_deref(),
+        Some("old-test-token")
+    );
+    delete_capture_token(&instance, 1).unwrap();
+    assert_eq!(
+        capture_token(&instance, 2).unwrap().as_deref(),
+        Some("new-test-token")
+    );
+    delete_capture_token(&instance, 2).unwrap();
+}
+
 fn mark_changed() -> Result<()> {
     let path = crate::config::data_dir().join("credentials.revision");
     std::fs::create_dir_all(

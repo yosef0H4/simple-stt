@@ -421,6 +421,14 @@ fn main() -> Result<()> {
     let worker_pid = supervisor.pid_tracker();
     let worker = Arc::new(Mutex::new(supervisor));
     let (control_tx, control_rx) = unbounded::<ControlRequest>();
+    #[cfg(windows)]
+    let _capture_token = if state_file == AppConfig::service_state_path() {
+        Some(simple_stt::capture::state::PublishedCaptureToken::new(
+            &args.token,
+        )?)
+    } else {
+        None
+    };
     let server = ipc_server::spawn(args.token, control_tx)?;
     ServiceState::new(server.address.clone()).save_atomic(&state_file)?;
     tracing::info!(address = %server.address, state_file = %state_file.display(), "capture service ready");
@@ -1466,16 +1474,7 @@ fn handle_control(command: ShellCommand, context: ControlContext<'_>) -> ShellRe
                 && transcribing.is_empty()
                 && cleaning.is_empty()
             {
-                use simple_stt::common::shell_protocol::DeliveryPhase;
-                // Keep the release hint visible while keys are held, then use
-                // the effective delivery mode reported by the desktop shell.
-                match phase {
-                    DeliveryPhase::WaitingForKeys => {
-                        overlay.set_primary(OverlayPrimary::WaitingForKeys)
-                    }
-                    DeliveryPhase::Typing => overlay.set_primary(OverlayPrimary::Typing),
-                    _ => overlay.set_primary(OverlayPrimary::Pasting),
-                }
+                overlay.set_primary(OverlayPrimary::for_delivery(phase));
             }
             ShellResponse::ok("delivery progress")
         }

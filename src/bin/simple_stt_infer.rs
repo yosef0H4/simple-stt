@@ -158,10 +158,10 @@ fn write_result(
             &Frame::text(MessageType::Transcript, session_id, text),
         ),
         Err(error) => {
-            tracing::error!(session_id, %error, "inference request failed");
+            tracing::error!(session_id, error = %format!("{error:#}"), "inference request failed");
             write_frame(
                 output,
-                &Frame::text(MessageType::Error, session_id, error.to_string()),
+                &Frame::text(MessageType::Error, session_id, format!("{error:#}")),
             )
         }
     }

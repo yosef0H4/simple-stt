@@ -96,7 +96,7 @@ def main():
             assert localized['ui_localization']['locale'] == 'ar' and localized['ui_localization']['direction'] == 'rtl'
             assert localized['config']['speech'] == speech
             language_draft['general']['ui_language'] = 'auto'
-            api('/api/save', {'config': language_draft, 'expected_hash': localized['config_hash']})
+            state = api('/api/save', {'config': language_draft, 'expected_hash': localized['config_hash']})
             before = config.read_bytes()
             try:
                 api('/api/keyboard-languages', auth=False)

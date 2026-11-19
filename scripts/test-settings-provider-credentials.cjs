@@ -33,7 +33,7 @@ const f = require('./settings-fixture.cjs');
       await page.locator(`[data-catalog-feature=${feature}]`).click();
       const input=page.locator(`[data-setting-path="${provider}"] .combo-input`);
       await input.click();await input.fill('OpenAI');
-      await page.getByRole('option',{name:'OpenAI-compatible',exact:true}).click();
+      await page.locator('button[role="option"][aria-label="OpenAI-compatible"]').click();
       await page.locator(`#${urlId}`).fill(`http://100.85.156.101:8765/${feature}/v1`);
       await page.locator(`#${keyId}`).fill(`${feature}-fixture-key`);
       await page.waitForResponse(response=>response.url().endsWith("/api/provider-discovery")&&response.request().postDataJSON().api_key===`${feature}-fixture-key`);

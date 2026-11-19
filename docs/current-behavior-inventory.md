@@ -171,11 +171,11 @@ late progress or completion cannot replace newer work.
 
 Overlay shortcuts use separate keycaps, such as [Meta][Ctrl][.], with standard
 Unicode emoji for recording, cancel, delivery, cleanup, retry and shortcut help.
-The same icon text feeds Linux and Windows tooltips. Linux uses the desktop's
-emoji font and draws only keycap outlines; Windows retains native Common
-Controls styling and bracketed notation. Keycaps stay together when wrapping;
-keyboard notation stays left-to-right in Arabic. The recording shortcut uses
-🔴, while the waveform header keeps its microphone.
+Linux uses the desktop's emoji font and draws only keycap outlines. Native
+Windows tooltips use the same status and shortcut labels, bracketed keycaps,
+and text prefixes compatible with Common Controls. The Windows tray and
+installer use the same microphone artwork as the Linux launcher. Windows
+tray menus display color emoji as native item icons.
 
 The Linux base package leaves speech/OCR runtime and model installation to Settings → Downloads; it bundles the compressed fastText language-identification model. CUDA/Vulkan dictation and the integrated Kokoro/Supertonic/PaddleOCR reading routes use separate optional assets. Dictation defaults to keyboard-language routing, reading defaults to automatic text-language routing, and OCR defaults to a single Paddle selection. Reading settings use the existing explicit Save bar; the main shell owns reading shortcuts and tray actions. Reading workers, API providers, OCR, clipboard listening, chunk navigation and cancellation are adapted from Simple TTS under `reader/crates/`, without depending on that checkout.
 

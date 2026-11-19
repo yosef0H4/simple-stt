@@ -1,5 +1,5 @@
 ; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
-; catalog-sha256: 88902e3f28b1a817a906972d1f3fb233bb191d02d84b3e343c272947985b3bcc
+; catalog-sha256: dfc698d2eed838326971eca2551b14b98227683e045eda32c1953b8c13bb1492
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
     if language = "auto"
@@ -9,6 +9,7 @@ UiSetLanguage(language := "auto") {
 UiText(id, args := unset) {
     global SimpleSttUiLocale
     static english := Map(
+        "overlay.screenContext", "Screen",
         "overlay.transcribing", "🎙 Transcribing...",
         "overlay.typing", "🎙 Typing...",
         "notice.microphoneDisconnected", "Microphone disconnected — reconnecting…",
@@ -47,6 +48,7 @@ UiText(id, args := unset) {
         "notice.cleanupEmpty", "AI cleanup provider returned no text — original text used",
         "notice.cleanupFailed", "AI cleanup provider request failed — original text used",
         "menu.tip", "Right-click for recording, settings, and exit",
+        "reading.read_along_start", "Start read-along",
         "menu.start", "Start recording",
         "menu.stop", "Stop recording",
         "menu.settings", "Settings",
@@ -222,6 +224,7 @@ UiText(id, args := unset) {
         "reader.next.preparing", "Next page · preparing"
     )
     static arabic := Map(
+        "overlay.screenContext", "الشاشة",
         "overlay.transcribing", "🎙 جارٍ التفريغ…",
         "overlay.typing", "🎙 جارٍ الإدراج…",
         "notice.microphoneDisconnected", "انقطع الميكروفون — جارٍ الاتصال…",
@@ -260,6 +263,7 @@ UiText(id, args := unset) {
         "notice.cleanupEmpty", "لم يُرجع التنقيح نصًا — استُخدم النص الأصلي",
         "notice.cleanupFailed", "تعذّر التنقيح — استُخدم النص الأصلي",
         "menu.tip", "انقر يمينًا للتسجيل والإعدادات",
+        "reading.read_along_start", "بدء القراءة مع التنقل",
         "menu.start", "بدء التسجيل",
         "menu.stop", "إيقاف التسجيل",
         "menu.settings", "الإعدادات",

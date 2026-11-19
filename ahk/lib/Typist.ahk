@@ -56,6 +56,8 @@ class Typist {
         this.pasteExpected := ""
         this.pasteVerified := false
         this.active := true
+        this.deliveryStartedAt := A_TickCount
+        this.deliveryTimings := ""
         this.lastProgress := ""
         this.logger.Write("info", "text-delivery begin mode=" . this.deliveryMode . " chars=" . this.textLength, this.sessionId)
         SetTimer(this.timer, -1)
@@ -80,7 +82,7 @@ class Typist {
             SetTimer(this.timer, -25)
             return
         }
-        this.ReportProgress(this.deliveryMode = "type" ? "typing" : "pasting")
+        this.ReportProgress(this.deliveryMode = "type" ? "typing" : (this.pasteStage = 0 ? "preparing-clipboard" : "waiting-for-paste"))
         if this.deliveryMode = "type"
             this.TickType()
         else
@@ -91,10 +93,16 @@ class Typist {
         if this.lastProgress = phase
             return
         this.lastProgress := phase
+        this.RecordTiming("phase_" . phase, this.deliveryStartedAt)
         if IsObject(this.onProgress)
             this.onProgress.Call(this.sessionId, phase)
     }
 
+    RecordTiming(name, startedAt) {
+        ; Keep measurements in memory. One completion log avoids filesystem
+        ; work between clipboard publication and key injection.
+        this.deliveryTimings .= " " . name . "_ms=" . (A_TickCount - startedAt)
+    }
     TickType() {
         if this.offset > this.textLength {
             this.CompleteCurrent()
@@ -202,7 +210,10 @@ class Typist {
                     this.CompleteCurrent()
                     return
                 }
+                stageStarted := A_TickCount
                 this.clipboardBackup := ClipboardAll()
+                this.RecordTiming("clipboard_backup", stageStarted)
+                stageStarted := A_TickCount
                 if this.cleanClipboardOnPaste {
                     clipboardSequence := this.PublishCleanClipboardText(this.text, operationSession)
                     if !this.active || this.sessionId != operationSession
@@ -221,6 +232,7 @@ class Typist {
                 if DllCall("user32\GetClipboardSequenceNumber", "UInt") != this.pasteClipboardSequence || !(A_Clipboard == this.text)
                     throw Error("clipboard changed before paste")
                 this.pasteProbe := this.CaptureEditPasteProbe(this.targetWindow, this.text)
+                this.RecordTiming("clipboard_publication_probe", stageStarted)
                 this.pasteExpected := IsObject(this.pasteProbe) ? this.pasteProbe["expected"] : ""
                 if !this.active || this.sessionId != operationSession
                     return
@@ -229,12 +241,15 @@ class Typist {
                 ; Mark before injecting: cancellation after this point must retain
                 ; the temporary clipboard unless a standard Edit proves insertion.
                 this.pasteStage := 1
+                this.ReportProgress("pasting")
+                stageStarted := A_TickCount
                 if this.deliveryMode = "paste_shift_insert"
                     SendEvent("{Shift down}{Insert}{Shift up}")
                 else if this.deliveryMode = "paste_ctrl_shift_v"
                     Send("^+v")
                 else
                     Send("^v")
+                this.RecordTiming("paste_injection", stageStarted)
                 this.pasteDeadline := A_TickCount + 3000
                 SetTimer(this.timer, -25)
                 return
@@ -352,7 +367,7 @@ class Typist {
     }
 
     CompleteCurrent(outcome := "success") {
-        this.logger.Write("info", "text-delivery " . outcome . " mode=" . this.deliveryMode, this.sessionId)
+        this.logger.Write("info", "text-delivery " . outcome . " mode=" . this.deliveryMode . " elapsed_ms=" . (A_TickCount - this.deliveryStartedAt) . this.deliveryTimings, this.sessionId)
         completedSession := this.sessionId
         this.active := false
         this.pasteStage := 0
@@ -372,7 +387,11 @@ class Typist {
         }
         currentSequence := DllCall("user32\GetClipboardSequenceNumber", "UInt")
         if this.pasteClipboardSequence != 0 && currentSequence = this.pasteClipboardSequence {
-            try A_Clipboard := this.clipboardBackup
+            try {
+                stageStarted := A_TickCount
+                A_Clipboard := this.clipboardBackup
+                this.RecordTiming("clipboard_restore", stageStarted)
+            }
             catch Error as err
                 this.logger.Write("warning", "clipboard restore failed: " . err.Message, this.sessionId)
         } else {
@@ -471,6 +490,9 @@ class Typist {
     }
 
     SendMessageBounded(hwnd, message, wParam, lParam, resultPtr) {
-        return !!DllCall("user32\SendMessageTimeoutW", "Ptr", hwnd, "UInt", message, "UPtr", wParam, "Ptr", lParam, "UInt", 0x2, "UInt", 1000, "Ptr", resultPtr, "Ptr")
+        ; A busy target must not freeze hotkeys/cancellation for a full second
+        ; per probe. On timeout retain the transcript clipboard, as for other
+        ; unverified controls; never restore it before consumption is confirmed.
+        return !!DllCall("user32\SendMessageTimeoutW", "Ptr", hwnd, "UInt", message, "UPtr", wParam, "Ptr", lParam, "UInt", 0x2, "UInt", 100, "Ptr", resultPtr, "Ptr")
     }
 }

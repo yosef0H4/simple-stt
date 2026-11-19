@@ -518,12 +518,7 @@ impl Default for AppConfig {
                     "CapsLock+S"
                 }
                 .to_owned(),
-                toggle_delivery_hotkey: if cfg!(target_os = "linux") {
-                    "Meta+D"
-                } else {
-                    "CapsLock+D"
-                }
-                .to_owned(),
+                toggle_delivery_hotkey: "None".to_owned(),
                 cancel_hotkey: if cfg!(target_os = "linux") {
                     "Meta+X"
                 } else {
@@ -531,18 +526,8 @@ impl Default for AppConfig {
                 }
                 .to_owned(),
                 toggle_cleanup_hotkey: "None".to_owned(),
-                retry_delivery_hotkey: if cfg!(target_os = "linux") {
-                    "Meta+Ctrl+V"
-                } else {
-                    "CapsLock+V"
-                }
-                .to_owned(),
-                show_shortcuts_hotkey: if cfg!(target_os = "linux") {
-                    "Meta+Ctrl+H"
-                } else {
-                    "CapsLock+H"
-                }
-                .to_owned(),
+                retry_delivery_hotkey: "None".to_owned(),
+                show_shortcuts_hotkey: "None".to_owned(),
                 shortcut_reminders: true,
                 linux_hotkey_backend: LinuxHotkeyBackend::Auto,
                 capslock_behavior: CapsLockBehavior::PreserveTap,
@@ -1431,6 +1416,39 @@ fn instance_local_data_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn only_record_and_cancel_are_preassigned_and_saved_bindings_survive() {
+        let config = AppConfig::default();
+        assert_ne!(config.general.record_hotkey, "None");
+        assert_ne!(config.general.cancel_hotkey, "None");
+        for shortcut in [
+            &config.general.toggle_delivery_hotkey,
+            &config.general.toggle_cleanup_hotkey,
+            &config.general.retry_delivery_hotkey,
+            &config.general.show_shortcuts_hotkey,
+        ] {
+            assert_eq!(shortcut, "None");
+        }
+        let reading = reader_core::config::ShortcutSettings::default();
+        for shortcut in [
+            &reading.read_selection,
+            &reading.read_region,
+            &reading.read_along,
+            &reading.copy_region,
+            &reading.listen_clipboard,
+        ] {
+            assert_eq!(shortcut, "None");
+        }
+        let saved = AppConfig::normalize_json(
+            &serde_json::json!({"general": {"retry_delivery_hotkey": "Ctrl+Alt+P", "show_shortcuts_hotkey": "Ctrl+Alt+H"}}),
+        );
+        assert_eq!(saved.general.retry_delivery_hotkey, "Ctrl+Alt+P");
+        assert_eq!(saved.general.show_shortcuts_hotkey, "Ctrl+Alt+H");
+        let reading: reader_core::config::ShortcutSettings =
+            serde_json::from_value(serde_json::json!({"read_selection":"Ctrl+Alt+R"})).unwrap();
+        assert_eq!(reading.read_selection, "Ctrl+Alt+R");
+    }
+
+    #[test]
     fn keyboard_languages_keep_independent_remote_connections_and_local_fallbacks() {
         let mut config = super::AppConfig::default();
         for language in ["en", "ar"] {
@@ -1632,14 +1650,7 @@ mod tests {
                 RecordingMode::Hold
             }
         );
-        assert_eq!(
-            config.general.toggle_delivery_hotkey,
-            if cfg!(target_os = "linux") {
-                "Meta+D"
-            } else {
-                "CapsLock+D"
-            }
-        );
+        assert_eq!(config.general.toggle_delivery_hotkey, "None");
         assert_eq!(
             config.general.cancel_hotkey,
             if cfg!(target_os = "linux") {

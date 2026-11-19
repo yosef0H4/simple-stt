@@ -190,6 +190,8 @@ struct GenerationConfig {
 
 struct NativeTts {
     _lib: Library,
+    #[cfg(windows)]
+    _onnx: Library,
     handle: *const std::ffi::c_void,
     generate: unsafe extern "C" fn(
         *const std::ffi::c_void,
@@ -224,7 +226,30 @@ impl NativeTts {
                 args.runtime_dir.join("lib/libsherpa-onnx-c-api.so")
             }
         });
-        let library = unsafe { Library::new(&library_path) }
+        #[cfg(windows)]
+        let onnx = unsafe {
+            Library::new(
+                library_path
+                    .parent()
+                    .context("Sherpa library has no parent")?
+                    .join("onnxruntime.dll"),
+            )
+        }
+        .context("loading the selected Windows ONNX runtime")?;
+        #[cfg(windows)]
+        let library = unsafe {
+            // Resolve ONNX dependencies beside the selected runtime, before System32.
+            const SEARCH_DLL_LOAD_DIR: u32 = 0x00000100;
+            const SEARCH_DEFAULT_DIRS: u32 = 0x00001000;
+            libloading::os::windows::Library::load_with_flags(
+                &library_path,
+                SEARCH_DLL_LOAD_DIR | SEARCH_DEFAULT_DIRS,
+            )
+            .map(Library::from)
+        };
+        #[cfg(not(windows))]
+        let library = unsafe { Library::new(&library_path) };
+        let library = library
             .with_context(|| format!("loading Sherpa-ONNX C API at {}", library_path.display()))?;
         let version = unsafe {
             library.get::<unsafe extern "C" fn() -> *const i8>(b"SherpaOnnxGetVersionStr\0")
@@ -344,6 +369,8 @@ impl NativeTts {
         }
         Ok(Self {
             _lib: library,
+            #[cfg(windows)]
+            _onnx: onnx,
             handle,
             generate,
             destroy_audio,
@@ -448,39 +475,6 @@ unsafe extern "C" fn cancel_progress(
     i32::from(!cancelled.load(Ordering::Acquire))
 }
 
-fn cuda_allocation_proven() -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        let maps = std::fs::read_to_string("/proc/self/maps").unwrap_or_default();
-        if !maps.contains("libonnxruntime_providers_cuda") {
-            return false;
-        }
-        let output = std::process::Command::new("nvidia-smi")
-            .args([
-                "--query-compute-apps=pid,used_gpu_memory",
-                "--format=csv,noheader,nounits",
-            ])
-            .output();
-        let Ok(output) = output else { return false };
-        if !output.status.success() {
-            return false;
-        }
-        let pid = std::process::id().to_string();
-        String::from_utf8_lossy(&output.stdout).lines().any(|line| {
-            let mut parts = line.split(',').map(str::trim);
-            parts.next() == Some(pid.as_str())
-                && parts
-                    .next()
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .is_some_and(|mb| mb > 0)
-        })
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        false
-    }
-}
-
 fn find_file(dir: &Path, names: &[&str]) -> Result<PathBuf> {
     for name in names {
         let path = dir.join(name);
@@ -491,7 +485,14 @@ fn find_file(dir: &Path, names: &[&str]) -> Result<PathBuf> {
     bail!("model pack is missing one of {}", names.join(", "))
 }
 fn cstr_path(path: &Path) -> Result<CString> {
-    CString::new(path.to_string_lossy().as_bytes()).context("model path contains a null byte")
+    let text = path.to_string_lossy();
+    #[cfg(windows)]
+    let text = if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned()
+    };
+    CString::new(text.as_bytes()).context("model path contains a null byte")
 }
 fn voice_id(value: &str) -> Option<i32> {
     Some(match value {
@@ -1304,7 +1305,7 @@ fn verify_cuda_or_fallback(
     if !matches!(request.device, "cuda" | "auto") || state.provider != "cuda" || state.cuda_proven {
         return Ok(());
     }
-    if cuda_allocation_proven() {
+    if reader_core::cuda::onnx_cuda_verified() {
         state.cuda_proven = true;
         state.device = "CUDA verified · Sherpa provider + NVIDIA allocation".into();
         return Ok(());
@@ -1460,6 +1461,24 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn native_paths_accept_canonical_drive_and_unc_paths() {
+        for (input, expected) in [
+            (r"\\?\C:\models\kokoro", r"C:\models\kokoro"),
+            (r"\\?\UNC\host\models\kokoro", r"\\host\models\kokoro"),
+            (r"C:\models\kokoro", r"C:\models\kokoro"),
+        ] {
+            assert_eq!(
+                super::cstr_path(std::path::Path::new(input))
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                expected
+            );
+        }
+    }
+
     use super::*;
     #[test]
     fn supertonic_steps_use_explicit_value_or_sherpa_default() {

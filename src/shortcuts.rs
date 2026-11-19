@@ -103,9 +103,12 @@ fn compact_chord(chord: &str) -> String {
 }
 
 pub fn summary(bindings: &BTreeMap<String, String>, locale: Locale) -> String {
+    summary_with_style(bindings, locale, cfg!(windows))
+}
+fn summary_with_style(bindings: &BTreeMap<String, String>, locale: Locale, native: bool) -> String {
     let items: Vec<_> = ACTIONS
         .iter()
-        .filter_map(|(id, _)| {
+        .filter_map(|(id, key)| {
             let chord = bindings.get(*id)?.trim();
             if chord.is_empty()
                 || ["none", "off", "disabled"]
@@ -116,15 +119,28 @@ pub fn summary(bindings: &BTreeMap<String, String>, locale: Locale) -> String {
             }
             // Isolate the chord so + and Latin keys retain their order in Arabic.
             let chord = compact_chord(chord);
-            Some(format!("{} \u{2066}{chord}\u{2069}", action_icon(id)))
+            Some(if native {
+                format!(
+                    "{} {chord}",
+                    crate::localization::translate(locale, key, &[])
+                )
+            } else {
+                format!("{} \u{2066}{chord}\u{2069}", action_icon(id))
+            })
         })
         .collect();
-    let columns = if items.len() <= 4 { 2 } else { 3 };
+    let columns = if native {
+        1
+    } else if items.len() <= 4 {
+        2
+    } else {
+        3
+    };
     items
         .chunks(columns)
         .map(|row| {
             let line = row.join("\t");
-            if locale == Locale::Ar {
+            if locale == Locale::Ar && !native {
                 format!("\u{2066}{line}\u{2069}")
             } else {
                 line
@@ -137,7 +153,6 @@ pub fn summary(bindings: &BTreeMap<String, String>, locale: Locale) -> String {
 pub fn current(config: &AppConfig, locale: Locale) -> String {
     summary(&assigned(config), locale)
 }
-
 /// Reminders never create an idle tooltip or duplicate an explicit shortcut list.
 pub fn append(text: String, reminder: &str, enabled: bool) -> String {
     if !enabled || text.is_empty() || reminder.is_empty() || text.contains(reminder) {
@@ -149,6 +164,31 @@ pub fn append(text: String, reminder: &str, enabled: bool) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_shortcuts_distinguish_actions_that_share_an_icon() {
+        let bindings = BTreeMap::from([
+            ("copy-region".into(), "Ctrl+C".into()),
+            ("listen-clipboard".into(), "Ctrl+L".into()),
+        ]);
+        let text = summary_with_style(&bindings, Locale::En, true);
+        assert_eq!(text.lines().count(), 2);
+        assert!(text.contains("Listen to clipboard [Ctrl][L]"));
+        assert!(!text.contains(['\u{2066}', '\u{2069}', '\t']));
+        assert!(text.chars().all(|ch| ch as u32 <= 0xffff));
+    }
+
+    #[test]
+    fn every_native_shortcut_has_a_desktop_label() {
+        for locale in [Locale::En, Locale::Ar] {
+            for (action, label) in ACTIONS {
+                let bindings = BTreeMap::from([(action.to_owned(), "CapsLock+Z".to_owned())]);
+                let text = summary_with_style(&bindings, locale, true);
+                assert!(!text.contains(label), "untranslated {locale:?}: {text}");
+                assert!(text.ends_with(" [CapsLock][Z]"), "{text}");
+            }
+        }
+    }
+
     use super::*;
     #[test]
     fn only_assigned_known_shortcuts_are_listed_in_action_order() {
@@ -160,7 +200,7 @@ mod tests {
             ("unknown".into(), "Meta+X".into()),
         ]);
         for locale in [Locale::En, Locale::Ar] {
-            let text = summary(&map, locale);
+            let text = summary_with_style(&map, locale, false);
             assert!(text.find("[Meta][Z]") < text.find("[Meta][V]"));
             assert!(!text.contains("None") && !text.contains("Meta+X"));
             assert_eq!(text.lines().count(), 1);
@@ -181,7 +221,7 @@ mod tests {
             .map(|(id, _)| (id.to_string(), "Meta+Z".to_owned()))
             .collect();
         for locale in [Locale::En, Locale::Ar] {
-            let text = summary(&bindings, locale);
+            let text = summary_with_style(&bindings, locale, false);
             assert_eq!(text.lines().count(), 4);
             assert!(!text.contains("Record") && !text.contains("Cancel"));
             assert!(text.contains("↪️") && text.contains("⌨️"));

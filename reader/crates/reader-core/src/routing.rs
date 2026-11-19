@@ -299,17 +299,13 @@ pub fn registry() -> Registry {
     let mut registry: Registry =
         serde_json::from_str(include_str!("../../../../assets/catalog/modules.json"))
             .expect("validated module registry");
-    #[cfg(target_os = "windows")]
-    registry
-        .runtimes
-        .retain(|runtime| runtime.backend != "cuda");
     for runtime in &mut registry.runtimes {
         if let Some(asset) = runtime.platform_assets.get(std::env::consts::OS) {
             runtime.asset = Some(asset.clone());
         }
-        #[cfg(target_os = "windows")]
-        if runtime.id == "parakeet-vulkan" {
-            runtime.asset = None;
+        #[cfg(windows)]
+        if runtime.id == "parakeet-cuda" {
+            runtime.label = "Parakeet · CUDA 12.8 (Blackwell)".into();
         }
     }
     registry
@@ -443,9 +439,11 @@ impl crate::AppConfig {
         config.speech.fallback_to_local = defaults.fallback_to_local;
         config.speech.route_defaults = Some(defaults);
         let binding = self.speech.selection.binding(language);
+        let mut explicit_remote = false;
         if feature == Feature::Tts {
             if let Some(remote) = &binding.remote {
                 if remote.enabled {
+                    explicit_remote = true;
                     remote.validate(feature)?;
                     config.speech.provider = crate::SpeechProvider::OpenAiCompatible {
                         base_url: remote.primary.base_url.clone(),
@@ -457,33 +455,41 @@ impl crate::AppConfig {
                     config.speech.use_feature_key = false;
                     config.speech.remote_fallback = remote.fallback.clone();
                     config.speech.fallback_to_local = remote.fallback_to_local;
-                    if remote.fallback_to_local {
-                        let mut local = self.clone();
-                        local.speech.provider = crate::SpeechProvider::LocalKokoro;
-                        local.speech.selection.mode = SelectionMode::SingleModel;
-                        local.speech.selection.single = binding.clone();
-                        local.speech.selection.single.remote = None;
-                        match local.routed(feature, language) {
-                            Ok(local) => {
-                                config.speech.model_dir = local.speech.model_dir;
-                                config.speech.runtime_dir = local.speech.runtime_dir;
-                                config.speech.device = local.speech.device;
-                                config.speech.voice = local.speech.voice;
-                            }
-                            Err(_) => {
-                                config.speech.model_dir =
-                                    crate::config::data_dir().join("unconfigured-local-fallback");
-                                config.speech.runtime_dir = config.speech.model_dir.clone();
-                            }
-                        }
-                    }
-                    config.speech.selection.single = binding;
-                    config.speech.language = language
-                        .map(primary)
-                        .unwrap_or_else(|| self.speech.language.clone());
-                    return Ok(config);
+                } else {
+                    config.speech.provider = crate::SpeechProvider::LocalKokoro;
                 }
-                config.speech.provider = crate::SpeechProvider::LocalKokoro;
+            }
+            if matches!(
+                config.speech.provider,
+                crate::SpeechProvider::OpenAiCompatible { .. }
+            ) {
+                if config.speech.fallback_to_local {
+                    let mut local = self.clone();
+                    local.speech.route_defaults = None;
+                    local.speech.provider = crate::SpeechProvider::LocalKokoro;
+                    local.speech.selection.mode = SelectionMode::SingleModel;
+                    local.speech.selection.single = binding.clone();
+                    local.speech.selection.single.remote = None;
+                    match local.routed(feature, language) {
+                        Ok(local) => {
+                            config.speech.model_dir = local.speech.model_dir;
+                            config.speech.runtime_dir = local.speech.runtime_dir;
+                            config.speech.device = local.speech.device;
+                            config.speech.voice = local.speech.voice;
+                        }
+                        Err(_) if explicit_remote => {
+                            config.speech.model_dir =
+                                crate::config::data_dir().join("unconfigured-local-fallback");
+                            config.speech.runtime_dir = config.speech.model_dir.clone();
+                        }
+                        Err(_) => {}
+                    }
+                }
+                config.speech.selection.single = binding;
+                config.speech.language = language
+                    .map(primary)
+                    .unwrap_or_else(|| self.speech.language.clone());
+                return Ok(config);
             }
         }
         let assets = crate::config::data_dir()
@@ -535,8 +541,17 @@ impl crate::AppConfig {
                     config.speech.language
                 );
             }
-            Feature::Ocr if matches!(self.ocr.provider, crate::OcrProvider::LocalPaddle) => {
-                let (runtime, model) = resolve(&self.ocr.selection, feature, language, &assets)?;
+            Feature::Ocr => {
+                let local = matches!(self.ocr.provider, crate::OcrProvider::LocalPaddle);
+                if !local && !self.ocr.fallback_to_local {
+                    return Ok(config);
+                }
+                let (runtime, model) =
+                    match resolve(&self.ocr.selection, feature, language, &assets) {
+                        Ok(assignment) => assignment,
+                        Err(error) if local => return Err(error),
+                        Err(_) => return Ok(config),
+                    };
                 config.ocr.model_dir = assets.join(&model.asset);
                 config.ocr.runtime_dir =
                     assets.join(runtime.asset.context("OCR runtime has no asset")?);

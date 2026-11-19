@@ -284,7 +284,7 @@ Relative runtime/model directories resolve from the checkout root for Cargo `tar
 
 The source repository intentionally does not vendor Parakeet runtime binaries, GGUF model files, AutoHotkey installs, or unrelated external reference projects. Place a compatible Parakeet runtime under `external\parakeet-runtime\parakeet-windows-cuda\` for local development or packaging, and review upstream licenses before publishing any binary package that includes runtime/model artifacts.
 
-The default `build-distribution.cmd` installer includes the Parakeet runtime DLLs but does not embed a GGUF model. It offers a default-checked installer task to download the recommended model from Hugging Face; if that fails, installation continues and users can download a model later from Settings. Use `build-distribution.cmd -IncludeModel` only for an explicit offline/private bundle.
+The Windows installer includes the Parakeet runtime DLLs but does not bundle or download STT, TTS, or OCR models. Choose models explicitly in Settings, as on Linux. Existing settings and downloaded models are preserved during upgrades.
 
 ## License
 

@@ -98,12 +98,17 @@ const f = require("./settings-fixture.cjs");
   await save();
   assert.equal(f.getConfig().audio.stop_grace_ms, 1250);
   await go("audio");
+  assert.equal(await page.locator('[data-setting-path="general.record_hotkey"]').count(), 0);
+  await page.locator("#settings-search").fill("Retry last action");
+  await page.getByRole("option", { name: /Retry last action/ }).click();
+  await page.locator('section[data-section="general"] [data-setting-path="general.recording_mode"]').waitFor();
+  f.options.hotkey = "CapsLock+Q";
   await page
     .getByRole("button", { name: "Record Record shortcut", exact: true })
     .click();
   await page.waitForFunction(
     () =>
-      document.getElementById("general.record_hotkey").value === "Ctrl+Alt+R",
+      document.getElementById("general.record_hotkey").value === "CapsLock+Q",
   );
   await save();
   f.options.hotkey = "Ctrl+Alt+P";
@@ -286,7 +291,7 @@ const f = require("./settings-fixture.cjs");
   assert.match(await page.locator("#notice").innerText(), /JSON|SyntaxError/);
   await page.getByRole("button", { name: "Reload", exact: true }).click();
   await page.waitForFunction(() =>
-    document.querySelector("#json").value.startsWith("{\n"),
+    !document.querySelector("#settings")?.inert && document.querySelector("#json")?.value.startsWith("{\n"),
   );
   assert.equal(
     JSON.parse(await page.locator("#json").inputValue()).schema_version,
@@ -295,6 +300,7 @@ const f = require("./settings-fixture.cjs");
   const edited = JSON.parse(await page.locator("#json").inputValue());
   edited.audio.gain = 1.4;
   await page.locator("#json").fill(JSON.stringify(edited));
+  await page.locator("#savebar").waitFor({ state: "visible" });
   await go("general");
   await go("config");
   assert.equal(

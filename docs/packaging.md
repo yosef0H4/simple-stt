@@ -10,7 +10,7 @@ build-distribution.cmd
 
 This is the supported release command. It runs Rust tests, builds the release binaries, stages the AutoHotkey shell script with a bundled AutoHotkey v2 runtime, creates the installer, creates the ZIP archive, and prints SHA-256 hashes.
 
-The installer includes the official parakeet.cpp v0.5.0 Vulkan DLL. Its default-checked task downloads the English `tdt_ctc-110m-q8_0.gguf` model from Hugging Face with a pinned SHA-256 check. A separate unchecked task downloads the validated Arabic `lemura-arabic-asr-lite-q8_0.gguf` from [yosef0H4/lemura-arabic-asr-lite-GGUF](https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF), also with a pinned SHA-256 check. Both models are available in Settings > Models; download a model, assign it to its language, and save. Existing valid models are reused by the installer.
+Windows setup installs the app. Download inference runtimes and models explicitly in Settings > Models, as on Linux. Upgrades preserve existing models, runtimes, settings, and startup shortcuts. The installer version comes from Cargo.toml.
 
 The implementation lives in `scripts\build-distribution.ps1`. `build-distribution.cmd` is the convenience wrapper and `scripts\package-release.ps1` is now a compatibility wrapper that forwards to the distribution builder.
 
@@ -18,12 +18,6 @@ For a faster local packaging pass after tests have already passed:
 
 ```cmd
 build-distribution.cmd -SkipTests
-```
-
-For an explicit offline/private bundle that includes both English and Arabic Q8 models:
-
-```cmd
-build-distribution.cmd -IncludeModel
 ```
 
 The native PowerShell entry point is:
@@ -39,6 +33,31 @@ The legacy compatibility wrapper remains available:
 ```
 
 ## Build outputs
+
+Windows/Linux installation parity: both leave STT, TTS and OCR model installation
+to an explicit Settings action. Windows setup no longer removes an existing
+`models` directory or startup shortcuts during an upgrade, and its version is
+read from Cargo rather than maintained separately.
+
+Windows and Linux download inference runtimes separately. Windows Vulkan comes
+from the upstream Parakeet release. Windows CUDA dictation uses a
+[Simple STT build for Blackwell](https://github.com/yosef0H4/simple-stt-runtimes/releases/tag/parakeet-abi6-cuda12.8-sm120-v1)
+with CUDA Runtime and cuBLAS fetched directly from NVIDIA. The Windows CUDA
+dictation runtime also requires the x64 Microsoft Visual C++ Redistributable.
+Settings can download Sherpa CUDA and its pinned dependencies for reading and
+OCR on both platforms. [Distribution sources and notices](research/windows-runtime-distribution.md)
+
+Routing, separate provider credentials, language detection and reading use shared
+Rust code. Native hotkeys, clipboard access and rendering use each platform's
+desktop APIs. Linux manages the API with a user service. Windows can start and
+stop an independent background API process from the CLI.
+
+After rebuilding, run `python scripts/test-windows-installer.py --iscc <ISCC.exe>`
+to inspect the actual wizard and perform a private installation. The private test
+changes only installer identity/output metadata, disables uninstall registration,
+leaves the user's installed app alone, and verifies existing model/config files
+survive. Its screenshot and logs are saved under
+`artifacts/windows-validation/installer-parity`.
 
 The one-command build writes:
 
@@ -63,9 +82,6 @@ simple-stt-portable\
         simple-stt-infer.exe
         simple-stt-ctl.exe
         fixtures\parakeet-smoke.wav
-        external\parakeet-runtime\parakeet-windows-vulkan\
-            bin\parakeet.dll
-        external\parakeet-runtime\models\  empty in the portable payload unless -IncludeModel is used
 ```
 
 Installer-created Start Menu, Desktop, and Startup shortcuts target `simple-stt.cmd`; the command file launches the bundled AutoHotkey runtime with `runtime\simple-stt.ahk`.
@@ -78,20 +94,12 @@ The distribution builder expects these tools and files on the Windows developer 
 Rust stable toolchain with Cargo
 AutoHotkey v2 runtime (AutoHotkey64.exe)
 Inno Setup 6 compiler (ISCC.exe)
-external\parakeet-runtime\parakeet-windows-vulkan\bin\parakeet.dll
 fixtures\parakeet-smoke.wav
 ```
 
-The source repository intentionally does not track `external\parakeet-runtime\`, `external\parakeet.cpp\`, `external\AutoHotkey\`, or unrelated local reference checkouts. The standard distribution build does not require a local Arabic model; the installer and app download the finished GGUF. Users do not need conversion tools.
+The source repository intentionally does not track `external\parakeet-runtime\`, `external\parakeet.cpp\`, `external\AutoHotkey\`, or unrelated local reference checkouts. The standard distribution build does not require a local Arabic model; the app downloads the finished GGUF after an explicit Settings action. Users do not need conversion tools.
 
-`-IncludeModel` additionally requires:
-
-```text
-external\parakeet-runtime\models\tdt_ctc-110m-q8_0.gguf
-external\parakeet-runtime\models\lemura-arabic-asr-lite-q8_0.gguf
-```
-
-Before publishing a public installer or ZIP that includes `parakeet.dll` or GGUF model files, review the upstream runtime and model licenses and include the required notices/attribution. For source-only GitHub publishing, keep those runtime/model files out of git.
+Publish source-built Parakeet libraries in the companion runtime repository with the pinned build recipe, checksums, and upstream license notices.
 
 The script auto-detects common AutoHotkey v2 and Inno Setup install locations. Override them when needed:
 

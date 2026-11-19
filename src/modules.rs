@@ -4,26 +4,35 @@ use reader_core::routing;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+fn stt_runtime_path(config: &AppConfig, runtime: &routing::Runtime) -> Option<PathBuf> {
+    #[cfg(windows)]
+    if matches!(runtime.id.as_str(), "parakeet-vulkan" | "parakeet-cuda") {
+        if routing::runtime_installed(runtime, &crate::assets::root()) {
+            return runtime.asset.as_deref().map(crate::assets::directory);
+        }
+        let backend = runtime.id.strip_prefix("parakeet-")?;
+        let legacy = config.resolve_from_runtime_root(&format!(
+            "external/parakeet-runtime/parakeet-windows-{backend}"
+        ));
+        if runtime_ready(Some(&legacy)) {
+            return Some(legacy);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = config;
+    runtime
+        .asset
+        .as_ref()
+        .map(|asset| crate::assets::directory(asset))
+}
 pub fn stt_runtime(config: &AppConfig, language: &str) -> Option<PathBuf> {
     if config.speech.selection_mode == ModelSelectionMode::FollowKeyboard {
-        return config
-            .speech
-            .language_runtimes
-            .get(language)
-            .and_then(|id| id.as_ref())
-            .and_then(|id| {
-                #[cfg(target_os = "windows")]
-                if id == "parakeet-vulkan" {
-                    return Some(config.resolve_from_runtime_root(
-                        "external/parakeet-runtime/parakeet-windows-vulkan",
-                    ));
-                }
-                routing::registry()
-                    .runtimes
-                    .into_iter()
-                    .find(|runtime| runtime.id == *id && runtime.feature == routing::Feature::Stt)
-                    .and_then(|runtime| runtime.asset.map(|asset| crate::assets::directory(&asset)))
-            });
+        let id = config.speech.language_runtimes.get(language)?.as_ref()?;
+        let runtime = routing::registry()
+            .runtimes
+            .into_iter()
+            .find(|runtime| runtime.id == *id && runtime.feature == routing::Feature::Stt)?;
+        return stt_runtime_path(config, &runtime);
     }
     (!config.speech.runtime_dir.is_empty()).then(|| config.parakeet_runtime_dir_path())
 }
@@ -200,10 +209,9 @@ pub fn inventory(config: &AppConfig) -> Value {
         let directory=runtime.asset.as_ref().map(|id|crate::assets::directory(id));
         let installed=reader_core::routing::runtime_installed(runtime,&crate::assets::root());
         #[cfg(target_os = "windows")]
-        let (directory,installed) = if runtime.id == "parakeet-vulkan" {
-            let bundled = config.resolve_from_runtime_root("external/parakeet-runtime/parakeet-windows-vulkan");
-            let ready = runtime_ready(Some(&bundled));
-            (Some(bundled), ready)
+        let (directory,installed) = if runtime.feature == routing::Feature::Stt {
+            let directory = stt_runtime_path(config, runtime);
+            (directory.clone(), installed || runtime_ready(directory.as_deref()))
         } else { (directory, installed) };
         let recommendation = runtime_recommendation(&runtime.id, hardware);
         json!({"id":runtime.id,"feature":runtime.feature,"engine":runtime.engine,"backend":runtime.backend,"label":runtime.label,"installed":installed,"directory":directory,"asset":runtime.asset,"recommended":recommendation.is_some(),"recommendation":recommendation})
@@ -237,11 +245,15 @@ impl AutoInventory {
                 installed.insert(asset.id);
             }
         }
-        #[cfg(target_os = "windows")]
-        if runtime_ready(Some(&config.resolve_from_runtime_root(
-            "external/parakeet-runtime/parakeet-windows-vulkan",
-        ))) {
-            installed.insert("parakeet-vulkan".into());
+        #[cfg(windows)]
+        for runtime in registry
+            .runtimes
+            .iter()
+            .filter(|runtime| runtime.feature == routing::Feature::Stt)
+        {
+            if runtime_ready(stt_runtime_path(config, runtime).as_deref()) {
+                installed.insert(runtime.asset.clone().unwrap_or_else(|| runtime.id.clone()));
+            }
         }
         let hardware = hardware();
         Self {
@@ -253,10 +265,10 @@ impl AutoInventory {
         }
     }
     fn has_runtime(&self, runtime: &routing::Runtime) -> bool {
-        runtime
-            .asset
-            .as_ref()
-            .is_some_and(|asset| self.installed.contains(asset))
+        runtime.asset.as_ref().map_or_else(
+            || self.installed.contains(&runtime.id),
+            |asset| self.installed.contains(asset),
+        )
     }
 }
 
@@ -280,7 +292,9 @@ pub fn auto_select(
         .iter()
         .any(|model| model.file == completed)
         || inventory.registry.runtimes.iter().any(|runtime| {
-            runtime.feature == routing::Feature::Stt && runtime.asset.as_deref() == Some(completed)
+            runtime.feature == routing::Feature::Stt
+                && (runtime.asset.as_deref() == Some(completed)
+                    || (runtime.asset.is_none() && runtime.id == completed))
         });
     if speech_event {
         result.stt = auto_select_stt(stt, completed, languages, inventory);
@@ -383,9 +397,8 @@ fn auto_select_stt(
     if config.speech.selection_mode == ModelSelectionMode::SingleModel {
         let Some(runtime) = runtimes.iter().find(|runtime| {
             config.speech.runtime_dir.is_empty()
-                || runtime.asset.as_ref().is_some_and(|asset| {
-                    config.parakeet_runtime_dir_path() == crate::assets::directory(asset)
-                })
+                || stt_runtime_path(config, runtime)
+                    .is_some_and(|path| config.parakeet_runtime_dir_path() == path)
         }) else {
             return false;
         };
@@ -402,17 +415,7 @@ fn auto_select_stt(
                 changed = true;
             }
             if config.speech.runtime_dir.is_empty() {
-                if let Some(asset) = &runtime.asset {
-                    #[cfg(target_os = "windows")]
-                    let path = if runtime.id == "parakeet-vulkan" {
-                        config.resolve_from_runtime_root(
-                            "external/parakeet-runtime/parakeet-windows-vulkan",
-                        )
-                    } else {
-                        crate::assets::directory(asset)
-                    };
-                    #[cfg(not(target_os = "windows"))]
-                    let path = crate::assets::directory(asset);
+                if let Some(path) = stt_runtime_path(config, runtime) {
                     config.speech.runtime_dir = path.to_string_lossy().into_owned();
                     changed = true;
                 }
@@ -611,6 +614,12 @@ pub fn stt_model_ready(config: &AppConfig, language: &str) -> bool {
 mod recommendation_tests {
     use super::*;
 
+    const VULKAN_ASSET: &str = if cfg!(windows) {
+        "parakeet-vulkan-windows"
+    } else {
+        "parakeet-vulkan"
+    };
+
     fn inventory_fixture() -> AutoInventory {
         let mut stt_models = crate::models::catalog();
         for model in &mut stt_models {
@@ -620,8 +629,12 @@ mod recommendation_tests {
         AutoInventory {
             registry: routing::registry(),
             installed: [
-                "parakeet-vulkan",
-                "sherpa-cpu",
+                VULKAN_ASSET,
+                if cfg!(windows) {
+                    "sherpa-cpu-windows"
+                } else {
+                    "sherpa-cpu"
+                },
                 "kokoro",
                 "supertonic3",
                 "paddle-ar-en",
@@ -635,19 +648,48 @@ mod recommendation_tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_cuda_language_binding_resolves_the_catalog_or_legacy_runtime() {
+        let mut config = AppConfig::default();
+        config
+            .speech
+            .language_runtimes
+            .insert("en".into(), Some("parakeet-cuda".into()));
+        let resolved = stt_runtime(&config, "en").unwrap();
+        assert!(
+            resolved == crate::assets::directory("parakeet-cuda-windows")
+                || resolved
+                    == config.resolve_from_runtime_root(
+                        "external/parakeet-runtime/parakeet-windows-cuda"
+                    )
+        );
+        assert_eq!(stt_runtime(&config, "ar"), None);
+    }
+    #[test]
+    fn completion_assigns_a_runtime_for_single_model_mode() {
+        let mut stt = AppConfig::default();
+        stt.speech.selection_mode = ModelSelectionMode::SingleModel;
+        let mut reader = reader_core::AppConfig::default();
+        assert!(
+            auto_select(
+                &mut stt,
+                &mut reader,
+                VULKAN_ASSET,
+                &[],
+                &inventory_fixture()
+            )
+            .stt
+        );
+        assert!(!stt.speech.runtime_dir.is_empty());
+    }
     #[test]
     fn completion_fills_only_compatible_empty_speech_bindings() {
         let inventory = inventory_fixture();
         let mut stt = AppConfig::default();
         let mut reader = reader_core::AppConfig::default();
         let languages = vec!["en".into(), "ar".into()];
-        let changed = auto_select(
-            &mut stt,
-            &mut reader,
-            "parakeet-vulkan",
-            &languages,
-            &inventory,
-        );
+        let changed = auto_select(&mut stt, &mut reader, VULKAN_ASSET, &languages, &inventory);
         assert!(changed.stt);
         assert_eq!(
             stt.speech.language_models["en"].as_deref(),

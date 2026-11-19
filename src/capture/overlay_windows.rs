@@ -1,10 +1,11 @@
 use crate::capture::overlay::overlay_model::{
-    empty_visualizer_levels, render_overlay_text_with_locale, set_visualizer_level, NoticeLevel,
-    OverlayPrimary, RecordingIndicators, VisualizerLevels,
+    empty_visualizer_levels, native_tooltip_text, render_overlay_text_with_locale,
+    set_visualizer_level, NoticeLevel, OverlayPrimary, RecordingIndicators, VisualizerLevels,
 };
 use crate::localization::Locale;
 use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use reader_core::local_ipc::{WINDOWS_PICKER_CLASS, WINDOWS_TOOLTIP_PROPERTY};
 use std::mem::zeroed;
 use std::ptr::null_mut;
 use std::sync::{
@@ -22,17 +23,17 @@ use windows_sys::Win32::Graphics::Gdi::{
 use windows_sys::Win32::UI::Controls::{
     InitCommonControls, TOOLTIPS_CLASSW, TTF_ABSOLUTE, TTF_RTLREADING, TTF_TRACK, TTM_ADDTOOLW,
     TTM_ADJUSTRECT, TTM_SETMAXTIPWIDTH, TTM_TRACKACTIVATE, TTM_TRACKPOSITION, TTM_UPDATETIPTEXTW,
-    TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW,
+    TTS_ALWAYSTIP, TTS_NOANIMATE, TTS_NOFADE, TTS_NOPREFIX, TTTOOLINFOW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, DispatchMessageW, GetCursorPos, GetWindowRect, IsWindow,
-    PeekMessageW, SendMessageW, TranslateMessage, MSG, PM_REMOVE, WM_GETFONT, WM_SETFONT,
-    WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DestroyWindow, DispatchMessageW, FindWindowW, GetCursorPos, GetWindowRect,
+    IsWindow, PeekMessageW, SendMessageW, SetPropW, TranslateMessage, MSG, PM_REMOVE, WM_GETFONT,
+    WM_SETFONT, WS_EX_TOPMOST, WS_POPUP,
 };
 
 const CURSOR_OFFSET: i32 = 16;
 const NOTICE_POLL_INTERVAL: Duration = Duration::from_millis(25);
-const RECORDING_POLL_INTERVAL: Duration = Duration::from_millis(2);
+const RECORDING_POLL_INTERVAL: Duration = Duration::from_millis(33);
 const MAX_TOOLTIP_WIDTH: i32 = 420;
 
 #[derive(Debug, Clone)]
@@ -217,6 +218,9 @@ struct TooltipState {
     indicators: RecordingIndicators,
     last_text: String,
     text_buf: Vec<u16>,
+    active: bool,
+    last_position: Option<(i32, i32)>,
+    max_width: i32,
 }
 
 impl TooltipState {
@@ -240,6 +244,9 @@ impl TooltipState {
             indicators: RecordingIndicators::default(),
             last_text: String::new(),
             text_buf: Vec::new(),
+            active: false,
+            last_position: None,
+            max_width: 0,
         }
     }
 
@@ -344,7 +351,9 @@ impl TooltipState {
         if self.notice.as_ref().is_some_and(Notice::is_expired) {
             self.notice = None;
         }
-        if !self.should_render() {
+        if !self.should_render()
+            || !unsafe { FindWindowW(WINDOWS_PICKER_CLASS, std::ptr::null()) }.is_null()
+        {
             self.destroy_tooltip();
             return;
         }
@@ -359,7 +368,7 @@ impl TooltipState {
             self.display_level = self.display_level * 0.10 + self.target_level * 0.90;
             set_visualizer_level(&mut self.visualizer_levels, self.display_level);
         }
-        let text = self.render_text();
+        let text = native_tooltip_text(&self.render_text(), self.locale, self.primary);
         if text != self.last_text {
             self.set_text(&text);
             self.last_text = text;
@@ -388,19 +397,27 @@ impl TooltipState {
             point.y = cursor.y - size.1 - 3;
         }
 
-        unsafe {
-            SendMessageW(
-                self.hwnd,
-                TTM_TRACKPOSITION,
-                0,
-                make_lparam(point.x, point.y),
-            );
-            SendMessageW(
-                self.hwnd,
-                TTM_TRACKACTIVATE,
-                1,
-                &self.tool as *const TTTOOLINFOW as LPARAM,
-            );
+        if self.last_position != Some((point.x, point.y)) {
+            unsafe {
+                SendMessageW(
+                    self.hwnd,
+                    TTM_TRACKPOSITION,
+                    0,
+                    make_lparam(point.x, point.y),
+                );
+            }
+            self.last_position = Some((point.x, point.y));
+        }
+        if !self.active {
+            unsafe {
+                SendMessageW(
+                    self.hwnd,
+                    TTM_TRACKACTIVATE,
+                    1,
+                    &self.tool as *const TTTOOLINFOW as LPARAM,
+                );
+            }
+            self.active = true;
         }
     }
 
@@ -449,7 +466,7 @@ impl TooltipState {
                 WS_EX_TOPMOST,
                 TOOLTIPS_CLASSW,
                 null_mut(),
-                WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP,
+                WS_POPUP | TTS_NOPREFIX | TTS_ALWAYSTIP | TTS_NOANIMATE | TTS_NOFADE,
                 0,
                 0,
                 0,
@@ -465,6 +482,10 @@ impl TooltipState {
             return Err(anyhow!("CreateWindowExW TOOLTIPS_CLASSW failed"));
         }
         self.hwnd = hwnd;
+        if unsafe { SetPropW(hwnd, WINDOWS_TOOLTIP_PROPERTY, 1_usize as _) } == 0 {
+            self.destroy_tooltip();
+            return Err(anyhow!("Could not mark the Simple STT tooltip"));
+        }
         if self.locale == Locale::Ar {
             self.arabic_font = native_arabic_font(hwnd);
             if !self.arabic_font.is_null() {
@@ -524,7 +545,7 @@ impl TooltipState {
         }
     }
 
-    fn update_max_width(&self, work_area: RECT) {
+    fn update_max_width(&mut self, work_area: RECT) {
         let mut text_rect = work_area;
         unsafe {
             SendMessageW(
@@ -534,7 +555,10 @@ impl TooltipState {
                 &mut text_rect as *mut RECT as LPARAM,
             );
             let width = (text_rect.right - text_rect.left).clamp(160, MAX_TOOLTIP_WIDTH);
-            SendMessageW(self.hwnd, TTM_SETMAXTIPWIDTH, 0, width as LPARAM);
+            if width != self.max_width {
+                SendMessageW(self.hwnd, TTM_SETMAXTIPWIDTH, 0, width as LPARAM);
+                self.max_width = width;
+            }
         }
     }
 
@@ -555,6 +579,9 @@ impl TooltipState {
     }
 
     fn destroy_tooltip(&mut self) {
+        self.active = false;
+        self.last_position = None;
+        self.max_width = 0;
         if !self.hwnd.is_null() {
             unsafe {
                 DestroyWindow(self.hwnd);
@@ -574,7 +601,6 @@ impl TooltipState {
         }
     }
 }
-
 fn native_arabic_font(hwnd: HWND) -> HFONT {
     static REGISTER: Once = Once::new();
     REGISTER.call_once(|| {
@@ -662,6 +688,64 @@ fn tooltip_info_size() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn native_tooltip_stays_visible_across_updates_and_reopens() {
+        use super::*;
+        use std::ptr::null;
+        use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            DefWindowProcW, IsWindowVisible, RegisterClassW, UnregisterClassW, WNDCLASSW,
+        };
+        let mut state = TooltipState::new();
+        state.start_recording(0, RecordingIndicators::default());
+        state.tick();
+        let hwnd = state.hwnd;
+        assert!(!hwnd.is_null());
+        for level in [0.0, 0.5, 1.0, 0.3] {
+            state.set_level(level);
+            state.tick();
+            pump_messages();
+            assert_eq!(state.hwnd, hwnd);
+            assert!(state.active);
+            assert_ne!(unsafe { IsWindowVisible(hwnd) }, 0);
+        }
+        let instance = unsafe { GetModuleHandleW(null()) };
+        let class = WNDCLASSW {
+            hInstance: instance,
+            lpszClassName: WINDOWS_PICKER_CLASS,
+            lpfnWndProc: Some(DefWindowProcW),
+            ..Default::default()
+        };
+        assert_ne!(unsafe { RegisterClassW(&class) }, 0);
+        let picker = unsafe {
+            CreateWindowExW(
+                0,
+                WINDOWS_PICKER_CLASS,
+                null(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                null_mut(),
+                null_mut(),
+                instance,
+                null(),
+            )
+        };
+        assert!(!picker.is_null());
+        state.tick();
+        let suppressed = state.hwnd.is_null() && !state.active;
+        unsafe {
+            DestroyWindow(picker);
+            UnregisterClassW(WINDOWS_PICKER_CLASS, instance);
+        }
+        assert!(suppressed);
+        state.tick();
+        assert_ne!(unsafe { IsWindowVisible(state.hwnd) }, 0);
+        state.hide();
+    }
+
     #[test]
     fn recording_waveform_is_prefix_free_unicode_and_stationary() {
         let mut levels = crate::capture::overlay::overlay_model::empty_visualizer_levels();

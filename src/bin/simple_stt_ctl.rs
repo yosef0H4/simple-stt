@@ -40,6 +40,14 @@ enum CommandKind {
     },
     /// Serve persistent file transcription requests over newline-delimited JSON.
     MediaServe,
+    /// Keep desktop delivery feedback off the shell's process-launch path.
+    #[command(hide = true)]
+    StatusRelay {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        parent_pid: u32,
+    },
     Ping,
     StartRecording {
         #[arg(long)]
@@ -124,9 +132,21 @@ enum NoticeArg {
 }
 
 fn main() {
+    #[cfg(windows)]
+    reader_core::local_ipc::prevent_stdio_handle_inheritance();
     let args = Args::parse();
     let output_path = args.output.clone();
     let result = match args.command {
+        CommandKind::StatusRelay {
+            ref input,
+            parent_pid,
+        } => {
+            if let Err(error) = status_relay(input, parent_pid, &args) {
+                eprintln!("desktop status relay: {error:#}");
+                std::process::exit(1);
+            }
+            return;
+        }
         CommandKind::Administration(command) => {
             if let Err(error) = simple_stt::admin::dispatch(command) {
                 eprintln!("simple-stt-ctl: {error:#}");
@@ -409,6 +429,7 @@ fn translate(command: CommandKind) -> ShellCommand {
         | CommandKind::KeyboardLanguage
         | CommandKind::Media { .. }
         | CommandKind::MediaServe
+        | CommandKind::StatusRelay { .. }
         | CommandKind::ReaderAction { .. }
         | CommandKind::ConfigShow
         | CommandKind::ConfigSave { .. }
@@ -417,6 +438,58 @@ fn translate(command: CommandKind) -> ShellCommand {
         }
     }
 }
+#[cfg(any(windows, test))]
+fn relay_command(line: &str) -> Result<CommandKind> {
+    let (session, phase) = line
+        .trim_end()
+        .split_once('\t')
+        .context("invalid status record")?;
+    let session_id = session.parse::<u64>().context("invalid status session")?;
+    if phase == "complete" {
+        return Ok(CommandKind::DeliveryComplete { session_id });
+    }
+    let phase =
+        <simple_stt::common::shell_protocol::DeliveryPhase as ValueEnum>::from_str(phase, false)
+            .map_err(anyhow::Error::msg)?;
+    Ok(CommandKind::DeliveryProgress { session_id, phase })
+}
+
+#[cfg(windows)]
+fn status_relay(input: &Path, parent_pid: u32, args: &Args) -> Result<()> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
+    // Keep an exact process handle, rather than trusting a reusable parent PID.
+    let parent = unsafe { OpenProcess(0x0010_0000, 0, parent_pid) }; // SYNCHRONIZE
+    anyhow::ensure!(!parent.is_null(), "desktop parent is unavailable");
+    let parent = unsafe { OwnedHandle::from_raw_handle(parent) };
+    let mut reader = BufReader::new(fs::File::open(input)?);
+    let mut pending = String::new();
+    while input.exists() && unsafe { WaitForSingleObject(parent.as_raw_handle(), 0) } == 258 {
+        let count = reader.read_line(&mut pending)?;
+        anyhow::ensure!(pending.len() <= 256, "status record too large");
+        if pending.ends_with('\n') {
+            let command = relay_command(&pending)?;
+            // A failed/stale status must not prevent a later completion. The
+            // capture service still authenticates and validates every session.
+            let _ = run(Args {
+                state_file: args.state_file.clone(),
+                token: args.token.clone(),
+                output: None,
+                command,
+            });
+            pending.clear();
+        } else if count == 0 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn status_relay(_: &Path, _: u32, _: &Args) -> Result<()> {
+    anyhow::bail!("the file status transport is Windows-only")
+}
+
 fn config_show() -> Result<ShellResponse> {
     let config = AppConfig::load()?;
     let reader = simple_stt::reader::load().unwrap_or_else(|_| simple_stt::reader::defaults());
@@ -699,6 +772,10 @@ fn config_show() -> Result<ShellResponse> {
         serde_json::to_string(&config.speech.language_models)?,
     );
     response.values.insert(
+        "language_runtimes".into(),
+        serde_json::to_string(&config.speech.language_runtimes)?,
+    );
+    response.values.insert(
         "config_path".into(),
         AppConfig::config_path().display().to_string(),
     );
@@ -822,6 +899,7 @@ fn apply_string_config(config: &mut AppConfig, key: &str, value: &str) -> bool {
 fn apply_numeric_config(config: &mut AppConfig, key: &str, value: &str) -> Result<bool> {
     match key {
         "language_models" => config.speech.language_models = serde_json::from_str(value)?,
+        "language_runtimes" => config.speech.language_runtimes = serde_json::from_str(value)?,
         "audio_gain" => config.audio.gain = value.parse()?,
         "typing_speed_wpm" => config.output.typing_speed_wpm = value.parse()?,
         "idle_worker_timeout_secs" => config.speech.idle_worker_timeout_secs = value.parse()?,
@@ -1002,6 +1080,26 @@ fn write_atomic(path: &Path, body: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_relay_accepts_only_delivery_feedback() {
+        assert!(matches!(
+            relay_command("42\tpreparing-clipboard\n").unwrap(),
+            CommandKind::DeliveryProgress { session_id: 42, .. }
+        ));
+        assert!(matches!(
+            relay_command("42\tcomplete\n").unwrap(),
+            CommandKind::DeliveryComplete { session_id: 42 }
+        ));
+        for invalid in [
+            "42\tshutdown\n",
+            "42\tpasting\textra\n",
+            "-1\tpasting\n",
+            "42\n",
+        ] {
+            assert!(relay_command(invalid).is_err());
+        }
+    }
+
     use super::*;
 
     #[test]

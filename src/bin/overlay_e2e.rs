@@ -373,7 +373,73 @@ fn render_offscreen() {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+fn main() {
+    use simple_stt::capture::overlay::{OverlayHandle, OverlayPrimary};
+    use std::time::Duration;
+    let overlay = OverlayHandle::spawn().expect("spawn native tooltip");
+    let locale = if std::env::args().any(|arg| arg == "--arabic") {
+        simple_stt::localization::Locale::Ar
+    } else {
+        simple_stt::localization::Locale::En
+    };
+    overlay.set_locale(locale);
+    if std::env::args().any(|arg| arg == "--reader") {
+        use simple_stt::{localization::Locale, reader, shortcuts};
+        let passage = if locale == Locale::Ar {
+            "هذا النص هو ما يُقرأ الآن. اسم البرنامج Simple STT."
+        } else {
+            "Holmes is known for his proficiency with observation and deduction."
+        };
+        let status = serde_json::json!({
+            "state": "reading", "chunk_text": passage, "chunk": 2, "chunk_total": 3,
+            "read_along_active": true, "next_page_activity": {"phase": "ready"}
+        });
+        overlay.notify_info(reader::hud_text(&status, locale, 0).0, None);
+        std::thread::sleep(Duration::from_secs(3));
+        overlay.notify_info(
+            shortcuts::summary(
+                &[
+                    ("read-along".to_owned(), "CapsLock+Z".to_owned()),
+                    ("read-selection".to_owned(), "CapsLock+R".to_owned()),
+                ]
+                .into(),
+                locale,
+            ),
+            None,
+        );
+        std::thread::sleep(Duration::from_secs(3));
+        overlay.hide();
+        return;
+    }
+    let config = simple_stt::config::AppConfig::default();
+    overlay.set_shortcuts(simple_stt::shortcuts::current(&config, locale), true);
+    overlay.start_recording(0, Default::default());
+    println!("recording");
+    for index in 0..150 {
+        overlay.set_level((index % 20) as f32 / 20.0);
+        std::thread::sleep(Duration::from_millis(33));
+    }
+    overlay.set_primary(OverlayPrimary::Transcribing);
+    println!("transcribing");
+    std::thread::sleep(Duration::from_secs(2));
+    overlay.hide();
+    println!("hidden");
+    std::thread::sleep(Duration::from_secs(1));
+    overlay.start_recording(0, Default::default());
+    println!("reopened");
+    std::thread::sleep(Duration::from_secs(2));
+    let latencies = overlay.benchmark_latency(100);
+    assert_eq!(latencies.len(), 100);
+    println!(
+        "max_command_us={}",
+        latencies.iter().max().unwrap().as_micros()
+    );
+    overlay.hide();
+    std::thread::sleep(Duration::from_millis(100));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 fn main() {
     println!("overlay-e2e is a Linux Wayland-only helper; skipping on this platform");
 }

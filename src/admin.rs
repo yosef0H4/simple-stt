@@ -31,7 +31,14 @@ pub enum Command {
         command: CredentialCommand,
     },
     /// Run the installed headless API controller (no audio device or desktop shell).
-    Serve,
+    Serve {
+        /// Start the managed Windows API controller in the background.
+        #[arg(long, conflicts_with = "stop")]
+        background: bool,
+        /// Stop the managed Windows API controller.
+        #[arg(long)]
+        stop: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -98,7 +105,7 @@ pub enum CredentialCommand {
         /// Generate a fresh token without a keyring or saving it (for headless hosts).
         #[arg(long, conflicts_with = "replace")]
         stdout: bool,
-        /// Save a new key for the Linux background service and restart it.
+        /// Save a new key and restart the managed background server.
         #[arg(long, conflicts_with_all = ["stdout", "replace"])]
         activate: bool,
     },
@@ -153,7 +160,17 @@ pub fn dispatch(command: Command) -> Result<()> {
         Command::Config { scope, command } => config(scope, command),
         Command::Assets { command } => assets(command),
         Command::Credentials { command } => credentials(command),
-        Command::Serve => {
+        Command::Serve { background, stop } => {
+            if background || stop {
+                #[cfg(windows)]
+                return if stop {
+                    crate::reader::stop_background_server()
+                } else {
+                    crate::reader::start_background_server()
+                };
+                #[cfg(not(windows))]
+                bail!("use systemctl --user to manage the packaged background server");
+            }
             crate::reader::initialize()?;
             let executable = std::env::current_exe()?.with_file_name(if cfg!(windows) {
                 "readerd.exe"
@@ -379,7 +396,7 @@ fn credentials(command: CredentialCommand) -> Result<()> {
                 return Ok(());
             }
             if stdout {
-                eprintln!("Generated only; the running server is unchanged. For the Linux background service, use: simple-stt credentials generate server --activate");
+                eprintln!("Generated only. To update the managed background server, use credentials generate server --activate");
                 println!("{}", generated_server_token(None, true));
                 return Ok(());
             }
@@ -496,10 +513,55 @@ fn activate_server_token(token: &str) -> Result<()> {
         anyhow::ensure!(status.success(), "token saved, but server restart failed; run systemctl --user restart simple-stt-server.service");
         Ok(())
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    {
+        use reader_core::secrets;
+        anyhow::ensure!(std::env::var_os("SIMPLE_TTS_SERVER_TOKEN").is_none(),
+            "SIMPLE_TTS_SERVER_TOKEN overrides the saved token; unset it before activating a saved token");
+        let config = crate::reader::load()?.server;
+        anyhow::ensure!(
+            config.enabled,
+            "enable server mode in Settings before activating a key"
+        );
+        let address: std::net::SocketAddr = config
+            .listen
+            .parse()
+            .context("invalid server listen address")?;
+        let previous = secrets::server_key()?;
+        let was_running = crate::reader::background_server_running();
+        if was_running {
+            crate::reader::stop_background_server()?;
+        }
+        let restorable_start = || {
+            if was_running {
+                let _ = crate::reader::start_background_server();
+            }
+        };
+        if let Err(error) = std::net::TcpListener::bind(address) {
+            restorable_start();
+            return Err(error).context(
+                "server address is occupied; stop the other API listener before activating a key",
+            );
+        }
+        if let Err(error) = secrets::set_server_key(token) {
+            restorable_start();
+            return Err(error);
+        }
+        if let Err(error) = crate::reader::start_background_server() {
+            match previous {
+                Some(value) => secrets::set_server_key(&value),
+                None => secrets::delete_server_key(),
+            }
+            .context("restoring the previous server key after failed activation")?;
+            restorable_start();
+            return Err(error);
+        }
+        Ok(())
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
     {
         let _ = token;
-        bail!("--activate supports the packaged Linux background service only")
+        bail!("managed server activation is unavailable on this platform")
     }
 }
 

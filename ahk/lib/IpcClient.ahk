@@ -1,10 +1,15 @@
 class IpcClient {
-    __New(ctlExe, stateFile, token, eventHandler, logger) {
+    __New(ctlExe, stateFile, token, eventHandler, logger, statusRelay := false) {
         this.ctlExe := ctlExe
         this.stateFile := stateFile
         this.token := token
         this.eventHandler := eventHandler
         this.logger := logger
+        this.statusRelayEnabled := statusRelay
+        this.statusPid := 0
+        this.statusPath := ""
+        if statusRelay
+            this.StartStatusRelay()
         this.jobs := Map()
         this.latestSeq := 0
         this.pollInFlight := false
@@ -23,6 +28,7 @@ class IpcClient {
 
 
     ResetServiceSession(token) {
+        this.StopStatusRelay()
         for pid, job in this.jobs {
             if ProcessExist(pid)
                 try ProcessClose(pid)
@@ -30,6 +36,8 @@ class IpcClient {
         }
         this.jobs := Map()
         this.token := token
+        if this.statusRelayEnabled
+            this.StartStatusRelay()
         this.latestSeq := 0
         this.pollInFlight := false
         this.ready := false
@@ -38,6 +46,7 @@ class IpcClient {
     }
 
     Stop() {
+        this.StopStatusRelay()
         SetTimer(this.pollJobsTimer, 0)
         SetTimer(this.pollEventsTimer, 0)
         SetTimer(this.retryTimer, 0)
@@ -67,6 +76,40 @@ class IpcClient {
             if IsObject(callback)
                 callback.Call(response)
             return 0
+        }
+    }
+
+    StartStatusRelay() {
+        this.statusPath := SimpleSttTempFile("desktop-status")
+        try {
+            FileOpen(this.statusPath, "w", "UTF-8-RAW").Close()
+            command := SimpleSttQuote(this.ctlExe) . " --state-file " . SimpleSttQuote(this.stateFile) . " --token " . SimpleSttQuote(this.token) . " status-relay --input " . SimpleSttQuote(this.statusPath) . " --parent-pid " . ProcessExist()
+            Run(command, A_ScriptDir, "Hide", &relayPid)
+            this.statusPid := relayPid
+        } catch Error as err {
+            this.logger.Write("warning", "desktop feedback relay unavailable: " . err.Message)
+            this.StopStatusRelay()
+        }
+    }
+
+    StopStatusRelay() {
+        if this.statusPath != "" && FileExist(this.statusPath)
+            try FileDelete(this.statusPath)
+        this.statusPath := ""
+        this.statusPid := 0
+    }
+
+    DeliveryStatus(sessionId, phase) {
+        if !this.statusPid || !ProcessExist(this.statusPid) || !FileExist(this.statusPath)
+            return false
+        try {
+            queue := FileOpen(this.statusPath, "a", "UTF-8-RAW")
+            queue.Write(sessionId . "`t" . phase . "`n")
+            queue.Close()
+            return true
+        } catch Error as err {
+            this.logger.Write("warning", "unable to queue desktop feedback: " . err.Message)
+            return false
         }
     }
 

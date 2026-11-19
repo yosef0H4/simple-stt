@@ -4,7 +4,7 @@ const path = require("node:path");
 const { chromium } = require("playwright");
 const f = require("./settings-fixture.cjs");
 
-const pages = ["general", "audio", "models", "output", "cleanup", "advanced", "config", "reading"];
+const pages = ["general", "audio", "reading", "models", "cleanup", "advanced"];
 const locales = ["en", "ar"];
 const themes = ["light", "dark"];
 const widths = [360, 768, 1280];
@@ -16,6 +16,20 @@ const widths = [360, 768, 1280];
     await new Promise((resolve) => f.server.listen(0, "127.0.0.1", resolve));
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    page.setDefaultTimeout(8000);
+    const openConfig = async () => {
+      await page.locator('nav button[data-page="advanced"]').click();
+      const details = page.locator("[data-settings-json]");
+      if (!(await details.evaluate(element => element.open)))
+        await details.locator("summary").click();
+    };
+    const chooseTheme = async (theme) => {
+      const field = page.locator('[data-setting-path="general.ui_theme"]');
+      await field.getByRole("combobox").click();
+      await page.locator('[data-combo-list="general.ui_theme"]').getByRole("option", {
+        name: theme === "dark" ? /^(Dark|داكن)$/ : /^(Light|فاتح)$/,
+      }).click();
+    };
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`http://127.0.0.1:${f.server.address().port}/#token=${f.token}`);
@@ -72,7 +86,7 @@ const widths = [360, 768, 1280];
       await language.selectOption(locale);
       for (const theme of themes) {
         await page.locator('nav button[data-page="general"]').click();
-        await page.locator('[data-setting-path="general.ui_theme"] select').selectOption(theme);
+        await chooseTheme(theme);
         for (const width of widths) {
           await page.setViewportSize({ width, height: 900 });
           for (const name of pages) {
@@ -99,7 +113,7 @@ const widths = [360, 768, 1280];
     }
 
     await page.setViewportSize({ width: 360, height: 900 });
-    await page.locator('nav button[data-page="output"]').click();
+    await page.locator('nav button[data-page="audio"]').click();
     const typing = page.locator('#typing-speed');
     assert.equal(await typing.getAttribute('dir'), 'ltr', 'Instant stays at the right edge in RTL');
     await typing.focus();
@@ -109,7 +123,7 @@ const widths = [360, 768, 1280];
     assert.equal(await typing.inputValue(), '99');
 
     // Check automatic reset and imported-config previews preserve locale behavior.
-    await page.locator('nav button[data-page="config"]').click();
+    await openConfig();
     await page.locator(".config-toolbar button:last-of-type").click();
     await page.locator('[data-setting-path="general.ui_language"] select').waitFor({ state: "detached" }).catch(() => {});
     await page.locator('nav button[data-page="general"]').click();
@@ -118,7 +132,7 @@ const widths = [360, 768, 1280];
     assert.equal(await page.locator("html").getAttribute("lang"), "ar", "reset to auto should use system locale");
     const imported = structuredClone(f.getConfig());
     imported.general.ui_language = "ar";
-    await page.locator('nav button[data-page="config"]').click();
+    await openConfig();
     await page.locator("#import-file").setInputFiles({
       name: "localized-config.json",
       mimeType: "application/json",
@@ -130,6 +144,8 @@ const widths = [360, 768, 1280];
     await page.locator('nav button[data-page="audio"]').click();
     const combo = page.locator('[data-setting-path="audio.preferred_device_id"] input[role="combobox"]');
     if (await combo.count()) await combo.focus();
+    await page.locator('nav button[data-page="models"]').click();
+    await page.locator('[data-catalog-feature="stt"]').click();
     await page.locator('#stt-mode').selectOption('single_model');
     const modelCombo = page.locator('[data-setting-path="stt.single.model"] input[role="combobox"]');
     await modelCombo.fill("missing-saved-model.gguf");
@@ -163,7 +179,7 @@ const widths = [360, 768, 1280];
     const general = page.locator('nav button[data-page="general"]');
     await general.click();
     await page.locator('[data-setting-path="general.ui_language"] select').selectOption("ar");
-    await page.locator('[data-setting-path="general.ui_theme"] select').selectOption("dark");
+    await chooseTheme("dark");
     if (process.env.SETTINGS_VISUAL_REVIEW === "1") {
       await page.evaluate(async () => {
         await document.fonts.load('14px "Noto Sans Arabic"');
@@ -187,7 +203,7 @@ const widths = [360, 768, 1280];
 
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.locator("html").evaluate((node) => (node.style.zoom = "2"));
-    await page.locator('nav button[data-page="output"]').click();
+    await page.locator('nav button[data-page="audio"]').click();
     assert.equal(await page.locator("html").evaluate((node) => node.scrollWidth <= node.clientWidth), true,
       "200% zoom should not create horizontal page overflow");
     if (process.env.SETTINGS_VISUAL_REVIEW === "1") {

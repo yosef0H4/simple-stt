@@ -52,9 +52,9 @@ def request(process, kind: int, body: bytes = b"", session_id: int = 0):
     return read_frame(process.stdout)
 
 
-def run_mode(root: Path, mode: str, language: str, expected_gpu: str | None = None) -> str:
+def run_mode(root: Path, mode: str, language: str, expected_gpu: str | None = None, backend: str = "vulkan", runtime_dir: Path | None = None, worker: Path | None = None) -> str:
     windows = sys.platform == "win32"
-    runtime = root / "external" / "parakeet-runtime" / ("parakeet-windows-vulkan" if windows else "parakeet-linux-vulkan")
+    runtime = runtime_dir or root / "external" / "parakeet-runtime" / f"parakeet-{'windows' if windows else 'linux'}-{backend}"
     library = "parakeet.dll" if windows else "libparakeet.so"
     model_name = "lemura-arabic-asr-lite-q8_0.gguf" if language == "arabic" else "tdt_ctc-110m-q8_0.gguf"
     model = root / "external" / "parakeet-runtime" / "models" / model_name
@@ -63,8 +63,12 @@ def run_mode(root: Path, mode: str, language: str, expected_gpu: str | None = No
     exe = root / "target" / "release" / executable
     if not exe.exists():
         exe = root / executable
+    if worker is not None:
+        exe = worker
     log = root / "artifacts" / f"simple-stt-infer-{language}-{mode}.log"
-    for required in [runtime / "bin" / library, model, audio, exe]:
+    if not any(path.is_file() for path in [runtime / "bin" / library, runtime / library, runtime / "lib" / library]):
+        raise RuntimeError(f"missing {library} in {runtime}")
+    for required in [model, audio, exe]:
         if not required.exists():
             raise RuntimeError(f"missing required file: {required}")
     command = [
@@ -114,8 +118,9 @@ def run_mode(root: Path, mode: str, language: str, expected_gpu: str | None = No
         log.with_suffix(".native.log").write_text(native_log, encoding="utf-8")
         if mode == "cpu" and "using device: Vulkan" in native_log:
             raise RuntimeError(f"{mode}: native runtime selected a GPU despite CPU mode: {native_log}")
-        if mode == "gpu" and "using device: Vulkan" not in native_log:
-            raise RuntimeError(f"{mode}: native runtime did not report Vulkan selection: {native_log}")
+        gpu_markers = ["using device: CUDA", "using GPU device: CUDA"] if backend == "cuda" else ["using device: Vulkan"]
+        if mode == "gpu" and not any(marker in native_log for marker in gpu_markers):
+            raise RuntimeError(f"{mode}: native runtime did not report {backend} selection: {native_log}")
         if mode == "gpu" and expected_gpu:
             selected = native_log.split("using device: ")[-1].splitlines()[0]
             index = selected.removeprefix("Vulkan")
@@ -125,28 +130,38 @@ def run_mode(root: Path, mode: str, language: str, expected_gpu: str | None = No
                 raise RuntimeError(f"expected GPU {expected_gpu!r}, got {device_line!r}")
             print(f"PASS physical GPU: {device_line}")
         elapsed = time.perf_counter() - started
-        backend = "cpu" if mode == "cpu" else "Vulkan"
+        backend = "cpu" if mode == "cpu" else backend
         print(f"PASS {language}/{mode}: backend={backend} {elapsed:.2f}s transcript={transcript!r}")
         return transcript
     finally:
         if process.poll() is None:
             process.kill()
             process.wait(timeout=10)
+        native_output.seek(0)
+        log.with_suffix(".native.log").write_text(
+            native_output.read().decode("utf-8", errors="replace"), encoding="utf-8"
+        )
         native_output.close()
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
+    parser.add_argument("--backend", choices=["vulkan", "cuda"], default="vulkan")
     parser.add_argument("--mode", choices=["cpu", "gpu", "both"], default="both")
     parser.add_argument("--language", choices=["english", "arabic", "both"], default="both")
     parser.add_argument("--expect-gpu", help="Require this physical GPU name; NVIDIA VRAM checked on Linux")
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--runtime-dir", type=Path, help="Override the runtime with a downloaded asset")
+    parser.add_argument("--worker", type=Path, help="Override the inference worker with a packaged executable")
     args = parser.parse_args()
     root = args.root.resolve()
     modes = ["cpu", "gpu"] if args.mode == "both" else [args.mode]
     languages = ["english", "arabic"] if args.language == "both" else [args.language]
     for language in languages:
-        transcripts = [run_mode(root, mode, language, args.expect_gpu) for mode in modes]
+        transcripts = [run_mode(root, mode, language, args.expect_gpu, args.backend, args.runtime_dir, args.worker) for mode in modes]
         if len(transcripts) == 2 and transcripts[0] != transcripts[1]:
             raise RuntimeError(f"{language} CPU/GPU transcript mismatch: {transcripts!r}")
         if len(transcripts) == 2:

@@ -1,13 +1,11 @@
 <script lang="ts">
-  import { ui, platformAction, run, set, markDirty } from "../lib/state.svelte";
+  import { ui, platformAction, run, set, markDirty, resetPaths } from "../lib/state.svelte";
   import { t } from "../lib/i18n";
   import { onMount } from "svelte";
-  import { api } from "../lib/api";
   import { loadReading, reading } from "../lib/reading-state.svelte";
   import type { ReaderConfig } from "../lib/reader";
-  let { section = "system" }: { section?: "system" | "dictation" | "reading" } = $props();
   onMount(() => { void loadReading().catch(() => {}); });
-  import { fields, hotkeys } from "../lib/settings";
+  import { fields, hotkeys, readerHotkeys } from "../lib/settings";
   import Group from "../components/Group.svelte";
   import Field from "../components/Field.svelte";
   import Shortcut from "../components/Shortcut.svelte";
@@ -25,7 +23,29 @@
           : "portal"
         : selected,
   );
+  const portalShortcuts = $derived(ui.state?.platform === "linux" && backend === "portal");
+  const shortcutPaths = [
+    "general.enabled",
+    "general.shortcut_reminders",
+    "general.linux_hotkey_backend",
+    "general.recording_mode",
+    ...hotkeys.map(([path]) => path),
+  ];
   let configuringShortcuts = $state(false);
+  async function resetShortcuts() {
+    const resetReader = !portalShortcuts;
+    await resetPaths(shortcutPaths);
+    if (resetReader && reading.config) {
+      for (const [, key] of readerHotkeys) reading.config.shortcuts[key] = "None";
+      markDirty();
+    }
+  }
+  function setReaderShortcut(key: keyof ReaderConfig["shortcuts"], value: string) {
+    if (reading.config) {
+      reading.config.shortcuts[key] = value;
+      markDirty();
+    }
+  }
   async function configureShortcuts() {
     configuringShortcuts = true;
     try {
@@ -39,7 +59,7 @@
 <Group
   title="ui.shortcuts.90c935"
   icon="keyboard"
-  paths={section === "system" ? ["general.enabled","general.shortcut_reminders","general.linux_hotkey_backend"] : section === "dictation" ? ["general.recording_mode",...hotkeys.map(([path])=>path)] : []}
+  onreset={() => run(resetShortcuts)}
 >
   {#snippet actions()}{#if ui.state?.platform === "linux"}<IconButton
         icon="refresh"
@@ -53,11 +73,9 @@
         onclick={() => run(configureShortcuts)}
       ><Icon name="keyboard" size={15} /><span>{t("ui.set_up_shortcuts.a104f9")}</span></button
       >{/if}{/snippet}
-  {#if section === "system"}<Field spec={fields.enabled} />
+  <Field spec={fields.enabled} />
   <Field spec={fields.shortcutReminders} />
   <button type="button" class="quiet" onclick={() => run(() => platformAction("show_shortcuts"))}>{t("ui.show_shortcuts")}</button>
-  {/if}
-  {#if section === "dictation"}
   {#if ui.state?.platform === "linux"}
     <Field spec={fields.shortcutSystem} />
     {#if backend === "x11"}{#each hotkeys as [path, label]}<Shortcut
@@ -100,20 +118,21 @@
   {:else}<Field
       spec={fields.recordingMode}
     />{#each hotkeys as [path, label]}<Shortcut {path} {label} />{/each}{/if}
-  {/if}
-  {#if section === "reading"}
-  {#if ui.state?.platform === "linux" && backend === "portal"}
-    {#each [["read-selection","read_selection"],["read-region","read_region"],["copy-region","copy_region"],["listen-clipboard","listen_clipboard"],["read-along","read_along"]] as [id,key]}
+  {#if portalShortcuts}
+    {#each readerHotkeys as [id,key]}
       <div class="field" data-setting-path={`reader.shortcuts.${key}`}><span>{t(`reading.${key}`)}</span><output>{ui.state?.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output></div>
     {/each}
   {:else if reading.config}
-    {#each ["read_selection","read_region","copy_region","listen_clipboard","read_along"] as key}
-      <div class="field" data-setting-path={`reader.shortcuts.${key}`}><label for={`reader-shortcut-${key}`}>{t(`reading.${key}`)}</label><div class="control"><input id={`reader-shortcut-${key}`} dir="ltr" value={reading.config.shortcuts[key as keyof typeof reading.config.shortcuts]} oninput={(e)=>{if(reading.config){reading.config.shortcuts[key as keyof typeof reading.config.shortcuts]=e.currentTarget.value;markDirty();}}} /></div></div>
+    {#each readerHotkeys as [, key]}
+      {#if ui.state?.platform === "windows"}
+        <Shortcut path={`reader.shortcuts.${key}`} inputId={`reader-shortcut-${key}`} label={`reading.${key}`}
+          value={reading.config.shortcuts[key]} onchange={(value)=>setReaderShortcut(key,value)} />
+      {:else}
+        <div class="field" data-setting-path={`reader.shortcuts.${key}`}><label for={`reader-shortcut-${key}`}>{t(`reading.${key}`)}</label><div class="control"><input id={`reader-shortcut-${key}`} dir="ltr" value={reading.config.shortcuts[key]} oninput={(e)=>setReaderShortcut(key,e.currentTarget.value)} /></div></div>
+      {/if}
     {/each}
   {/if}
-  {/if}
 </Group>
-{#if section === "system"}
 <Group
   title="ui.system.bc0792"
   icon="system"
@@ -136,7 +155,6 @@
   /><Field spec={fields.theme} />
 </Group>
 
-{/if}
 <style>
   .shortcut-setup {
     display: inline-flex;

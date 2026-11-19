@@ -108,8 +108,8 @@ struct Api {
 
 impl Api {
     fn load(runtime_dir: &Path) -> Result<Self> {
-        configure_native_search(runtime_dir)?;
         let library_path = parakeet_library_path(runtime_dir)?;
+        configure_native_search(runtime_dir, &library_path)?;
         let lib = unsafe { Library::new(&library_path) }
             .with_context(|| format!("loading {}", library_path.display()))?;
         unsafe {
@@ -123,7 +123,7 @@ impl Api {
             #[cfg(target_os = "linux")]
             select_native_gpu_device(&lib)?;
             #[cfg(windows)]
-            select_windows_vulkan_device()?;
+            select_windows_native_device(runtime_dir)?;
             Ok(Self {
                 load: sym(&lib, b"parakeet_capi_load\0")?,
                 free: sym(&lib, b"parakeet_capi_free\0")?,
@@ -135,6 +135,21 @@ impl Api {
             })
         }
     }
+}
+
+#[cfg(windows)]
+unsafe fn select_windows_native_device(runtime_dir: &Path) -> Result<()> {
+    if runtime_dir.join("bin/ggml-cuda.dll").is_file()
+        || runtime_dir.join("ggml-cuda.dll").is_file()
+    {
+        let device = if std::env::var("PARAKEET_DEVICE").as_deref() == Ok("cpu") {
+            "cpu"
+        } else {
+            "CUDA0"
+        };
+        return set_windows_native_env("PARAKEET_DEVICE", device);
+    }
+    select_windows_vulkan_device()
 }
 
 #[cfg(windows)]
@@ -367,13 +382,11 @@ fn parakeet_library_path(runtime_dir: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(windows)]
-fn configure_native_search(runtime_dir: &Path) -> Result<()> {
-    let bin = runtime_dir.join("bin");
-    anyhow::ensure!(
-        bin.exists(),
-        "Parakeet bin directory is missing: {}",
-        bin.display()
-    );
+fn configure_native_search(runtime_dir: &Path, library_path: &Path) -> Result<()> {
+    let library_dir = library_path
+        .parent()
+        .context("Parakeet DLL has no directory")?;
+    let dependencies = reader_core::native_paths::runtime_library_directories(runtime_dir);
     unsafe {
         anyhow::ensure!(
             SetDefaultDllDirectories(
@@ -381,21 +394,28 @@ fn configure_native_search(runtime_dir: &Path) -> Result<()> {
             ) != 0,
             "SetDefaultDllDirectories failed"
         );
-        let wide: Vec<u16> = bin
-            .to_string_lossy()
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        anyhow::ensure!(
-            !AddDllDirectory(wide.as_ptr()).is_null(),
-            "AddDllDirectory failed for {}",
-            bin.display()
-        );
+        for path in std::iter::once(library_dir).chain(
+            dependencies
+                .iter()
+                .map(std::path::PathBuf::as_path)
+                .filter(|path| *path != library_dir && path.is_dir()),
+        ) {
+            let wide: Vec<u16> = path
+                .to_string_lossy()
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            anyhow::ensure!(
+                !AddDllDirectory(wide.as_ptr()).is_null(),
+                "AddDllDirectory failed for {}",
+                path.display()
+            );
+        }
     }
     Ok(())
 }
 
 #[cfg(not(windows))]
-fn configure_native_search(_: &Path) -> Result<()> {
+fn configure_native_search(_: &Path, _: &Path) -> Result<()> {
     Ok(())
 }

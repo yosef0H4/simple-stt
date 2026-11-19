@@ -9,14 +9,51 @@ pub const NVIDIA_DEPENDENCY_LIBRARY_PATHS: [&str; 3] = [
     "cuda-nvrtc/nvidia/cu13/lib",
 ];
 
+const WINDOWS_NVIDIA_LIBRARY_PATHS: [&str; 4] = [
+    "cuda-cudnn-windows/nvidia/cudnn/bin",
+    "cuda-cublas-windows/nvidia/cu13/bin/x86_64",
+    "cuda-nvrtc-windows/nvidia/cu13/bin/x86_64",
+    "cuda-runtime-windows/nvidia/cu13/bin/x86_64",
+];
+
 pub fn runtime_library_directories(runtime: &Path) -> Vec<PathBuf> {
     let mut paths = vec![runtime.join("lib")];
+    if cfg!(windows) {
+        paths.push(runtime.join("bin"));
+    }
     if runtime.file_name() == Some(OsStr::new("sherpa-cuda")) {
         if let Some(assets) = runtime.parent() {
             paths.extend(NVIDIA_DEPENDENCY_LIBRARY_PATHS.map(|path| assets.join(path)));
         }
     }
+    if runtime.file_name() == Some(OsStr::new("sherpa-cuda-windows")) {
+        if let Some(assets) = runtime.parent() {
+            paths.extend(WINDOWS_NVIDIA_LIBRARY_PATHS.map(|path| assets.join(path)));
+        }
+    }
+    if runtime.file_name() == Some(OsStr::new("parakeet-cuda-windows")) {
+        if let Some(assets) = runtime.parent() {
+            paths.push(assets.join("parakeet-cu12-runtime-windows/bin"));
+            paths.push(assets.join("parakeet-cu12-cublas-windows/bin"));
+        }
+    }
     paths
+}
+
+pub fn configure_worker_libraries(
+    command: &mut std::process::Command,
+    runtime: &Path,
+) -> Result<()> {
+    let key = if cfg!(windows) {
+        "PATH"
+    } else {
+        "LD_LIBRARY_PATH"
+    };
+    command.env(
+        key,
+        library_search_path(runtime, std::env::var_os(key).as_deref())?,
+    );
+    Ok(())
 }
 
 /// Prefer the chosen runtime and its pinned dependencies over inherited installs.
@@ -46,8 +83,8 @@ mod tests {
         let mut expected = runtime_library_directories(runtime);
         expected.push(PathBuf::from("legacy/lib"));
         assert_eq!(paths, expected);
-        assert_eq!(paths[2], Path::new("assets/cuda-cublas/nvidia/cu13/lib"));
-        assert_eq!(paths[3], Path::new("assets/cuda-nvrtc/nvidia/cu13/lib"));
+        assert!(paths.contains(&PathBuf::from("assets/cuda-cublas/nvidia/cu13/lib")));
+        assert!(paths.contains(&PathBuf::from("assets/cuda-nvrtc/nvidia/cu13/lib")));
     }
 
     #[test]
@@ -56,7 +93,7 @@ mod tests {
         let search = library_search_path(runtime, Some(OsStr::new(""))).unwrap();
         assert_eq!(
             std::env::split_paths(&search).collect::<Vec<_>>(),
-            [runtime.join("lib")]
+            runtime_library_directories(runtime)
         );
     }
 }

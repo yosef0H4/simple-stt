@@ -211,9 +211,7 @@ need("src/models.rs", "pinned_model_sha256", "download_url", "hasher.update", "h
 need("src/common/shell_protocol.rs", "CancelModelDownload")
 need("src/bin/simple_stt_capture.rs", "model_download_cancelled", "model_download_queued", "downloads.running")
 need("src/models.rs", "https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF/resolve/main/lemura-arabic-asr-lite-q8_0.gguf", "b0aa3f0f316551a45bbd76d1ac7674102a3b221d5fd8c4cd6cac1c2bc4ccce86")
-need("resources/simple-stt.iss", "https://huggingface.co/yosef0H4/lemura-arabic-asr-lite-GGUF/resolve/main/lemura-arabic-asr-lite-q8_0.gguf", "ArabicModelNeedsDownload", "ExternalSize: 158617056", "b0aa3f0f316551a45bbd76d1ac7674102a3b221d5fd8c4cd6cac1c2bc4ccce86")
 forbid("resources/simple-stt.iss", 'Source: "arabic-model\\')
-need("resources/simple-stt.iss", "installarabic", "lemura-arabic-asr-lite-q8_0.gguf", "tdt_ctc-110m-q8_0.gguf")
 forbid("resources/simple-stt.iss", "parakeet-windows-cuda", "tdt_ctc-110m-f16.gguf")
 need("src/bin/simple_stt_settings.rs", "127.0.0.1", "X-Simple-STT-Token", "Content-Security-Policy", "settings-session-{instance_id}.json", "text/event-stream", "ShellCommand::DownloadModel", "ShellCommand::RemoveModel", "ShellCommand::TestModel", "linux_shortcut_state", "sync_shortcuts", "capture_hotkey_with_ahk", "dist/index.html", "dist/styles.css", "dist/app.js")
 need("src/bin/simple_stt_settings.rs", "/api/cleanup-action", "save_api_key", "chatgpt_login_browser", "chatgpt_login_code", "clear_history")
@@ -226,7 +224,6 @@ need("src/capture/screen_context.rs", "Screenshot::request", "interactive(true)"
 forbid("src/config.rs", "pub api_key", "pub access_token", "pub refresh_token")
 need("src/bin/simple_stt_linux.rs", "impl ksni::Tray for LinuxTray", "audio-input-microphone", "menu.close", "start_linux_tray")
 need("src/models.rs", "pub fn remove_model", "save another choice before removing it", "installed_non_selected_model_can_be_removed", "selected_model_is_not_removed")
-need("resources/simple-stt.iss", "Flags: external download ignoreversion", "Hash:", "RecommendedModelNeedsDownload", "GetSHA256OfFile")
 forbid("resources/simple-stt.iss", "Invoke-WebRequest", "exit 0\"\"\"; StatusMsg: \"Downloading recommended speech model")
 need("web/settings/index.html", "/src/main.ts")
 need("web/settings/src/app.css", "--accent")
@@ -242,8 +239,11 @@ checks.append("Parakeet DLL/model loading is isolated to disposable simple-stt-i
 checks.append("microphone preference uses stable IDs, temporary default fallback, endpoint notifications with bounded retries, and recording-start resolution")
 
 # AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
-tray_ahk = need("ahk/lib/Tray.ahk", "A_TrayMenu", 'UiText("menu.openSettings")', 'UiText("menu.restartAudio")', 'UiText("menu.unloadAll")')
-for needle in ["TraySetIcon", "SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
+tray_ahk = need(
+    "ahk/lib/Tray.ahk", "A_TrayMenu", "UiText(id)", "TraySetIcon(", "menu.SetIcon(",
+    '"menu.openSettings"', '"menu.restartAudio"', '"menu.unloadAll"',
+)
+for needle in ["SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
     if needle in tray_ahk:
         errors.append(f"tray menu must use the default Windows/AHK drawing path, but found {needle!r}")
 for path in ["ahk/simple-stt.ahk"]:
@@ -268,8 +268,8 @@ need("src/common/shell_protocol.rs", "ShowShortcuts", "RefreshShortcuts", "Begin
 need("src/bin/simple_stt_capture.rs", "retry_registers_delivery_before_progress", "OverlayPrimary::WaitingForKeys")
 need("ahk/lib/Typist.ahk", "ReportProgress", 'this.ReportProgress("waiting-for-keys")')
 need("src/bin/simple_stt_linux.rs", 'NewShortcut::new("shortcuts", "Show shortcuts")', "show_shortcuts_hotkey", "RefreshShortcuts")
-need("src/bin/simple_stt_linux.rs", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', 'unload_all_models()')
-need("ahk/lib/Tray.ahk", 'UiText("menu.copyRegion")', 'UiText("menu.abort")', 'UiText("menu.unloadAll")')
+need("src/bin/simple_stt_linux.rs", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', '"reading.read_along_start"', 'unload_all_models()')
+need("ahk/lib/Tray.ahk", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', '"reading.read_along_start"')
 need("ahk/simple-stt.ahk", "showShortcutsHotkey.Configure", 'CallService("show-shortcuts")')
 need("web/settings/src/pages/General.svelte", "fields.shortcutReminders", 'platformAction("show_shortcuts")')
 need("src/capture/overlay_model.rs", "RecordingIndicators", 'ai_cleanup: bool', 'screen_context: bool', '1f916', '1f4f7')
@@ -316,7 +316,7 @@ checks.append("retired monolith trees are removed from the working tree; git his
 
 # A skipped start must end shell state without waiting for transcript delivery.
 need("ahk/simple-stt.ahk", 'response["values"]["recording"] = "skipped"', 'this.pendingStops.Delete(session)')
-need("ahk/lib/Config.ahk", '"single_model_filename", "language_models", "selection_mode"')
+need("ahk/lib/Config.ahk", '"single_model_filename", "language_models", "language_runtimes", "selection_mode"')
 need("src/bin/simple_stt_linux.rs", 'value == "skipped"', 'recording: false,', 'if !state.recording')
 
 need("ahk/simple-stt.ahk", "RetryLastDelivery", "lastDeliveryText", "SimpleSttFinalDeliveryPayload", 'Bool("preserve_clipboard", true)')
@@ -330,10 +330,24 @@ need("reader/crates/readerd/src/portal_input.rs", "Action::Sequence", "recorded_
 need("ahk/action-replay.ahk", "#Requires AutoHotkey v2.0", "#SingleInstance Force", "OnExit(ReleaseHeld)", "CheckTarget()", "QueryPerformanceCounter", "SaveHeld()")
 need("ahk/tests/action-replay-smoke.ahk", "Expected two paired key presses", "Canceled action delivered input")
 
+need("src/capture/overlay_model.rs", "pub fn native_tooltip_text", "pub fn for_delivery", "render_overlay_text_with_locale")
+forbid("src/capture/overlay_windows.rs", "fn native_tooltip_text", '"overlay.pasting"')
+need("src/bin/simple_stt_capture.rs", "OverlayPrimary::for_delivery(phase)")
+need("src/bin/simple_stt_ctl.rs", "StatusRelay", "OwnedHandle::from_raw_handle(parent)", "relay_command")
+need("ahk/lib/IpcClient.ahk", "DeliveryStatus", 'FileOpen(this.statusPath, "a", "UTF-8-RAW")')
+forbid("ahk/simple-stt.ahk", 'CallService("delivery-progress')
+checks.append("tooltip content and delivery phases are shared; desktop feedback avoids per-phase process launches")
+need("scripts/build-distribution.ps1", "'ahk\\action-replay.ahk'")
+
+forbid("resources/simple-stt.iss", "external download", "downloadmodel", "installarabic", '{app}\\models')
+need("resources/simple-stt.iss", "AppVersion={#SimpleSttVersion}")
+need("scripts/build-distribution.ps1", "/DSimpleSttVersion=$PackageVersion", "Distribution payload unexpectedly contains an inference model")
 if errors:
     print("STATIC VERIFY FAILED")
     print("\n".join(" - " + error for error in errors))
     sys.exit(1)
 print("STATIC VERIFY PASSED")
 for check in checks:
-    print(" - " + check)
+    print(" - " + check)need("src/capture/state.rs", "authentication_token", "PublishedCaptureToken", "delete_capture_token")
+need("src/capture_cli.rs", "state.authentication_token()")
+need("reader/crates/reader-core/src/secrets.rs", "capture-auth-{instance}-{pid}", "capture_credentials_are_scoped_to_profile_and_process")

@@ -245,11 +245,11 @@ pub struct ShortcutSettings {
 impl Default for ShortcutSettings {
     fn default() -> Self {
         Self {
-            read_selection: "Ctrl+Alt+R".into(),
-            read_region: "Ctrl+Alt+O".into(),
+            read_selection: "None".into(),
+            read_region: "None".into(),
             read_along: "None".into(),
             copy_region: "None".into(),
-            listen_clipboard: "Ctrl+Alt+C".into(),
+            listen_clipboard: "None".into(),
         }
     }
 }
@@ -837,6 +837,8 @@ mod tests {
     #[test]
     fn legacy_playback_shortcuts_are_ignored_and_removed_on_save() {
         let mut legacy = serde_json::to_value(AppConfig::default()).unwrap();
+        legacy["shortcuts"]["read_selection"] = serde_json::json!("Ctrl+Alt+R");
+        legacy["shortcuts"]["read_region"] = serde_json::json!("Ctrl+Alt+O");
         legacy["shortcuts"]["pause_resume"] = serde_json::json!("Ctrl+Alt+P");
         legacy["shortcuts"]["replay_sentence"] = serde_json::json!("Ctrl+Alt+Left");
         legacy["shortcuts"]["next_sentence"] = serde_json::json!("Ctrl+Alt+Right");
@@ -856,7 +858,7 @@ mod tests {
         assert_eq!(shortcuts["read_region"], "Ctrl+Alt+O");
         assert_eq!(shortcuts["read_along"], "None");
         assert_eq!(shortcuts["copy_region"], "None");
-        assert_eq!(shortcuts["listen_clipboard"], "Ctrl+Alt+C");
+        assert_eq!(shortcuts["listen_clipboard"], "None");
         let custom: ShortcutSettings = serde_json::from_value(serde_json::json!({
             "read_selection": "Meta+R", "read_region": "Meta+O",
             "read_along": "Meta+A", "listen_clipboard": "Meta+C", "copy_region": "Meta+Shift+O"

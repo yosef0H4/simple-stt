@@ -1,6 +1,5 @@
 param(
     [switch]$SkipTests,
-    [switch]$IncludeModel,
     [string]$AhkBase,
     [string]$Iscc
 )

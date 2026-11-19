@@ -6,7 +6,6 @@
   import { ui, markDirty, notice } from "../lib/state.svelte";
   import ActionRecorder from "../components/ActionRecorder.svelte";
   import ReadingBehavior from "../components/ReadingBehavior.svelte";
-  import General from "./General.svelte";
   import Range from "../components/Range.svelte";
   import SelectionCopy from "../components/SelectionCopy.svelte";
   import Group from "../components/Group.svelte";
@@ -72,7 +71,6 @@
   </Group>
   <SelectionCopy />
   <ReadingBehavior />
-  <General section="reading" />
 
 {/if}
 <style>

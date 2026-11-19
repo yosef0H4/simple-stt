@@ -20,7 +20,9 @@ for %%F in (
   ahk\tests\hotkeys-manual.ahk
   ahk\tests\ipc-smoke.ahk
   ahk\tests\typing-smoke.ahk
+  ahk\tests\paste-latency-smoke.ahk
   ahk\tests\localization-smoke.ahk
+  ahk\tests\tray-smoke.ahk
   ahk\tests\text-transform-smoke.ahk
   ahk\tests\tabprotocol-retry-smoke.ahk
   ahk\tests\ipcclient-missing-response-smoke.ahk
@@ -34,6 +36,7 @@ for %%F in (
 echo INFO: running AHK smoke tests
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\hotkeys-manual.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\typing-smoke.ahk" || exit /b 1
+"%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\paste-latency-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\text-transform-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\tabprotocol-retry-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\action-replay-smoke.ahk" || exit /b 1
@@ -42,6 +45,7 @@ echo INFO: running AHK smoke tests
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\full-smoke.ahk" || exit /b 1
 
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\localization-smoke.ahk" || exit /b 1
+"%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\tray-smoke.ahk" || exit /b 1
 
 echo PASS: AHK validation and runtime smoke suite
 exit /b 0

@@ -68,7 +68,7 @@ try {
     ExitApp(0)
 } catch {
     ReleaseHeld()
-    FileAppend("Recorded action stopped or target unavailable.`n", "**")
+    try FileAppend("Recorded action stopped or target unavailable.`n", "**")
     ExitApp(2)
 }
 

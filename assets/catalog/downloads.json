@@ -30,6 +30,58 @@
     "dependencies": []
   },
   {
+    "id": "parakeet-vulkan-windows",
+    "label": "Parakeet · Vulkan",
+    "kind": "dictation",
+    "platform": "windows-x86_64",
+    "url": "https://github.com/mudler/parakeet.cpp/releases/download/v0.5.0/parakeet-v0.5.0-lib-win-vulkan-x64.zip",
+    "sha256": "4527898049ee1566c4b3e12c8a40ddcce154d2fc5c1661ac00a95b64cd6e512c",
+    "bytes": 17945091,
+    "format": "zip",
+    "strip": 1,
+    "required": ["parakeet.dll"],
+    "dependencies": []
+  },
+  {
+    "id": "parakeet-cuda-windows",
+    "label": "Parakeet · CUDA 12.8 (Blackwell)",
+    "kind": "dictation",
+    "platform": "windows-x86_64",
+    "url": "https://github.com/yosef0H4/simple-stt-runtimes/releases/download/parakeet-abi6-cuda12.8-sm120-v1/parakeet-abi6-cuda12.8-sm120-windows-x64.zip",
+    "sha256": "8babf53b987ef90f9f599edf9d231aa81b406a41c116b6ac832fb77482d9ed8a",
+    "bytes": 32659792,
+    "format": "zip",
+    "strip": 0,
+    "required": ["bin/parakeet.dll", "bin/ggml.dll", "bin/ggml-base.dll", "bin/ggml-cpu.dll", "bin/ggml-cuda.dll"],
+    "dependencies": ["parakeet-cu12-runtime-windows", "parakeet-cu12-cublas-windows"]
+  },
+  {
+    "id": "parakeet-cu12-runtime-windows",
+    "label": "NVIDIA CUDA 12.8 Runtime · Parakeet",
+    "kind": "dependency",
+    "platform": "windows-x86_64",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/cuda_cudart/windows-x86_64/cuda_cudart-windows-x86_64-12.8.90-archive.zip",
+    "sha256": "4a39058fd8519444a81cfc7ae055d136f48d1a31ffa41ae255b35b2edd61e13b",
+    "bytes": 3037735,
+    "format": "zip",
+    "strip": 1,
+    "required": ["bin/cudart64_12.dll"],
+    "dependencies": []
+  },
+  {
+    "id": "parakeet-cu12-cublas-windows",
+    "label": "NVIDIA cuBLAS 12.8 · Parakeet",
+    "kind": "dependency",
+    "platform": "windows-x86_64",
+    "url": "https://developer.download.nvidia.com/compute/cuda/redist/libcublas/windows-x86_64/libcublas-windows-x86_64-12.8.4.1-archive.zip",
+    "sha256": "57a470112cec7e112c95253dde8b3c7184d795dbd92b0bde77a4cb7f8c94c8aa",
+    "bytes": 563660944,
+    "format": "zip",
+    "strip": 1,
+    "required": ["bin/cublas64_12.dll", "bin/cublasLt64_12.dll"],
+    "dependencies": []
+  },
+  {
     "id": "sherpa-cpu",
     "label": "Sherpa ONNX · CPU",
     "kind": "reading",
@@ -205,6 +257,93 @@
       "tts.json",
       "unicode_indexer.bin",
       "voice.bin"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "sherpa-cuda-windows",
+    "label": "Sherpa ONNX · CUDA",
+    "kind": "reading",
+    "platform": "windows-x86_64",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-cuda-13.x-cudnn-9.x-onnxruntime1.28.2-win-x64-cuda.tar.bz2",
+    "sha256": "1702e4a1ee68a07422469a7ec1d304a54b43a345ad888daf8e0b0257004a3273",
+    "bytes": 478110488,
+    "format": "tar_bz2",
+    "strip": 1,
+    "required": [
+      "lib/sherpa-onnx-c-api.dll",
+      "lib/onnxruntime.dll",
+      "lib/onnxruntime_providers_cuda.dll",
+      "lib/onnxruntime_providers_shared.dll"
+    ],
+    "dependencies": [
+      "cuda-cublas-windows",
+      "cuda-cudnn-windows",
+      "cuda-nvrtc-windows",
+      "cuda-runtime-windows"
+    ]
+  },
+  {
+    "id": "cuda-cublas-windows",
+    "label": "NVIDIA cuBLAS 13",
+    "kind": "dependency",
+    "platform": "windows-x86_64",
+    "url": "https://files.pythonhosted.org/packages/a3/df/f1246959833e2c437db8be3e5b477f66b87f8817821ed40de6c7561c9a36/nvidia_cublas-13.8.0.4-py3-none-win_amd64.whl",
+    "sha256": "8c5494423bb8a46822cb6b0cb95d7fa4be2d7b96a31155dff083839ec8297910",
+    "bytes": 423266897,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cu13/bin/x86_64/cublas64_13.dll",
+      "nvidia/cu13/bin/x86_64/cublasLt64_13.dll"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "cuda-cudnn-windows",
+    "label": "NVIDIA cuDNN 9",
+    "kind": "dependency",
+    "platform": "windows-x86_64",
+    "url": "https://files.pythonhosted.org/packages/87/6a/e55ff0ac26a5c6e2b21f41c9d04ad096b4ed6da593fba7e25845c61b0532/nvidia_cudnn_cu13-9.27.0.42-py3-none-win_amd64.whl",
+    "sha256": "7d96f634adafd55c72231eb0500ca77ab109ec8ebff7b33000b76e081bc4558e",
+    "bytes": 436469905,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cudnn/bin/cudnn64_9.dll",
+      "nvidia/cudnn/bin/cudnn_graph64_9.dll",
+      "nvidia/cudnn/bin/cudnn_engines_precompiled64_9.dll"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "cuda-nvrtc-windows",
+    "label": "NVIDIA NVRTC 13",
+    "kind": "dependency",
+    "platform": "windows-x86_64",
+    "url": "https://files.pythonhosted.org/packages/64/5b/aa91896f64444eff1dd7f189f4db05046c7f0ba08c0f531283c1c1aac581/nvidia_cuda_nvrtc-13.4.92-py3-none-win_amd64.whl",
+    "sha256": "6af7ac5372920f6a7a560d0699348560fe44cb52c1d722d6afd3119f8af948c4",
+    "bytes": 46972283,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cu13/bin/x86_64/nvrtc64_130_0.dll",
+      "nvidia/cu13/bin/x86_64/nvrtc-builtins64_134.dll"
+    ],
+    "dependencies": []
+  },
+  {
+    "id": "cuda-runtime-windows",
+    "label": "NVIDIA CUDA 13 runtime",
+    "kind": "dependency",
+    "platform": "windows-x86_64",
+    "url": "https://files.pythonhosted.org/packages/86/00/d5436004268f049214193659ebc36550b5ef3925c3d13b4cc980e13be6f5/nvidia_cuda_runtime-13.4.92-py3-none-win_amd64.whl",
+    "sha256": "08dca5e4aba480c2fd5b55075c0fa71b84ef9dcf0521f2d58baa14a803a7311c",
+    "bytes": 2778543,
+    "format": "zip",
+    "strip": 0,
+    "required": [
+      "nvidia/cu13/bin/x86_64/cudart64_13.dll"
     ],
     "dependencies": []
   },
