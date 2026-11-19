@@ -3392,7 +3392,7 @@ impl App {
         let detail = error.to_string();
         let detail: String = detail.chars().take(320).collect();
         let hint = if label.starts_with("Read-along") {
-            " Resume or Repeat retries the saved area."
+            " Resume or Retry last action retries the saved area."
         } else {
             ""
         };
@@ -4706,6 +4706,22 @@ impl App {
                                 !text.trim().is_empty(),
                                 "no readable text in the selected region"
                             );
+                            let route = app.inner.store.load()?.routed_text(
+                                &text,
+                                app.inner.route_language.lock().unwrap().as_deref(),
+                            )?;
+                            anyhow::ensure!(
+                                plan_units(&text, 240)?
+                                    .iter()
+                                    .any(|unit| !prepare_speech_text(
+                                        &route,
+                                        &unit.text,
+                                        unit.starts_in_code
+                                    )
+                                    .trim()
+                                    .is_empty()),
+                                "no readable speech remains after text cleanup"
+                            );
                             let mut state = app
                                 .inner
                                 .read_along
@@ -4758,7 +4774,7 @@ impl App {
                 let first = loop {
                     let (index, unit) = pending
                         .next()
-                        .context("no speech remains after applying exclusions")?;
+                        .context("no readable speech remains after text cleanup")?;
                     let chunk = app.prepare_read_along_chunk(
                         &page_route,
                         &unit,
@@ -4790,62 +4806,46 @@ impl App {
                     };
                     let mut total = first_samples;
                     for (index, unit) in pending {
-                        loop {
-                            if !current() {
+                        if !current() {
+                            return;
+                        }
+                        let priority = producer
+                            .inner
+                            .generation
+                            .accepts(playing.load(Ordering::Acquire));
+                        let chunk = producer
+                            .prepare_read_along_chunk(
+                                &page_route,
+                                &unit,
+                                settings.retry_count,
+                                priority,
+                                &current,
+                            )
+                            .and_then(|chunk| {
+                                anyhow::ensure!(
+                                    total.saturating_add(chunk.samples.len())
+                                        <= media_routing::MAX_SAMPLES,
+                                    "read-along page audio exceeds the five-minute limit"
+                                );
+                                Ok(chunk)
+                            });
+                        match chunk {
+                            Ok(chunk) => {
+                                if !chunk.samples.is_empty() {
+                                    producer_progress.mark(index);
+                                }
+                                total += chunk.samples.len();
+                                if !chunk.samples.is_empty()
+                                    && !sender.send(Ok(Some(chunk)), &current)
+                                {
+                                    return;
+                                }
+                            }
+                            Err(error) if current() => {
+                                let _ = sender.send(Err(error.to_string()), &current);
                                 return;
                             }
-                            let priority = producer
-                                .inner
-                                .generation
-                                .accepts(playing.load(Ordering::Acquire));
-                            let chunk = producer
-                                .prepare_read_along_chunk(
-                                    &page_route,
-                                    &unit,
-                                    settings.retry_count,
-                                    priority,
-                                    &current,
-                                )
-                                .and_then(|chunk| {
-                                    anyhow::ensure!(
-                                        total.saturating_add(chunk.samples.len())
-                                            <= media_routing::MAX_SAMPLES,
-                                        "read-along page audio exceeds the five-minute limit"
-                                    );
-                                    Ok(chunk)
-                                });
-                            match chunk {
-                                Ok(chunk) => {
-                                    if !chunk.samples.is_empty() {
-                                        producer_progress.mark(index);
-                                    }
-                                    total += chunk.samples.len();
-                                    if !chunk.samples.is_empty()
-                                        && !sender.send(Ok(Some(chunk)), &current)
-                                    {
-                                        return;
-                                    }
-                                    break;
-                                }
-                                Err(error) if current() => {
-                                    // Only the failed, uncommitted chunk is retried after Resume.
-                                    let resume_after = producer
-                                        .inner
-                                        .pause_lease_epoch
-                                        .load(Ordering::Acquire)
-                                        .saturating_add(2);
-                                    if !sender.send(Err(error.to_string()), &current) {
-                                        return;
-                                    }
-                                    while current()
-                                        && producer.inner.pause_lease_epoch.load(Ordering::Acquire)
-                                            < resume_after
-                                    {
-                                        std::thread::sleep(Duration::from_millis(10));
-                                    }
-                                }
-                                Err(_) => return,
-                            }
+                            Err(_) => return,
                         }
                     }
                     sender.send(Ok(None), &current);
@@ -4929,6 +4929,7 @@ impl App {
                         current,
                     },
                 )?;
+                anyhow::ensure!(!samples.is_empty(), "speech provider returned no audio");
                 let mut pcm = Vec::new();
                 media_routing::append_pcm(
                     &mut pcm,
@@ -4942,7 +4943,15 @@ impl App {
                     route,
                 })
             },
-            |_| {},
+            |attempt| {
+                if current() {
+                    self.set_notice(
+                        format!("Read-along retry {attempt}/{retries}"),
+                        Duration::from_secs(3),
+                    );
+                    self.show_hud();
+                }
+            },
         )
     }
     fn set_read_along_next_activity(
@@ -4999,16 +5008,52 @@ impl App {
             run.controller.capture_failed(generation)
         };
         tracing::warn!(%error, "read-along next page failed");
-        self.set_notice(
-            format!("Read-along paused: {error}. Resume or Next retries this page."),
-            Duration::from_secs(60),
-        );
-        self.show_hud();
         if decision == read_along::AdvanceDecision::PauseAfterAudio {
-            let _ = self.action_pause();
+            self.finish_failed_read_along(generation, app_generation, &error.to_string());
         } else {
+            // Keep current speech intact; the failed controller cannot promote a page.
+            self.set_notice(
+                format!("Read-along stopped: {error}. Use Retry last action for the saved area."),
+                Duration::from_secs(5),
+            );
             self.wait_for_read_along_audio(generation);
         }
+    }
+    fn finish_failed_read_along(&self, generation: u64, app_generation: u64, error: &str) {
+        let intent = self
+            .inner
+            .intent_gate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut state = self
+            .inner
+            .read_along
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.inner.generation.accepts(app_generation)
+            || !state.as_ref().is_some_and(|run| {
+                run.app_generation == app_generation && run.controller.accepts(generation)
+            })
+        {
+            return;
+        }
+        if let Some(mut run) = state.take() {
+            run.controller.cancel();
+        }
+        self.inner.read_along_active.store(false, Ordering::Release);
+        drop(state);
+        *self.inner.session.lock().unwrap() = None;
+        self.inner
+            .activity
+            .lock()
+            .unwrap()
+            .set(app_generation, "idle");
+        self.set_notice(
+            format!("Read-along stopped: {error}. Use Retry last action for the saved area."),
+            Duration::from_secs(5),
+        );
+        drop(intent);
+        self.show_hud();
     }
     fn wait_for_read_along_audio(&self, generation: u64) {
         let app = self.clone();
@@ -5044,7 +5089,20 @@ impl App {
                     let _ = app.promote_read_along_page(generation);
                 }
                 read_along::AdvanceDecision::PauseAfterAudio => {
-                    let _ = app.action_pause();
+                    let app_generation = app
+                        .inner
+                        .read_along
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .as_ref()
+                        .map(|run| run.app_generation);
+                    if let Some(app_generation) = app_generation {
+                        app.finish_failed_read_along(
+                            generation,
+                            app_generation,
+                            "retry limit reached",
+                        );
+                    }
                 }
                 read_along::AdvanceDecision::CaptureNextPage => {
                     app.start_read_along_prefetch(generation)
@@ -5122,12 +5180,7 @@ impl App {
                         None => match prepared.remaining.receive(&current)? {
                             Some(Ok(Some(chunk))) => chunk,
                             Some(Ok(None)) => break,
-                            Some(Err(error)) => {
-                                app.set_notice(format!("Speech chunk failed: {error}. Resume or Next retries this chunk."), Duration::from_secs(60));
-                                app.action_pause()?;
-                                app.show_hud();
-                                continue;
-                            }
+                            Some(Err(error)) => bail!(error),
                             None => break,
                         },
                     };
@@ -11004,7 +11057,7 @@ mod server_model_tests {
     }
 
     #[test]
-    fn failed_next_page_clears_stale_capture_status_and_can_be_claimed_again() {
+    fn failed_next_page_finishes_and_notice_expires() {
         let directory = tempfile::tempdir().unwrap();
         let app = super::App::new(reader_core::ConfigStore::new(
             directory.path().join("config.json"),
@@ -11048,20 +11101,18 @@ mod server_model_tests {
             app_generation,
             anyhow::anyhow!("mock transport failure"),
         );
-        let mut state = app.inner.read_along.lock().unwrap();
-        let run = state.as_mut().unwrap();
-        assert!(run.next_activity.is_none());
-        assert!(run.controller.failed());
-        assert_eq!(run.preparation.text.as_deref(), Some("pending speech text"));
-        assert!(
-            !run.preparation.begin_advance(),
-            "recovery must not resend input"
-        );
-        assert!(run.controller.retry_failed(generation));
-        assert_eq!(
-            run.controller.request_prefetch(generation),
-            super::read_along::AdvanceDecision::CaptureNextPage
-        );
+        assert!(app.inner.read_along.lock().unwrap().is_none());
+        assert_eq!(app.status()["read_along_active"], false);
+        assert!(app
+            .inner
+            .notice
+            .lock()
+            .unwrap()
+            .text
+            .contains("Retry last action"));
+        app.inner.notice.lock().unwrap().expires = Some(std::time::Instant::now());
+        assert_eq!(app.status()["notice_text"], "");
+        assert_eq!(app.status()["state"], "idle");
     }
 
     #[test]

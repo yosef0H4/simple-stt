@@ -2,8 +2,8 @@
 
 The Linux release builds produce two x86_64 packages:
 
-- Fedora 44: `simple-stt-0.3.1-37.fc44.x86_64.rpm`
-- Arch Linux / Omarchy: `simple-stt-0.3.1-37-x86_64.pkg.tar.zst`
+- Fedora 44: `simple-stt-0.3.1-38.fc44.x86_64.rpm`
+- Arch Linux / Omarchy: `simple-stt-0.3.1-38-x86_64.pkg.tar.zst`
 
 These packages include the app, Settings, reading/OCR workers, paste helper and Arabic fonts.
 Native runtimes and models are optional downloads in Settings → Models.
@@ -21,11 +21,11 @@ From the directory containing your downloaded package:
 
 ```sh
 # Fedora 44
-sudo dnf install ./simple-stt-0.3.1-37.fc44.x86_64.rpm
+sudo dnf install ./simple-stt-0.3.1-38.fc44.x86_64.rpm
 
 # Arch / Omarchy (update the system first, as usual for Arch packages)
 sudo pacman -Syu
-sudo pacman -U ./simple-stt-0.3.1-37-x86_64.pkg.tar.zst
+sudo pacman -U ./simple-stt-0.3.1-38-x86_64.pkg.tar.zst
 ```
 
 Launch **Simple STT** from the application menu, or run:

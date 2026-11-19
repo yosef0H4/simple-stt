@@ -1,5 +1,5 @@
 ; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
-; catalog-sha256: f2fb923209b4df22ae81e45e63afb5cc5f1789daf50a8d0471a31b5f05af2dd5
+; catalog-sha256: 88902e3f28b1a817a906972d1f3fb233bb191d02d84b3e343c272947985b3bcc
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
     if language = "auto"
@@ -212,6 +212,7 @@ UiText(id, args := unset) {
         "notice.typingStopped", "Typing stopped. Check the field before Retry.",
         "notice.typingUnavailable", "Typing unavailable here. Try Paste or check Output.",
         "reader.waitWindow", "Return to reading window",
+        "reader.retrying", "Retrying {attempt}",
         "reader.next.advancing", "Next page · advancing",
         "reader.next.waiting", "Next page · waiting",
         "reader.next.capturing", "Next page · capturing",
@@ -424,6 +425,7 @@ UiText(id, args := unset) {
         "notice.typingStopped", "توقفت الكتابة. راجع الحقل قبل الإعادة.",
         "notice.typingUnavailable", "تعذّرت الكتابة هنا. جرّب اللصق أو راجع الإخراج.",
         "reader.waitWindow", "ارجع للنافذة",
+        "reader.retrying", "إعادة المحاولة {attempt}",
         "reader.next.advancing", "الصفحة التالية · تنفيذ الإجراء",
         "reader.next.waiting", "الصفحة التالية · انتظار",
         "reader.next.capturing", "الصفحة التالية · التقاط الصورة",

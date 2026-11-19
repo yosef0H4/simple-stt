@@ -265,6 +265,24 @@ impl Controller {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn five_retries_are_visible_and_then_stop() {
+        let attempts = std::cell::Cell::new(0);
+        let mut visible = Vec::new();
+        let result: anyhow::Result<()> = super::retry(
+            5,
+            &|| true,
+            || {
+                attempts.set(attempts.get() + 1);
+                anyhow::bail!("no audio")
+            },
+            |attempt| visible.push(attempt),
+        );
+        assert!(result.is_err());
+        assert_eq!(attempts.get(), 6);
+        assert_eq!(visible, [1, 2, 3, 4, 5]);
+    }
+
     use super::{AdvanceDecision as Advance, Controller, OcrDecision};
 
     fn reading() -> (Controller, u64) {

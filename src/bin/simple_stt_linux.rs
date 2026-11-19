@@ -1335,7 +1335,7 @@ fn print_shortcut_commands() -> Result<()> {
     let exe = find_exe("simple-stt-linux").unwrap_or_else(|_| std::env::current_exe().unwrap());
     println!("Toggle dictation: {} toggle", exe.display());
     println!("Cancel dictation: {} cancel", exe.display());
-    println!("Repeat last action: {} repeat", exe.display());
+    println!("Retry last action: {} repeat", exe.display());
     println!("Show shortcuts: {} show-shortcuts", exe.display());
     println!("Read selection:   {} read-selection", exe.display());
     println!("Read screen:      {} read-region", exe.display());
@@ -1479,7 +1479,7 @@ async fn portal_shortcuts_loop() -> Result<()> {
         NewShortcut::new("cancel", "Abort active work"),
         NewShortcut::new("delivery", "Toggle text delivery mode"),
         NewShortcut::new("cleanup", "Toggle AI transcript cleanup"),
-        NewShortcut::new("retry", "Retry last dictation"),
+        NewShortcut::new("retry", "Retry last action"),
         NewShortcut::new("shortcuts", "Show shortcuts"),
         NewShortcut::new("read-selection", "Read selection"),
         NewShortcut::new("read-region", "Read screen"),
@@ -2520,10 +2520,10 @@ fn run_clipboard_free_input(
     // Inspect the drained signal AFTER killing/joining, so a slow parent reader
     // cannot mistake an already attempted insertion for an eligible fallback.
     if timed_out && attempted.load(Ordering::SeqCst) {
-        bail!("direct insertion timed out after submission; use Retry last dictation if needed");
+        bail!("direct insertion timed out after submission; use Retry last action if needed");
     }
     if attempted.load(Ordering::SeqCst) && matches!(result, Ok(false)) {
-        bail!("direct insertion failed after submission; use Retry last dictation if needed");
+        bail!("direct insertion failed after submission; use Retry last action if needed");
     }
     if matches!(result, Ok(true)) && !attempted.load(Ordering::SeqCst) {
         return Ok(false);

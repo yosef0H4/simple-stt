@@ -255,3 +255,13 @@ failed setup, canceled action, broken EIS connection or replacement closes its
 portal session. CreateSession obtains its handle before honoring cancellation
 so cleanup can close a session created during that race. Healthy sessions remain
 reusable, and saved restore tokens remain separate from live sessions.
+
+Read-along reports numbered retries for speech preparation as well as OCR. Empty
+provider audio is a retryable speech failure, while OCR text removed entirely by
+cleanup is recaptured within the bounded OCR retry loop without another advance.
+After retry exhaustion, current audio drains and the run ends; the final notice
+expires after five seconds and Repeat retains the saved area.
+
+The shared retry shortcut is labeled “Retry last action” in Settings, desktop
+shortcut registration and CLI guidance. Its existing `retry` ID and saved chord
+remain unchanged.

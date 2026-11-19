@@ -107,7 +107,7 @@ const f = require("./settings-fixture.cjs");
   );
   await save();
   f.options.hotkey = "Ctrl+Alt+P";
-  await page.getByRole("button", { name: "Record Repeat last action shortcut", exact: true }).click();
+  await page.getByRole("button", { name: "Record Retry last action shortcut", exact: true }).click();
   await page.waitForFunction(() => document.getElementById("general.retry_delivery_hotkey").value === "Ctrl+Alt+P");
   await save();
   assert.equal(f.getConfig().general.retry_delivery_hotkey, "Ctrl+Alt+P");

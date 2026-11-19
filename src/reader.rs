@@ -256,7 +256,12 @@ pub fn hud_text(
         }
     }
     if let Some(notice) = status["notice_text"].as_str().filter(|s| !s.is_empty()) {
-        if notice == "Read-along waiting for selected window" {
+        if let Some(attempt) = notice.strip_prefix("Read-along retry ") {
+            lines.push(format!(
+                "⟳ {}",
+                crate::localization::translate(locale, "reader.retrying", &[("attempt", attempt)])
+            ));
+        } else if notice == "Read-along waiting for selected window" {
             lines.push(format!(
                 "⏳ {}",
                 crate::localization::translate(locale, "reader.waitWindow", &[])
@@ -478,6 +483,17 @@ mod hud_formatter_tests {
         assert!(text.contains("1/6") && !text.contains("[1/6]"), "{text}");
         assert!(text.contains("Next page · ready"), "{text}");
         assert!(!text.contains("queued") && !text.contains("2/8"), "{text}");
+    }
+    #[test]
+    fn retry_notice_displays_attempt_without_failure_label() {
+        let text = super::hud_text(
+            &json!({"notice_text":"Read-along retry 3/5"}),
+            Locale::En,
+            0,
+        )
+        .0;
+        assert!(text.contains("Retrying 3/5"), "{text}");
+        assert!(!text.contains("Reading failed"));
     }
     #[test]
     fn settling_hud_shows_remaining_wait_instead_of_capturing() {

@@ -202,6 +202,7 @@
   "notice.typingStopped": "Typing stopped. Check the field before Retry.",
   "notice.typingUnavailable": "Typing unavailable here. Try Paste or check Output.",
   "reader.waitWindow": "Return to reading window",
+  "reader.retrying": "Retrying {attempt}",
   "reader.next.advancing": "Next page · advancing",
   "reader.next.waiting": "Next page · waiting",
   "reader.next.capturing": "Next page · capturing",
