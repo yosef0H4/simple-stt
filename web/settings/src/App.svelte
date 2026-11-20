@@ -15,6 +15,14 @@
   import type { Page } from "./lib/types";
   import { direction, locale, t, tEnglish } from "./lib/i18n";
   const desktop = "__SIMPLE_STT_DESKTOP__" in window;
+  function frameAction(action: "drag" | "minimize" | "maximize") {
+    window.location.assign("/__settings_frame/" + action);
+  }
+  function dragFrame(event: MouseEvent) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    frameAction(event.detail === 2 ? "maximize" : "drag");
+  }
   let query = $state(""),
     searchIndex = $state(0);
   let authenticated = $state(hasToken());
@@ -22,11 +30,14 @@
   let signInError = $state("");
   let signingIn = $state(false);
   let stopSession: (() => void) | undefined;
-  const minSidebarWidth = 220;
-  let sidebarWidth = $state(272);
+  const minSidebarWidth = 160;
+  let sidebarWidth = $state<number>();
   let viewportWidth = $state(window.innerWidth);
+  let viewportHeight = $state(window.innerHeight);
   const maxSidebarWidth = $derived(Math.max(minSidebarWidth, Math.min(420, viewportWidth - 460)));
-  const visibleSidebarWidth = $derived(Math.min(sidebarWidth, maxSidebarWidth));
+  const defaultSidebarWidth = $derived(viewportWidth <= 1120 || viewportHeight <= 720 ? 184 : 272);
+  const visibleSidebarWidth = $derived(Math.min(sidebarWidth ?? defaultSidebarWidth, maxSidebarWidth));
+  let settingsMain = $state<HTMLElement>();
   let dragOffset = 0;
   const sidebarDirection = () => direction() === "rtl" ? -1 : 1;
 
@@ -131,7 +142,7 @@
     ui.page = page;
     query = "";
     await tick();
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    settingsMain?.scrollTo(0, 0);
     if (path) {
       const field = document.querySelector(`[data-setting-path="${path}"]`) || document.getElementById(path) || document.querySelector(`[data-setting-path$=".${path.split('.').at(-1)}"]`);
       if (field) {
@@ -169,7 +180,7 @@
 </script>
 
 <svelte:window
-  onresize={() => (viewportWidth = window.innerWidth)}
+  onresize={() => { viewportWidth = window.innerWidth; viewportHeight = window.innerHeight; }}
   onbeforeunload={(event) => {
     if (ui.dirty) {
       event.preventDefault();
@@ -177,6 +188,23 @@
     }
   }}
 />
+{#if desktop}
+  <header class="settings-frame">
+    <div class="settings-frame-drag" role="presentation" onmousedown={dragFrame}>
+      <Icon name="audio" size={15} />
+      <span>{t("ui.settings.c7f73b")} · Simple STT</span>
+    </div>
+    <button type="button" aria-label={t("ui.minimize_settings")} onclick={() => frameAction("minimize")}>
+      <span class="frame-minimize" aria-hidden="true"></span>
+    </button>
+    <button type="button" aria-label={t("ui.maximize_restore_settings")} onclick={() => frameAction("maximize")}>
+      <span class="frame-maximize" aria-hidden="true"></span>
+    </button>
+    <button type="button" aria-label={t("ui.close_settings.5bd91a")} onclick={close}>
+      <span class="frame-close" aria-hidden="true"></span>
+    </button>
+  </header>
+{/if}
 {#if !authenticated}
   <main class="admin-sign-in">
     <h1>Simple STT</h1>
@@ -260,7 +288,7 @@
       aria-valuemin={minSidebarWidth} aria-valuemax={maxSidebarWidth} aria-valuenow={visibleSidebarWidth}
       onpointerdown={startSidebarDrag} onpointermove={dragSidebar} onkeydown={resizeSidebarWithKeys}></div>
   </aside>
-  <main>
+  <main bind:this={settingsMain}>
     <header class="page-head">
       <h1>{t(current.name)}</h1>
     </header>
@@ -286,11 +314,10 @@
         </div>{/if}
     </form>
   </main>
-</div>
+{#if ui.notice || ui.dirty}<div class="settings-feedback">
 {#if ui.notice}<div
     id="notice"
     class="notice"
-    class:notice-raised={ui.dirty || !desktop}
     data-kind={ui.noticeKind}
     role="status"
     aria-live="polite"
@@ -305,4 +332,6 @@
       disabled={ui.saving}>{t(ui.saving ? "Saving…" : "Save")}</button
     >
   </footer>{/if}
+</div>{/if}
+</div>
 {/if}

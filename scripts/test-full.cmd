@@ -31,6 +31,7 @@ node scripts\test-settings-model-selection.cjs || exit /b 1
 node scripts\test-settings-overhaul.cjs || exit /b 1
 node scripts\test-settings-contracts.cjs || exit /b 1
 node scripts\test-settings-shortcut-reminders.cjs || exit /b 1
+node scripts\test-settings-compact.cjs || exit /b 1
 
 echo INFO: running AutoHotkey validation and runtime smoke
 call scripts\test-ahk-full.cmd || exit /b 1

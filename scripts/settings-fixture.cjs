@@ -480,8 +480,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-function publishEvent(kind, values = {}) {
-  const event = { seq: ++eventSeq, kind, values };
+function publishEvent(kind, values = {}, text) {
+  const event = { seq: ++eventSeq, kind, values, text };
   queuedEvents.push(event);
   const waiter = [...eventWaiters][0];
   if (waiter) {
@@ -491,6 +491,7 @@ function publishEvent(kind, values = {}) {
       `data: ${JSON.stringify({ events: queuedEvents.splice(0) })}\n\n`,
     );
   }
+  return event.seq;
 }
 module.exports = {
   publishEvent,

@@ -22,6 +22,8 @@ fn main() {
 fn open_window(settings: DesktopSettings) -> Result<()> {
     let data_dir = AppConfig::local_data_dir().join("settings-webview");
     let url = settings.url.clone();
+    #[cfg(debug_assertions)]
+    let url = settings_dev_url(url)?;
     let origin = url.origin();
     tauri::Builder::default()
         .setup(move |app| {
@@ -32,6 +34,7 @@ fn open_window(settings: DesktopSettings) -> Result<()> {
                 .title("Simple STT Settings")
                 .inner_size(1024.0, 760.0)
                 .min_inner_size(320.0, 360.0)
+                .decorations(false)
                 .data_directory(data_dir)
                 .initialization_script(
                     "window.__SIMPLE_STT_DESKTOP__ = true;
@@ -54,7 +57,21 @@ fn open_window(settings: DesktopSettings) -> Result<()> {
                         });
                         return false;
                     }
-                    true
+                    let action = match url.path() {
+                        "/__settings_frame/drag" => "drag",
+                        "/__settings_frame/minimize" => "minimize",
+                        "/__settings_frame/maximize" => "maximize",
+                        _ => return true,
+                    };
+                    let handle = close.clone();
+                    let _ = close.run_on_main_thread(move || {
+                        if let Some(window) = handle.get_webview_window("settings") {
+                            if let Err(error) = frame_action(&window, action) {
+                                eprintln!("simple-stt-settings-window: {action}: {error}");
+                            }
+                        }
+                    });
+                    false
                 })
                 .on_new_window(|url, _| {
                     // The cleanup OAuth flow uses the user's normal browser session.
@@ -101,4 +118,35 @@ fn open_window(settings: DesktopSettings) -> Result<()> {
         .build(tauri::generate_context!())?
         .run_return(|_, _| {});
     Ok(())
+}
+
+fn frame_action(window: &tauri::WebviewWindow, action: &str) -> tauri::Result<()> {
+    match action {
+        "drag" => window.start_dragging(),
+        "minimize" => window.minimize(),
+        "maximize" if window.is_maximized()? => window.unmaximize(),
+        "maximize" => window.maximize(),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn settings_dev_url(url: tauri::Url) -> Result<tauri::Url> {
+    let Ok(origin) = std::env::var("SIMPLE_STT_SETTINGS_DEV_ORIGIN") else {
+        return Ok(url);
+    };
+    let mut dev = tauri::Url::parse(&origin)?;
+    anyhow::ensure!(
+        dev.scheme() == "http"
+            && dev.host_str() == Some("127.0.0.1")
+            && dev.port().is_some()
+            && dev.username().is_empty()
+            && dev.password().is_none()
+            && dev.path() == "/"
+            && dev.query().is_none()
+            && dev.fragment().is_none(),
+        "SIMPLE_STT_SETTINGS_DEV_ORIGIN must be an HTTP loopback origin with a port"
+    );
+    dev.set_fragment(url.fragment());
+    Ok(dev)
 }

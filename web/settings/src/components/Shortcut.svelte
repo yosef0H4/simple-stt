@@ -57,6 +57,7 @@
       dir="ltr"
       id={inputId}
       value={shortcut}
+      title={shortcut}
       readonly={ui.state?.platform === "windows"}
       oninput={(event) => change(event.currentTarget.value)}
     />{#if ui.state?.platform === "windows"}<IconButton

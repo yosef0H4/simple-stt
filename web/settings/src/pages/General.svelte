@@ -107,9 +107,11 @@
         onclick={() => run(configureShortcuts)}
       ><Icon name="keyboard" size={15} /><span>{t("ui.set_up_shortcuts.a104f9")}</span></button
       >{/if}{/snippet}
-  <Field spec={fields.enabled} />
-  <Field spec={fields.shortcutReminders} />
-  <button type="button" class="quiet" onclick={() => run(() => platformAction("show_shortcuts"))}>{t("ui.show_shortcuts")}</button>
+  <div class="shortcut-quick-actions">
+    <Field spec={fields.enabled} />
+    <Field spec={fields.shortcutReminders} />
+    <button type="button" class="quiet" onclick={() => run(() => platformAction("show_shortcuts"))}>{t("ui.show_shortcuts")}</button>
+  </div>
   {#if ui.state?.platform === "linux"}
     <Field spec={fields.shortcutSystem} />
     <details class="guide">
@@ -198,7 +200,8 @@
     padding: 0 12px 6px;
     border: 1px solid var(--frame);
     border-radius: var(--radius);
-    background: var(--raised);
+    background: var(--paper);
+    box-shadow: inset 1px 1px var(--line), inset -1px -1px var(--bevel-light);
   }
 
   .shortcut-card h3 {
@@ -207,11 +210,9 @@
     gap: 9px;
     margin: 0 -12px 4px;
     padding: 6px 12px;
-    background: var(--title-bar);
-    color: var(--title-ink);
+    background: var(--paper);
     border-block-end: 1px solid var(--frame);
-    border-radius: 2px 2px 0 0;
-    font-size: 16px;
+    font-size: 14px;
     font-weight: 650;
   }
 
@@ -221,6 +222,53 @@
 
   .shortcut-card :global(.field) {
     padding-block: 8px;
+  }
+
+  @media (max-width: 1120px), (max-height: 720px) {
+    .shortcut-quick-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr));
+      align-items: center;
+      gap: 4px 14px;
+      padding-block: 4px;
+    }
+
+    .shortcut-quick-actions > button {
+      justify-self: start;
+    }
+
+    .shortcut-quick-actions :global(.field) {
+      grid-template-columns: minmax(0, 1fr) 34px;
+    }
+
+    .shortcut-cards {
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 296px), 1fr));
+      align-items: start;
+      gap: 10px;
+      margin-block-start: 9px;
+    }
+
+    .shortcut-card :global(.field) {
+      grid-template-columns: minmax(84px, 1fr) minmax(0, 1.75fr);
+      padding-block: 4px;
+    }
+
+    .shortcut-card :global(.field:has(.combo)) {
+      grid-template-columns: minmax(100px, 1fr) minmax(0, 1.2fr);
+    }
+
+    .shortcut-card :global(.control > .icon-button) {
+      inline-size: 26px;
+      min-block-size: 28px;
+    }
+
+    .shortcut-card :global(.control > input:not([type="checkbox"])) {
+      padding-inline: 6px;
+    }
+
+    .shortcut-card .inline-status {
+      margin-block: 3px;
+    }
   }
 
 

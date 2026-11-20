@@ -196,6 +196,15 @@ state-file reconnect after simulated service restart
 
 ## Browser Settings coverage
 
+Run `node scripts/test-settings-compact.cjs` to check the compact layout,
+shortcut input width, text-free dictation notices, search scrolling, and the
+the default Classic appearance. Screenshots are written to `artifacts/compact-settings/`.
+
+For Tauri frontend hot reload, point Vite's `SIMPLE_STT_SETTINGS_ORIGIN` at
+the native Settings server's loopback address. Launch the debug Settings window
+with the same explicit `--listen` address and set `SIMPLE_STT_SETTINGS_DEV_ORIGIN`
+to Vite's HTTP loopback origin. Use a temporary config and data directory for previews.
+
 On Windows, build the desktop targets with
 `cargo build -p simple-stt -p simple-stt-settings-window --bin simple-stt-settings --bin simple-stt-settings-window --bin simple-stt-capture --bin simple-stt-ctl`.
 Run `node scripts/test-settings-desktop.cjs` with Playwright and Python

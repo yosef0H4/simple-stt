@@ -215,6 +215,8 @@
   "ui.show_shortcuts_mode_help": "تبقى التلميحات ظاهرة أثناء الضغط المستمر على الاختصار. وعند الضغط مرة واحدة تظهر لفترة قصيرة.",
   "ui.caps_lock_hint_hold_only": "يتطلب مفتاح Caps Lock وحده الضغط المستمر للعرض. عيّن مجموعة مفاتيح لتفعيل العرض بضغطة واحدة.",
   "ui.resize_sidebar": "تغيير عرض الشريط الجانبي",
+  "ui.minimize_settings": "تصغير نافذة الإعدادات",
+  "ui.maximize_restore_settings": "تكبير نافذة الإعدادات أو استعادتها",
   "ui.shortcut_reminders": "تذكير بالاختصارات",
   "ui.shortcut_reminders_help": "عرض الاختصارات المعيّنة في التلميحات.",
   "assets.title": "النماذج",

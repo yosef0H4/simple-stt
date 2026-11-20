@@ -360,7 +360,7 @@ export async function eventLoop(signal: AbortSignal) {
           await refreshState();
         }
         if (e.kind === "configuration_reloaded") await refreshState(true);
-        if (e.text || e.values.message_id) {
+        if (e.kind !== "transcript" && (e.text || e.values.message_id)) {
           const args = e.values.message_args;
           const localized = responseMessage(e.values.message_id, args, e.text || "");
           notice(localized || e.text || "");

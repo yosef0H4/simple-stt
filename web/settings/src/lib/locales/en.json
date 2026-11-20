@@ -215,6 +215,8 @@
   "ui.show_shortcuts_mode_help": "Hold keeps the hints visible until you release the shortcut. Press shows them briefly after one press.",
   "ui.caps_lock_hint_hold_only": "Caps Lock alone uses Hold to show. Assign a key combination to enable Press to show.",
   "ui.resize_sidebar": "Resize sidebar",
+  "ui.minimize_settings": "Minimize Settings",
+  "ui.maximize_restore_settings": "Maximize or restore Settings",
   "ui.shortcut_reminders": "Shortcut reminders",
   "ui.shortcut_reminders_help": "Show assigned shortcuts in tooltips.",
   "assets.title": "Models",

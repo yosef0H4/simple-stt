@@ -5,6 +5,7 @@
  import {runtimeLabel} from '../lib/module-labels';
  import IconButton from './IconButton.svelte';
  import Help from './Help.svelte';
+ import RangeInput from './RangeInput.svelte';
  import {modules,refreshModules,type Feature,type Binding} from '../lib/modules.svelte';
  import {t} from '../lib/i18n';
  import {notice} from '../lib/state.svelte';
@@ -30,7 +31,7 @@
  <div class="field"><div class="field-copy"><label for={`${path}.lowercase`}>{t('module.lowercase')}</label><Help text="module.lowercase_help"/></div><div class="control"><input id={`${path}.lowercase`} type="checkbox" disabled={!(binding.clean_text??true)} checked={binding.lowercase??false} onchange={(e)=>onchange({...binding,lowercase:e.currentTarget.checked})}/></div></div>
  {/if}
  {#if binding.model==='supertonic3'}
- <div class="field"><div class="field-copy"><label for={`${path}.steps`}>{t('module.steps')} · {binding.steps??5}</label><Help text="module.steps_help"/></div><div class="control"><input id={`${path}.steps`} type="range" min="5" max="12" step="1" value={binding.steps??5} oninput={(e)=>onchange({...binding,steps:Number(e.currentTarget.value)})}/></div></div>
+ <div class="field"><div class="field-copy"><label for={`${path}.steps`}>{t('module.steps')} · {binding.steps??5}</label><Help text="module.steps_help"/></div><div class="control"><RangeInput id={`${path}.steps`} min={5} max={12} value={binding.steps??5} oninput={(steps) => onchange({...binding,steps})}/></div></div>
  {/if}
  {/if}
  <Combo label="ui.device.a5a74a" path={`${path}.device`} value={runtime?.backend==='cpu'?'cpu':binding.device} items={runtime?.backend==='cpu'?[{value:'cpu',label:'module.processor'}]:[{value:'auto',label:'ui.automatic.ac9041'},{value:'cpu',label:'module.processor'},{value:'gpu',label:runtime?.backend==='cuda'?'module.nvidia':'ui.gpu_backend'}]} onselect={value=>onchange({...binding,device:value as Binding['device']})}/>

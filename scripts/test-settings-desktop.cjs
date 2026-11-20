@@ -45,19 +45,33 @@ pid, action = int(sys.argv[1]), sys.argv[2]
 user.IsWindowVisible.argtypes = [w.HWND]
 user.GetWindowThreadProcessId.argtypes = [w.HWND, c.POINTER(w.DWORD)]
 user.IsIconic.argtypes = [w.HWND]
+user.IsZoomed.argtypes = [w.HWND]
+user.GetWindowTextLengthW.argtypes = [w.HWND]
+user.GetWindowRect.argtypes = [w.HWND, c.POINTER(w.RECT)]
+user.ClientToScreen.argtypes = [w.HWND, c.POINTER(w.POINT)]
 user.ShowWindow.argtypes = [w.HWND, c.c_int]
 user.PostMessageW.argtypes = [w.HWND, w.UINT, w.WPARAM, w.LPARAM]
 callback = c.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
 def visit(hwnd, _):
     owner = w.DWORD()
     user.GetWindowThreadProcessId(hwnd, c.byref(owner))
-    if owner.value != pid or not user.IsWindowVisible(hwnd):
+    if owner.value != pid or not user.IsWindowVisible(hwnd) or not user.GetWindowTextLengthW(hwnd):
         return True
     if action == "minimize":
         user.ShowWindow(hwnd, 6)
+    if action == "restore":
+        user.ShowWindow(hwnd, 9)
     if action == "close":
         user.PostMessageW(hwnd, 0x10, 0, 0)
-    print("minimized" if user.IsIconic(hwnd) else "visible")
+    if action == "frame":
+        rect, client = w.RECT(), w.POINT()
+        user.GetWindowRect(hwnd, c.byref(rect))
+        user.ClientToScreen(hwnd, c.byref(client))
+        print("classic" if client.y - rect.top < 10 else "system")
+    elif action == "zoom":
+        print("maximized" if user.IsZoomed(hwnd) else "normal")
+    else:
+        print("minimized" if user.IsIconic(hwnd) else "visible")
     return False
 user.EnumWindows(callback(visit), 0)
 `;
@@ -134,7 +148,10 @@ async function main() {
     console.log(`PASS: default opens one native Settings window in ${startup} ms; relaunch restores it`);
 
     assert.equal(await page.locator("#service").count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Close Settings" }).count(), 0);
+    const frame = page.locator(".settings-frame");
+    const closeSettings = page.getByRole("button", { name: "Close Settings" });
+    assert.equal(await closeSettings.count(), 1);
+    assert.equal(await frame.getByRole("button", { name: "Close Settings" }).count(), 1);
     const language = page.locator("#ui-language");
     await language.selectOption("en");
     await page.locator("[data-page=models]").click();
@@ -157,9 +174,22 @@ async function main() {
     await waitFor("saved Settings JSON", () => JSON.parse(fs.readFileSync(config, "utf8")).general.ui_language === "en");
     await page.locator("#notice").waitFor();
     const position = await page.locator("#notice").boundingBox();
+    const settingsPane = await page.locator(".app-shell > main").boundingBox();
     const height = await page.evaluate(() => innerHeight);
-    assert.ok(position.x < 25 && position.y + position.height > height - 30, "native notice did not use the bottom left");
+    assert.ok(position.y >= settingsPane.y + settingsPane.height - 1 && position.y + position.height <= height + 1, "native notice overlapped Settings or extended past the window");
     console.log("PASS: Settings connects after capture startup, reconnects after credential rotation, and saves the retained draft");
+
+    await frame.waitFor();
+    assert.equal(nativeWindow(host, "frame"), "classic");
+    const maximize = frame.getByRole("button", { name: "Maximize or restore Settings" });
+    await maximize.click();
+    await waitFor("Classic titlebar maximizes", () => nativeWindow(host, "zoom") === "maximized");
+    await maximize.click();
+    await waitFor("Classic titlebar restores", () => nativeWindow(host, "zoom") === "normal");
+    await frame.getByRole("button", { name: "Minimize Settings" }).click();
+    await waitFor("Classic titlebar minimizes", () => nativeWindow(host, "state") === "minimized");
+    assert.equal(nativeWindow(host, "restore"), "visible");
+    console.log("PASS: default Classic title bar maximizes, minimizes, and restores");
 
     const webviews = processInfo(`
       $webviews = Get-CimInstance Win32_Process -Filter "Name = 'msedgewebview2.exe'"
@@ -173,12 +203,16 @@ async function main() {
     const origin = new URL(page.url()).origin;
     await language.selectOption("auto");
     let dialog = page.waitForEvent("dialog");
-    assert.equal(nativeWindow(host, "close"), "visible");
+    const cancelClose = closeSettings.click();
     await (await dialog).dismiss();
+    await cancelClose;
     assert.equal(await language.inputValue(), "auto");
     dialog = page.waitForEvent("dialog");
-    nativeWindow(host, "close");
+    const acceptClose = closeSettings.click().catch((error) => {
+      if (!page.isClosed()) throw error;
+    });
     await (await dialog).accept();
+    await acceptClose;
     await waitFor("Settings and WebView2 processes to exit", () => [host, ...webviews].every((pid) => !processAlive(pid)));
     await assert.rejects(fetch(origin));
     assert.equal(capture.exitCode, null, "Closing Settings stopped the capture service");
@@ -187,7 +221,7 @@ async function main() {
     launch("simple-stt-settings");
     const { page: fresh, pid: reopened } = await settingsPage();
     assert.equal(await fresh.locator("#ui-language").inputValue(), "en");
-    assert.equal(await fresh.getByRole("button", { name: "Close Settings" }).count(), 0);
+    assert.equal(await fresh.getByRole("button", { name: "Close Settings" }).count(), 1);
     assert.equal(nativeWindow(reopened, "close"), "visible");
     await waitFor("clean titlebar Close to exit Settings", () => !processAlive(reopened));
     console.log("PASS: reopen reads saved Settings and the native Close exits the window");

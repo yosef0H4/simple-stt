@@ -27,8 +27,8 @@
     min-inline-size: 0;
     padding: 12px 16px 8px;
     border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--raised);
+    background: var(--accent-soft);
+    box-shadow: inset -1px -1px var(--bevel-light);
   }
   header {
     display: flex;

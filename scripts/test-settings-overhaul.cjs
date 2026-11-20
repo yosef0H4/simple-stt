@@ -385,7 +385,7 @@ const f = require("./settings-fixture.cjs");
         assert.equal(railBounds.y, 0, `${name} navigation starts at viewport top`);
         if (width > 700) {
           assert.equal(railBounds.height, 900, `${name} desktop sidebar fills viewport`);
-          await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+          await page.locator(".app-shell > main").evaluate((pane) => pane.scrollTo(0, pane.scrollHeight));
           assert.equal((await page.locator(".rail").boundingBox()).y, 0,
             `${name} desktop sidebar stays anchored while scrolling`);
         } else {
@@ -395,12 +395,10 @@ const f = require("./settings-fixture.cjs");
         const closeButton = page.getByRole("button", { name: "Close Settings", exact: true });
         assert.equal(await closeButton.getAttribute("title"), "Close Settings");
         assert.equal(await page.locator('[role="tooltip"]').count(), 0);
-        await page.evaluate(() => window.scrollTo(0, 0));
+        await page.locator(".app-shell > main").evaluate((pane) => pane.scrollTo(0, 0));
         await page.mouse.move(width - 1, 0);
         assert.equal(
-          await page.evaluate(
-            () => document.documentElement.scrollWidth > innerWidth,
-          ),
+          await page.locator(".app-shell > main").evaluate((pane) => pane.scrollWidth > pane.clientWidth + 1),
           false,
           `${name} ${theme} ${width} overflow`,
         );
@@ -420,7 +418,7 @@ const f = require("./settings-fixture.cjs");
         .getPropertyValue("--paper")
         .trim(),
     ),
-    "#15141e",
+    "#303030",
   );
   f.getConfig().speech.selection_mode = "single_model";
   f.getConfig().speech.single_model_filename =

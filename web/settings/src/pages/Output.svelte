@@ -13,6 +13,7 @@
   import Combo from "../components/Combo.svelte";
   import IconButton from "../components/IconButton.svelte";
   import Help from "../components/Help.svelte";
+  import RangeInput from "../components/RangeInput.svelte";
   import { t } from "../lib/i18n";
   import { positionToWpm, wpmToPosition } from "../lib/typing";
   let query = $state("");
@@ -20,9 +21,7 @@
     ? 100 : wpmToPosition(ui.config?.output.typing_speed_wpm ?? 450));
   const typingLabel = $derived(typingPosition === 100
     ? t("typing.instant") : `${ui.config?.output.typing_speed_wpm ?? 450}${t("ui.wpm.3fc2c6")}`);
-  function setTypingPosition(event: Event) {
-    const position = (event.currentTarget as HTMLInputElement).valueAsNumber;
-    if (!Number.isFinite(position)) return;
+  function setTypingPosition(position: number) {
     if (position < 100) set("output.typing_speed_wpm", positionToWpm(position));
     set("output.paced_typing_enabled", position < 100);
   }
@@ -158,8 +157,7 @@
     <div class="field" data-setting-path="output.typing_speed_wpm">
       <div class="field-copy"><label for="typing-speed">{t("ui.speed.2d2cb0")}</label><Help text={t("typing.speed_help")} /></div>
       <div class="control">
-        <input id="typing-speed" type="range" min="0" max="100" step="1" dir="ltr"
-          aria-valuetext={typingLabel} value={typingPosition} oninput={setTypingPosition} />
+        <RangeInput id="typing-speed" min={0} max={100} valueText={typingLabel} value={typingPosition} oninput={setTypingPosition} />
         <input class="range-number" type="number" aria-label={t("settings.typing_exact")} min="50" max="1650" step="1" value={typingPosition===100?"":ui.config?.output.typing_speed_wpm} placeholder={t("typing.instant")} oninput={event=>{const value=event.currentTarget.valueAsNumber;if(Number.isFinite(value)){set("output.typing_speed_wpm",value);set("output.paced_typing_enabled",true);}}}/><output class="range-value" for="typing-speed">{typingPosition===100?t("typing.instant"):t("ui.wpm.3fc2c6")}</output>
       </div>
     </div>
