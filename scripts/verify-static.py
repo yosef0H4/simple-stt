@@ -224,7 +224,7 @@ need("src/cleanup/secrets.rs", "CredWriteW", "secret-tool", "SIMPLE_STT_AI_API_K
 need("src/bin/simple_stt_capture.rs", "CleanupFinished", "cleanup_failure_notice", "AI cleanup timed out", "Screen context requested", "trim_cleanup_history", "ListCleanupHistory")
 need("src/capture/screen_context.rs", "Screenshot::request", "interactive(true)", "excluded_apps", "JpegEncoder")
 forbid("src/config.rs", "pub api_key", "pub access_token", "pub refresh_token")
-need("src/bin/simple_stt_linux.rs", "impl ksni::Tray for LinuxTray", "audio-input-microphone", "menu.close", "start_linux_tray")
+need("src/bin/simple_stt_linux.rs", "impl ksni::Tray for LinuxTray", "audio-input-microphone", "start_linux_tray")
 need("src/models.rs", "pub fn remove_model", "save another choice before removing it", "installed_non_selected_model_can_be_removed", "selected_model_is_not_removed")
 forbid("resources/simple-stt.iss", "Invoke-WebRequest", "exit 0\"\"\"; StatusMsg: \"Downloading recommended speech model")
 need("web/settings/index.html", "/src/main.ts")
@@ -243,7 +243,7 @@ checks.append("microphone preference uses stable IDs, temporary default fallback
 # AHK shell owns desktop behavior and supports safe typed or clipboard-backed delivery.
 tray_ahk = need(
     "ahk/lib/Tray.ahk", "A_TrayMenu", "UiText(id)", "TraySetIcon(", "menu.SetIcon(",
-    '"menu.openSettings"', '"menu.restartAudio"', '"menu.unloadAll"',
+    "UiTrayMenu()",
 )
 for needle in ["SetColor", "SetPreferredAppMode", "FlushMenuThemes"]:
     if needle in tray_ahk:
@@ -269,9 +269,10 @@ need("src/shortcuts.rs", "linux-shortcuts.json", "shortcut.record", "shortcut.sh
 need("src/common/shell_protocol.rs", "ShowShortcuts", "RefreshShortcuts", "BeginDelivery")
 need("src/bin/simple_stt_capture.rs", "retry_registers_delivery_before_progress", "OverlayPrimary::WaitingForKeys")
 need("ahk/lib/Typist.ahk", "ReportProgress", 'this.ReportProgress("waiting-for-keys")')
-need("src/bin/simple_stt_linux.rs", 'NewShortcut::new("shortcuts", "Show shortcuts")', "show_shortcuts_hotkey", "RefreshShortcuts")
-need("src/bin/simple_stt_linux.rs", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', '"reading.read_along_start"', 'unload_all_models()')
-need("ahk/lib/Tray.ahk", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', '"reading.read_along_start"')
+need("src/bin/simple_stt_linux.rs", "shortcuts::ACTIONS", "shortcuts::configured", "RefreshShortcuts")
+need("src/shortcuts.rs", "show_shortcuts_hotkey")
+need("src/bin/simple_stt_linux.rs", 'tray-menu.json', 'activate_tray_action', 'unload_all_models()')
+need("web/settings/src/lib/tray-menu.json", '"menu.copyRegion"', '"menu.abort"', '"menu.unloadAll"', '"reading.read_along_start"', '"menu.close"')
 need("ahk/simple-stt.ahk", "showShortcutsHotkey.Configure", "capsController.ConfigureHint", 'ObjBindMethod(this.capsController, "HideHint")')
 need("web/settings/src/pages/General.svelte", "fields.shortcutReminders", 'platformAction("show_shortcuts")')
 need("src/capture/overlay_model.rs", "RecordingIndicators", 'ai_cleanup: bool', 'screen_context: bool', '1f916', '1f4f7')
@@ -350,6 +351,7 @@ if errors:
     sys.exit(1)
 print("STATIC VERIFY PASSED")
 for check in checks:
-    print(" - " + check)need("src/capture/state.rs", "authentication_token", "PublishedCaptureToken", "delete_capture_token")
+    print(" - " + check)
+need("src/capture/state.rs", "authentication_token", "PublishedCaptureToken", "delete_capture_token")
 need("src/capture_cli.rs", "state.authentication_token()")
 need("reader/crates/reader-core/src/secrets.rs", "capture-auth-{instance}-{pid}", "capture_credentials_are_scoped_to_profile_and_process")

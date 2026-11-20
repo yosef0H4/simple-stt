@@ -13,10 +13,28 @@ for (const name of readdirSync(directory).filter(n => n.endsWith('en.json'))) {
   }
 }
 const enText = read('desktop.en.json'), arText = read('desktop.ar.json');
-const digest = createHash('sha256').update(enText).update(arText).digest('hex');
+const menuText = readFileSync(new URL('web/settings/src/lib/tray-menu.json', root), 'utf8');
+const digest = createHash('sha256').update(enText).update(arText).update(menuText).digest('hex');
 const quote = (s) => '"' + s.replaceAll('`', '``').replaceAll('"', '`"').replaceAll('\n', '`n').replaceAll('\r', '`r') + '"';
 const map = (raw) => 'Map(\n' + Object.entries(JSON.parse(raw)).map(([key, value]) => '        '+quote(key)+', '+quote(value)).join(',\n') + '\n    )';
-const content = `; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
+const menu = JSON.parse(menuText);
+const desktopLabels = JSON.parse(enText);
+const seenActions = new Set();
+for (const group of menu) {
+  for (const {action, label, alternate, linux_icon, windows_icon} of group) {
+    if (seenActions.has(action) || !Object.hasOwn(desktopLabels, label) ||
+        (alternate && !Object.hasOwn(desktopLabels, alternate)) || (!linux_icon && !windows_icon)) {
+      throw Error(`Invalid tray action: ${action}`);
+    }
+    seenActions.add(action);
+  }
+}
+const windowsMenu = menu.map(group => group.filter(item => item.windows_icon))
+  .filter(group => group.length)
+  .map(group => '        [\n' + group.map(({action, label, windows_icon, alternate}) =>
+    '            [' + [action, label, windows_icon, alternate ?? ''].map(quote).join(', ') + ']'
+  ).join(',\n') + '\n        ]').join(',\n');
+const content = `; Generated from desktop catalogs and tray menu. Run node web/settings/tools/locales.mjs.
 ; catalog-sha256: ${digest}
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
@@ -40,6 +58,11 @@ UiText(id, args := unset) {
         offset := part.Pos + part.Len
     }
     return output . SubStr(text, offset)
+}
+UiTrayMenu() {
+    return [
+${windowsMenu}
+    ]
 }
 `;
 const target = new URL('ahk/lib/Locale.ahk', root);

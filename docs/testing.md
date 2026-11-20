@@ -213,6 +213,12 @@ suspends the page while capture restarts, saves a draft and verifies that
 closing Settings exits its WebView2 processes while capture keeps running.
 It uses a temporary profile without loading inference models.
 
+On Linux, run `xvfb-run -a dbus-run-session -- python3 scripts/test-settings-desktop-linux.py`
+after installing the native package. The test needs `xdotool` and `xwininfo`.
+It opens Settings in a private X11 session, checks that relaunch reuses the same
+window and local API process, and clicks Close to verify that the process and
+API exit. Pass the Settings launcher path to test an isolated build.
+
 `node scripts/test-settings-modules.cjs` checks the empty first install, keyboard routing default, compatible installed choices, download queue and filters, and a narrow Arabic layout using an isolated fixture.
 
 `node scripts/test-settings-shortcut-portal.cjs` checks the visible English and

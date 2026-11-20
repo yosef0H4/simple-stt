@@ -1,20 +1,117 @@
 //! Compact, localized descriptions of registered shortcuts, shared by overlays.
-use crate::{config::AppConfig, localization::Locale};
+use crate::{
+    config::{AppConfig, GeneralConfig},
+    localization::Locale,
+};
+use reader_core::config::ShortcutSettings;
 use std::collections::BTreeMap;
 
-pub const ACTIONS: [(&str, &str); 11] = [
-    ("record", "shortcut.record"),
-    ("cancel", "shortcut.cancel"),
-    ("delivery", "shortcut.delivery"),
-    ("cleanup", "shortcut.cleanup"),
-    ("retry", "shortcut.retry"),
-    ("shortcuts", "shortcut.show"),
-    ("read-selection", "menu.readSelection"),
-    ("read-region", "menu.readRegion"),
-    ("copy-region", "menu.copyRegion"),
-    ("listen-clipboard", "shortcut.listenClipboard"),
-    ("read-along", "reading.read_along_start"),
+#[derive(Clone, Copy)]
+enum Binding {
+    General(fn(&GeneralConfig) -> &str),
+    Reader(fn(&ShortcutSettings) -> &str),
+}
+
+#[derive(Clone, Copy)]
+pub struct Shortcut {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub icon: &'static str,
+    binding: Binding,
+}
+
+use Binding::{General, Reader};
+
+pub const ACTIONS: [Shortcut; 11] = [
+    Shortcut {
+        id: "record",
+        label: "shortcut.record_action",
+        icon: "🔴",
+        binding: General(|g| &g.record_hotkey),
+    },
+    Shortcut {
+        id: "cancel",
+        label: "shortcut.cancel_action",
+        icon: "❌",
+        binding: General(|g| &g.cancel_hotkey),
+    },
+    Shortcut {
+        id: "delivery",
+        label: "shortcut.delivery_action",
+        icon: "🔄",
+        binding: General(|g| &g.toggle_delivery_hotkey),
+    },
+    Shortcut {
+        id: "cleanup",
+        label: "shortcut.cleanup_action",
+        icon: "✨",
+        binding: General(|g| &g.toggle_cleanup_hotkey),
+    },
+    Shortcut {
+        id: "retry",
+        label: "shortcut.retry_action",
+        icon: "↪️",
+        binding: General(|g| &g.retry_delivery_hotkey),
+    },
+    Shortcut {
+        id: "shortcuts",
+        label: "shortcut.show_action",
+        icon: "⌨️",
+        binding: General(|g| &g.show_shortcuts_hotkey),
+    },
+    Shortcut {
+        id: "read-selection",
+        label: "menu.readSelection",
+        icon: "🔊",
+        binding: Reader(|s| &s.read_selection),
+    },
+    Shortcut {
+        id: "read-region",
+        label: "menu.readRegion",
+        icon: "📷",
+        binding: Reader(|s| &s.read_region),
+    },
+    Shortcut {
+        id: "copy-region",
+        label: "menu.copyRegion",
+        icon: "📋",
+        binding: Reader(|s| &s.copy_region),
+    },
+    Shortcut {
+        id: "listen-clipboard",
+        label: "shortcut.listenClipboard",
+        icon: "🎧",
+        binding: Reader(|s| &s.listen_clipboard),
+    },
+    Shortcut {
+        id: "read-along",
+        label: "reading.read_along_start",
+        icon: "📖",
+        binding: Reader(|s| &s.read_along),
+    },
 ];
+
+pub fn reader_bindings(shortcuts: &ShortcutSettings) -> impl Iterator<Item = (&'static str, &str)> {
+    ACTIONS
+        .iter()
+        .filter_map(move |action| match action.binding {
+            Reader(chord) => Some((action.id, chord(shortcuts))),
+            General(_) => None,
+        })
+}
+
+pub fn configured<'a>(
+    config: &'a AppConfig,
+    shortcuts: Option<&'a ShortcutSettings>,
+) -> impl Iterator<Item = (&'static str, &'a str)> {
+    ACTIONS.iter().filter_map(move |action| {
+        let chord = match action.binding {
+            General(chord) => chord(&config.general),
+            Reader(chord) => chord(shortcuts?),
+        };
+        Some((action.id, chord))
+    })
+}
 
 pub fn assigned(config: &AppConfig) -> BTreeMap<String, String> {
     if cfg!(target_os = "linux") {
@@ -24,49 +121,11 @@ pub fn assigned(config: &AppConfig) -> BTreeMap<String, String> {
             .and_then(|body| serde_json::from_slice(&body).ok())
             .unwrap_or_default();
     }
-    let g = &config.general;
-    let mut bindings: BTreeMap<String, String> = ACTIONS
-        .iter()
-        .map(|(id, _)| *id)
-        .zip([
-            if g.enabled { &g.record_hotkey } else { "None" },
-            &g.cancel_hotkey,
-            &g.toggle_delivery_hotkey,
-            &g.toggle_cleanup_hotkey,
-            &g.retry_delivery_hotkey,
-            &g.show_shortcuts_hotkey,
-        ])
+    let reader = crate::reader::load().ok();
+    configured(config, reader.as_ref().map(|reader| &reader.shortcuts))
+        .filter(|(id, _)| config.general.enabled || *id != "record")
         .map(|(id, chord)| (id.to_owned(), chord.to_owned()))
-        .collect();
-    if let Ok(reader) = crate::reader::load() {
-        for (id, chord) in [
-            ("read-selection", reader.shortcuts.read_selection),
-            ("read-region", reader.shortcuts.read_region),
-            ("copy-region", reader.shortcuts.copy_region),
-            ("listen-clipboard", reader.shortcuts.listen_clipboard),
-            ("read-along", reader.shortcuts.read_along),
-        ] {
-            bindings.insert(id.to_owned(), chord);
-        }
-    }
-    bindings
-}
-
-pub fn action_icon(id: &str) -> &'static str {
-    match id {
-        "record" => "🔴",
-        "cancel" => "❌",
-        "delivery" => "🔄",
-        "cleanup" => "✨",
-        "retry" => "↪️",
-        "shortcuts" => "⌨️",
-        "read-selection" => "🔊",
-        "read-region" => "📷",
-        "copy-region" => "📋",
-        "listen-clipboard" => "🎧",
-        "read-along" => "📖",
-        _ => "",
-    }
+        .collect()
 }
 
 fn compact_chord(chord: &str) -> String {
@@ -105,11 +164,11 @@ fn compact_chord(chord: &str) -> String {
 pub fn summary(bindings: &BTreeMap<String, String>, locale: Locale) -> String {
     let items: Vec<_> = ACTIONS
         .iter()
-        .filter_map(|(id, _)| {
-            if *id == "shortcuts" && cfg!(windows) {
+        .filter_map(|action| {
+            if action.id == "shortcuts" && cfg!(windows) {
                 return None;
             }
-            let chord = bindings.get(*id)?.trim();
+            let chord = bindings.get(action.id)?.trim();
             if chord.is_empty()
                 || ["none", "off", "disabled"]
                     .iter()
@@ -119,7 +178,7 @@ pub fn summary(bindings: &BTreeMap<String, String>, locale: Locale) -> String {
             }
             // Isolate the chord so + and Latin keys retain their order in Arabic.
             let chord = compact_chord(chord);
-            Some(format!("{} \u{2066}{chord}\u{2069}", action_icon(id)))
+            Some(format!("{} \u{2066}{chord}\u{2069}", action.icon))
         })
         .collect();
     let columns = if items.len() <= 4 { 2 } else { 3 };
@@ -194,7 +253,7 @@ mod tests {
         assert_eq!(compact_chord("+"), "[+]");
         let bindings = ACTIONS
             .iter()
-            .map(|(id, _)| (id.to_string(), "Meta+Z".to_owned()))
+            .map(|action| (action.id.to_owned(), "Meta+Z".to_owned()))
             .collect();
         for locale in [Locale::En, Locale::Ar] {
             let text = summary(&bindings, locale);
@@ -207,12 +266,18 @@ mod tests {
 
     #[test]
     fn single_abort_binding_replaces_reader_stop_shortcut() {
-        assert_eq!(ACTIONS.iter().filter(|(id, _)| *id == "cancel").count(), 1);
-        assert!(!ACTIONS.iter().any(|(id, _)| *id == "stop-reading"));
         assert_eq!(
             ACTIONS
                 .iter()
-                .filter(|(id, _)| *id == "copy-region")
+                .filter(|action| action.id == "cancel")
+                .count(),
+            1
+        );
+        assert!(!ACTIONS.iter().any(|action| action.id == "stop-reading"));
+        assert_eq!(
+            ACTIONS
+                .iter()
+                .filter(|action| action.id == "copy-region")
                 .count(),
             1
         );

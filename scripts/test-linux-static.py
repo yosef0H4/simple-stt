@@ -79,7 +79,8 @@ need("docs/linux-wayland.md", 'Shared shortcut fields remain in JSON', 'Same Par
 
 need("src/common/clipboard.rs", 'publish_private', '--sensitive')
 need("src/common/private_clipboard.rs", 'x-kde-passwordManagerHint', 'INCR', 'MAX_PAYLOAD')
-need("src/bin/simple_stt_linux.rs", 'RetryDelivery', 'NewShortcut::new("retry"', 'desktop_input', 'memory_delivery_command')
+need("src/bin/simple_stt_linux.rs", 'RetryDelivery', 'shortcuts::ACTIONS', 'desktop_input', 'memory_delivery_command')
+need("src/shortcuts.rs", 'id: "retry"', 'retry_delivery_hotkey')
 helper_source = need("resources/linux-fast-paste.c", 'ATSPI_ROLE_PASSWORD_TEXT', 'g_dbus_connection_call_sync')
 for obsolete in ['XTestFakeKeyEvent', 'paste_via_uinput', 'insert_text_direct', 'activate_window(']:
     if obsolete in helper_source:

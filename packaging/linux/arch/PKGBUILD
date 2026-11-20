@@ -1,6 +1,6 @@
 pkgname=simple-stt
 pkgver=0.3.1
-pkgrel=38
+pkgrel=39
 pkgdesc='Local dictation, read aloud, and screen text for Linux desktops'
 arch=('x86_64')
 url='https://github.com/yosef0H4/simple-stt'

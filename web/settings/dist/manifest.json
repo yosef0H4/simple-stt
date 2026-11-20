@@ -3,11 +3,11 @@
     "index.html": "1d6d31f12a4cae33e2da21b73307b06bd53943c1afb9e2ff13338522fbfc491d",
     "package-lock.json": "c6cfa4d92a16ad7357763051f7a01eb77953e16bbb4e17b8513d76072d88d42a",
     "package.json": "bf834b8d37191567ec1d1e78644369e372504b32f55d48c2e0b2d47591fe4031",
-    "public/settings-sans-license.txt": "37f1d07d235509973aeaff5d6f22378d8d812eb998a14d321d6562e5a4cb6a89",
+    "public/settings-sans-license.txt": "7fac2f6c6bc47144e2c35e8f41147b3c8c895490d44b46266a5312fe93364d2e",
     "public/settings-sans.woff2": "b6132167f92bbddff5b2092897451d8b8fcb545e4c587a5c7ac432cb0e73f098",
-    "src/App.svelte": "1fa0c9ee2dab5bfb13c5fc0f98fb68eca87d7db902d4d5d1ccc13c356dac9904",
+    "src/App.svelte": "4898a96432b6d3d7e9c88b94e2aaebb37f5bdc11e9643f29a40ffd745c945eef",
     "src/app.css": "55aa6ed0e75488d3a9f84cc68d87c225d35ab63a24a8757307ee41e74f967fc1",
-    "src/classic.css": "78154d5294e9b90c2d93538417fe89a5569bd03280863aa7f2adabb7201dd000",
+    "src/classic.css": "b0f14be755af67a8e2d725ab0403de9466fe75fd9035cd76a4ce8f081ef03410",
     "src/components/ActionRecorder.svelte": "7a79da8fecb2c0c569ec5f8199a30d7795fc24480df1d00fe6ae5f0a6c4e71c1",
     "src/components/Combo.svelte": "bc73dd76d654eab474ad16426d65fbe2ea62bb8c66e7602f6142991a894e1a9e",
     "src/components/ConnectionEditor.svelte": "fdecb60adaf8d3f8d7d5b7e3b2073f79bdbc910ef29abd4c7a038fd463532fcc",
@@ -38,8 +38,8 @@
     "src/lib/i18n.ts": "4b379ce6125cd8643cc6a6dac245f07b8bfd142c8b2490de15225b1fd9de23e6",
     "src/lib/locales/aliases.ts": "47b63ecea9b6f4e4d91ad2886435f7ff4b0fd9c68051368a3d712075652521ae",
     "src/lib/locales/ar.json": "f4c5bb4b0c36e2c4348e5ac999bc37e02e5ae074bdd31daf2076456efce4e5c2",
-    "src/lib/locales/desktop.ar.json": "2ffb44781763e08b427919a04ddb4aa631cdc60192b5e9bb13cc488eebe681d6",
-    "src/lib/locales/desktop.en.json": "45b3c436b2363bd7f5ae3401410be90de2c57d494cadb1be7a69947f3d4e52da",
+    "src/lib/locales/desktop.ar.json": "da695ceda9c500f6ddcf66d4accc8e1007d1f679f44a64de131d2a6b1f0ffc2b",
+    "src/lib/locales/desktop.en.json": "009abff6169b59c44192a5ff0568cef5a6723e7f9aeacbc29b6be9f57ffe37e6",
     "src/lib/locales/en.json": "b17af449fa2bf4a3d0d15721e5631003a4bc1c95e2b366cb95d5e5130010ce91",
     "src/lib/models.ts": "3c3fcc8ba2f34690ef9e7321448780b74449ebd8838ecbbfe9a65ea888d49ea3",
     "src/lib/module-labels.ts": "9e8c8a426cd40bae04bb06690907ab99a91655cfc08d478141410040d1cfbf22",
@@ -49,6 +49,7 @@
     "src/lib/search.ts": "f4749869ed1323395de7ebc2f7d0d56f961fad6b1f89ce7f5b8230e8f66202c2",
     "src/lib/settings.ts": "a2bc19fe7d4f9c58804963a9e8763d86735223435efca769e872b202380f1af1",
     "src/lib/state.svelte.ts": "5cd5b58feaff8cb702ef536c9d656e5d02aafa65a4e568854dc728161c56feff",
+    "src/lib/tray-menu.json": "5a652012f60244cd065644b101e5ef7c4e1b4e73465f93db86fa3a59d5ac4e31",
     "src/lib/types.ts": "b4e110e7fdc407ea848690e9a28c76ae979f8a7522465e9b5a5ae9dca7bdf2db",
     "src/lib/typing.ts": "cb9465817fd4ce8b672ca0dbee7d510bab9582cff22869271aa22a7af2e02d9e",
     "src/lib/voices.ts": "766dc2b19d79292e1daf594f97b5057283808dd29b3bcc321182ae9f04af9e78",
@@ -64,23 +65,23 @@
     "src/pages/Runtimes.svelte": "d74e7087df7d9347510e439c2d7b918e974854325c95d92609aa9793f0e3d7f9",
     "src/vite-env.d.ts": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5",
     "svelte.config.js": "450f0af4f4c1ecc4c7180f2e364c8a59bfed69dd350fb6b47bce8641c2a37786",
-    "tools/locales.mjs": "2f4ba5075b391e7ec259af5e0ccf9d8c212a084ee7a5cdf00d4159c730801278",
+    "tools/locales.mjs": "e43a196867edddd351a0fa535d8b3b46fa534bf0c5bf5c62293f45b54aabe2b8",
     "tools/manifest.mjs": "75d22ae8613400291f8762c53a33277843b225f5cec13fc46a3f2443180399e8",
-    "tools/settings-font.py": "072bc0477b30c134a93e0387ed867b17bfa4bd749c01a32580e9bb5dc9f194e3",
+    "tools/settings-font.py": "eb967b4d06038945c81e63e99105c56e349e71d9230182969e042cee06f28544",
     "tsconfig.json": "c0bfc2a92748857c9725fb712237ecc187a9e1e05bf6a3a820690ed4b5a0b578",
     "vite.config.ts": "f4c69a10c14b7219353314a50d18337afc34fa33dab840f2fc62d7da3a20214b"
   },
   "shared_sources": {
     "assets/fonts/NotoSansArabic-Regular.ttf": "273f8ef6e9c6e7de94426bf82e72f08710e9bc0dbe456757d3ed433e3de8a6df",
     "assets/fonts/NotoSansArabic-Regular.woff2": "7b79019a185367820b223310289b92cb5baa1b6d23deeb81e6bcc2784ede569a",
-    "assets/fonts/LICENSE-NotoSansArabic.txt": "3b7e321615e412e5fbb9eab5bf1c0a4cb84c732d3d5a9e9e3822972d5fb70b97"
+    "assets/fonts/LICENSE-NotoSansArabic.txt": "07fc70bfeb985cc1a87a8587d0a0c80bab11c86c9dc3fd95b6f0cb332f983e96"
   },
   "assets": {
     "index.html": "c1cb80d915ac14dbe87ebe81fa0c70bbd3ce5f8925297be26005c14f8c46f50a",
-    "app.js": "fc2f746e7ff155818ac26d973ee5e11a3f2bb5cec16bd7c51cb39b3f46bf30bd",
+    "app.js": "52ab695e6404263bf84de52ddd4c05da66eeb277e4abc976e4746274c044140b",
     "styles.css": "28d98955f359bf6d48b0d5e0a932242e2f0d2e263c20a780614989472cc1851d",
     "arabic.woff2": "7b79019a185367820b223310289b92cb5baa1b6d23deeb81e6bcc2784ede569a",
     "settings-sans.woff2": "b6132167f92bbddff5b2092897451d8b8fcb545e4c587a5c7ac432cb0e73f098",
-    "settings-sans-license.txt": "37f1d07d235509973aeaff5d6f22378d8d812eb998a14d321d6562e5a4cb6a89"
+    "settings-sans-license.txt": "7fac2f6c6bc47144e2c35e8f41147b3c8c895490d44b46266a5312fe93364d2e"
   }
 }

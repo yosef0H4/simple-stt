@@ -413,7 +413,7 @@ fn main() {
         let all = shortcuts::ACTIONS
             .into_iter()
             .zip('A'..='K')
-            .map(|((id, _), key)| (id.to_owned(), format!("Ctrl+Alt+{key}")))
+            .map(|(action, key)| (action.id.to_owned(), format!("Ctrl+Alt+{key}")))
             .collect();
         overlay.notify_info(shortcuts::summary(&all, locale), None);
         std::thread::sleep(Duration::from_secs(3));

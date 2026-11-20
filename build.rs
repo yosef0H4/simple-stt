@@ -102,6 +102,9 @@ fn verify_frontend(root: &Path) -> Result<(), String> {
         }
         digest.update(bytes);
     }
+    let menu = frontend.join("src/lib/tray-menu.json");
+    println!("cargo:rerun-if-changed={}", menu.display());
+    digest.update(fs::read(menu).map_err(|e| e.to_string())?);
     let generated = root.join("ahk/lib/Locale.ahk");
     println!("cargo:rerun-if-changed={}", generated.display());
     let expected = format!("; catalog-sha256: {:x}", digest.finalize());
@@ -109,7 +112,9 @@ fn verify_frontend(root: &Path) -> Result<(), String> {
         .map_err(|e| e.to_string())?
         .contains(&expected)
     {
-        return Err("AHK translations are stale; run node web/settings/tools/locales.mjs".into());
+        return Err(
+            "AHK translations or tray menu are stale; run npm run build in web/settings".into(),
+        );
     }
 
     let sources = manifest["sources"]

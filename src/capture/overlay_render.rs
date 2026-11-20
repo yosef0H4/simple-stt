@@ -218,8 +218,8 @@ struct ShortcutRun {
 // Notices, transcripts, filenames and ordinary bracketed text stay plain.
 fn shortcut_runs(text: &str) -> Vec<ShortcutRun> {
     let mut runs = Vec::new();
-    for (action, _) in crate::shortcuts::ACTIONS {
-        let icon = crate::shortcuts::action_icon(action);
+    for action in crate::shortcuts::ACTIONS {
+        let icon = action.icon;
         let prefix = format!("{icon} \u{2066}[");
         for (start, _) in text.match_indices(&prefix) {
             let keys_start = start + icon.len() + " \u{2066}".len();
@@ -374,7 +374,11 @@ mod localization_tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(
             &text[runs[0].icon.clone()],
-            crate::shortcuts::action_icon("delivery")
+            crate::shortcuts::ACTIONS
+                .iter()
+                .find(|action| action.id == "delivery")
+                .unwrap()
+                .icon
         );
         let labels: Vec<_> = runs[0].keys.iter().map(|key| &text[key.clone()]).collect();
         assert_eq!(labels, ["[Meta]", "[Ctrl]", "[.]"]);
@@ -384,7 +388,7 @@ mod localization_tests {
     fn shortcut_icons_render_without_missing_glyphs_or_clipping() {
         let bindings = crate::shortcuts::ACTIONS
             .iter()
-            .map(|(id, _)| (id.to_string(), "Meta+Ctrl+Shift+Z".to_owned()))
+            .map(|action| (action.id.to_owned(), "Meta+Ctrl+Shift+Z".to_owned()))
             .collect();
         let surface = cairo::ImageSurface::create(cairo::Format::ARgb32, 1, 1).unwrap();
         let cr = cairo::Context::new(&surface).unwrap();

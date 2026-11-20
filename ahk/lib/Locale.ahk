@@ -1,5 +1,5 @@
-; Generated from desktop catalogs. Run node web/settings/tools/locales.mjs.
-; catalog-sha256: dfc698d2eed838326971eca2551b14b98227683e045eda32c1953b8c13bb1492
+; Generated from desktop catalogs and tray menu. Run node web/settings/tools/locales.mjs.
+; catalog-sha256: 147678fc9fd244d14c5079c8758da57d6399931a6fe7236ee6e3aa69b23b1f2a
 UiSetLanguage(language := "auto") {
     global SimpleSttUiLocale
     if language = "auto"
@@ -144,6 +144,12 @@ UiText(id, args := unset) {
         "overlay.pasting", "Pasting",
         "overlay.waitingForPaste", "Waiting for paste",
         "overlay.waitingForKeys", "Release keys",
+        "shortcut.record_action", "Record or stop dictation",
+        "shortcut.cancel_action", "Abort active work",
+        "shortcut.delivery_action", "Toggle text delivery mode",
+        "shortcut.cleanup_action", "Toggle AI transcript cleanup",
+        "shortcut.retry_action", "Retry last action",
+        "shortcut.show_action", "Show shortcuts",
         "shortcut.record", "Record",
         "shortcut.cancel", "Abort",
         "shortcut.delivery", "Delivery",
@@ -359,6 +365,12 @@ UiText(id, args := unset) {
         "overlay.pasting", "لصق",
         "overlay.waitingForPaste", "انتظار اللصق",
         "overlay.waitingForKeys", "أفلت المفاتيح",
+        "shortcut.record_action", "بدء الإملاء أو إيقافه",
+        "shortcut.cancel_action", "إلغاء العملية الحالية",
+        "shortcut.delivery_action", "تبديل طريقة إدراج النص",
+        "shortcut.cleanup_action", "تبديل تنقيح النص بالذكاء الاصطناعي",
+        "shortcut.retry_action", "إعادة محاولة آخر إجراء",
+        "shortcut.show_action", "عرض الاختصارات",
         "shortcut.record", "تسجيل",
         "shortcut.cancel", "إيقاف الكل",
         "shortcut.delivery", "إدراج",
@@ -450,4 +462,32 @@ UiText(id, args := unset) {
         offset := part.Pos + part.Len
     }
     return output . SubStr(text, offset)
+}
+UiTrayMenu() {
+    return [
+        [
+            ["read_selection", "menu.readSelection", "speaker", ""],
+            ["read_region", "menu.readRegion", "camera", ""],
+            ["read_along", "reading.read_along_start", "book", ""],
+            ["copy_region", "menu.copyRegion", "clipboard", ""],
+            ["abort", "menu.abort", "stop", ""]
+        ],
+        [
+            ["settings", "menu.settings", "settings", ""],
+            ["unload", "menu.unloadAll", "unload", ""]
+        ],
+        [
+            ["toggle_hotkey", "menu.enable", "keyboard", "menu.disable"],
+            ["reload_settings", "menu.reloadSettings", "reload", ""],
+            ["reload_app", "menu.reloadApp", "reload", ""]
+        ],
+        [
+            ["latest_log", "menu.latestLog", "log", ""],
+            ["restart_audio", "menu.restartAudio", "speaker", ""],
+            ["test", "menu.test", "test", ""]
+        ],
+        [
+            ["exit", "menu.close", "exit", ""]
+        ]
+    ]
 }

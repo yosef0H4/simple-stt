@@ -1,0 +1,29 @@
+[
+  [
+    { "action": "record", "label": "menu.start", "alternate": "menu.stop", "linux_icon": "media-record" }
+  ],
+  [
+    { "action": "read_selection", "label": "menu.readSelection", "linux_icon": "audio-volume-high", "windows_icon": "speaker" },
+    { "action": "read_region", "label": "menu.readRegion", "linux_icon": "edit-select", "windows_icon": "camera" },
+    { "action": "read_along", "label": "reading.read_along_start", "linux_icon": "view-paged", "windows_icon": "book" },
+    { "action": "copy_region", "label": "menu.copyRegion", "linux_icon": "edit-copy", "windows_icon": "clipboard" },
+    { "action": "abort", "label": "menu.abort", "linux_icon": "media-playback-stop", "windows_icon": "stop" }
+  ],
+  [
+    { "action": "settings", "label": "menu.settings", "linux_icon": "configure", "windows_icon": "settings" },
+    { "action": "unload", "label": "menu.unloadAll", "linux_icon": "edit-clear", "windows_icon": "unload" }
+  ],
+  [
+    { "action": "toggle_hotkey", "label": "menu.enable", "alternate": "menu.disable", "windows_icon": "keyboard" },
+    { "action": "reload_settings", "label": "menu.reloadSettings", "windows_icon": "reload" },
+    { "action": "reload_app", "label": "menu.reloadApp", "windows_icon": "reload" }
+  ],
+  [
+    { "action": "latest_log", "label": "menu.latestLog", "windows_icon": "log" },
+    { "action": "restart_audio", "label": "menu.restartAudio", "windows_icon": "speaker" },
+    { "action": "test", "label": "menu.test", "windows_icon": "test" }
+  ],
+  [
+    { "action": "exit", "label": "menu.close", "linux_icon": "application-exit", "windows_icon": "exit" }
+  ]
+]

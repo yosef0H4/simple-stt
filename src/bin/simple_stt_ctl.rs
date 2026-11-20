@@ -738,14 +738,9 @@ fn config_show() -> Result<ShellResponse> {
             .as_str()
             .into(),
     );
-    for (key, value) in [
-        ("reader_read_selection", reader.shortcuts.read_selection),
-        ("reader_read_region", reader.shortcuts.read_region),
-        ("reader_copy_region", reader.shortcuts.copy_region),
-        ("reader_listen_clipboard", reader.shortcuts.listen_clipboard),
-        ("reader_read_along", reader.shortcuts.read_along),
-    ] {
-        response.values.insert(key.to_owned(), value);
+    for (action, chord) in simple_stt::shortcuts::reader_bindings(&reader.shortcuts) {
+        let key = format!("reader_{}", action.replace('-', "_"));
+        response.values.insert(key, chord.to_owned());
     }
     response.values.insert(
         "parakeet_runtime_dir".into(),

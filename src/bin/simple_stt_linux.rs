@@ -692,139 +692,80 @@ impl ksni::Tray for LinuxTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        if let Err(error) = settings() {
+        if let Err(error) = settings(false, false) {
             eprintln!("[{APP}] tray settings action failed: {error:#}");
         }
     }
 
     fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
         use ksni::menu::{MenuItem, StandardItem};
+
+        #[derive(serde::Deserialize)]
+        struct Item<'a> {
+            action: &'a str,
+            label: &'a str,
+            alternate: Option<&'a str>,
+            linux_icon: Option<&'a str>,
+        }
+
+        static GROUPS: std::sync::LazyLock<Vec<Vec<Item<'static>>>> =
+            std::sync::LazyLock::new(|| {
+                serde_json::from_str(include_str!("../../web/settings/src/lib/tray-menu.json"))
+                    .expect("validated shared tray menu")
+            });
+
         let recording = read_session().is_ok_and(|state| state.recording);
-        vec![
-            StandardItem {
-                label: simple_stt::localization::translate(
-                    self.locale,
-                    if recording { "menu.stop" } else { "menu.start" },
-                    &[],
-                ),
-                icon_name: "media-record".to_owned(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = toggle_recording(RecordingSource::Tray, 90.0, false) {
-                            eprintln!("[{APP}] tray recording action failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            MenuItem::Separator,
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.readSelection", &[]),
-                icon_name: "audio-volume-high".into(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = simple_stt::reader::action("read_selection", "") {
-                            eprintln!("Reading failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.readRegion", &[]),
-                icon_name: "edit-select".into(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = simple_stt::reader::action("read_region", "") {
-                            eprintln!("OCR failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: simple_stt::localization::translate(
-                    self.locale,
-                    "reading.read_along_start",
-                    &[],
-                ),
-                icon_name: "view-paged".into(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = simple_stt::reader::action("read_along", "") {
-                            eprintln!("Read-along failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.copyRegion", &[]),
-                icon_name: "edit-copy".into(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = simple_stt::reader::action("copy_region", "") {
-                            eprintln!("OCR copy failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.abort", &[]),
-                icon_name: "media-playback-stop".into(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = cancel() {
-                            eprintln!("[{APP}] tray abort failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
-            }
-            .into(),
-            MenuItem::Separator,
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.settings", &[]),
-                icon_name: "configure".to_owned(),
-                activate: Box::new(|_| {
-                    if let Err(error) = settings() {
-                        eprintln!("[{APP}] tray settings action failed: {error:#}");
+        let mut menu = Vec::new();
+        for group in GROUPS.iter() {
+            let items = group.iter().filter_map(|item| {
+                let icon = item.linux_icon?;
+                let action = item.action;
+                let label = if recording {
+                    item.alternate.unwrap_or(item.label)
+                } else {
+                    item.label
+                };
+                Some(
+                    StandardItem {
+                        label: simple_stt::localization::translate(self.locale, label, &[]),
+                        icon_name: icon.to_owned(),
+                        activate: Box::new(move |_| {
+                            std::thread::spawn(move || {
+                                if let Err(error) = activate_tray_action(action) {
+                                    eprintln!("[{APP}] tray {action} failed: {error:#}");
+                                }
+                            });
+                        }),
+                        ..Default::default()
                     }
-                }),
-                ..Default::default()
+                    .into(),
+                )
+            });
+            let mut items = items.peekable();
+            if items.peek().is_none() {
+                continue;
             }
-            .into(),
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.unloadAll", &[]),
-                icon_name: "edit-clear".to_owned(),
-                activate: Box::new(|_| {
-                    std::thread::spawn(|| {
-                        if let Err(error) = unload_all_models() {
-                            eprintln!("[{APP}] tray unload failed: {error:#}");
-                        }
-                    });
-                }),
-                ..Default::default()
+            if !menu.is_empty() {
+                menu.push(MenuItem::Separator);
             }
-            .into(),
-            StandardItem {
-                label: simple_stt::localization::translate(self.locale, "menu.close", &[]),
-                icon_name: "application-exit".to_owned(),
-                activate: Box::new(|_| {
-                    if let Err(error) = shutdown() {
-                        eprintln!("[{APP}] tray close action failed: {error:#}");
-                    }
-                }),
-                ..Default::default()
-            }
-            .into(),
-        ]
+            menu.extend(items);
+        }
+        menu
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn activate_tray_action(action: &str) -> Result<()> {
+    match action {
+        "record" => toggle_recording(RecordingSource::Tray, 90.0, false),
+        "read_selection" | "read_region" | "read_along" | "copy_region" => {
+            simple_stt::reader::action(action, "").map(drop)
+        }
+        "abort" => cancel(),
+        "settings" => settings(false, false),
+        "unload" => unload_all_models(),
+        "exit" => shutdown(),
+        _ => bail!("unknown Linux tray action: {action}"),
     }
 }
 
@@ -1492,19 +1433,16 @@ async fn portal_shortcuts_loop() -> Result<()> {
     let session = portal
         .create_session(CreateSessionOptions::default())
         .await?;
-    let shortcuts = [
-        NewShortcut::new("record", "Record or stop dictation"),
-        NewShortcut::new("cancel", "Abort active work"),
-        NewShortcut::new("delivery", "Toggle text delivery mode"),
-        NewShortcut::new("cleanup", "Toggle AI transcript cleanup"),
-        NewShortcut::new("retry", "Retry last action"),
-        NewShortcut::new("shortcuts", "Show shortcuts"),
-        NewShortcut::new("read-selection", "Read selection"),
-        NewShortcut::new("read-region", "Read screen"),
-        NewShortcut::new("read-along", "Start read-along"),
-        NewShortcut::new("copy-region", "Copy screen text"),
-        NewShortcut::new("listen-clipboard", "Listen to clipboard"),
-    ];
+    let locale = saved_ui_locale();
+    let shortcuts: Vec<_> = simple_stt::shortcuts::ACTIONS
+        .iter()
+        .map(|action| {
+            NewShortcut::new(
+                action.id,
+                simple_stt::localization::translate(locale, action.label, &[]),
+            )
+        })
+        .collect();
     let request = portal
         .bind_shortcuts(&session, &shortcuts, None, BindShortcutsOptions::default())
         .await?;
@@ -1661,26 +1599,10 @@ fn x11_shortcuts_loop() -> Result<()> {
     enable_x11_detectable_autorepeat(&connection)?;
     let config = AppConfig::load()?;
     let reader = simple_stt::reader::load().unwrap_or_else(|_| simple_stt::reader::defaults());
-    let shortcuts = [
-        ("record", config.general.record_hotkey.as_str()),
-        ("cancel", config.general.cancel_hotkey.as_str()),
-        ("delivery", config.general.toggle_delivery_hotkey.as_str()),
-        ("cleanup", config.general.toggle_cleanup_hotkey.as_str()),
-        ("retry", config.general.retry_delivery_hotkey.as_str()),
-        ("shortcuts", config.general.show_shortcuts_hotkey.as_str()),
-        ("read-selection", reader.shortcuts.read_selection.as_str()),
-        ("read-region", reader.shortcuts.read_region.as_str()),
-        ("read-along", reader.shortcuts.read_along.as_str()),
-        ("copy-region", reader.shortcuts.copy_region.as_str()),
-        (
-            "listen-clipboard",
-            reader.shortcuts.listen_clipboard.as_str(),
-        ),
-    ]
-    .into_iter()
-    .filter(|(_, chord)| !hotkey_is_none(chord))
-    .map(|(id, chord)| parse_x11_shortcut(&connection, id, chord))
-    .collect::<Result<Vec<_>>>()?;
+    let shortcuts = simple_stt::shortcuts::configured(&config, Some(&reader.shortcuts))
+        .filter(|(_, chord)| !hotkey_is_none(chord))
+        .map(|(id, chord)| parse_x11_shortcut(&connection, id, chord))
+        .collect::<Result<Vec<_>>>()?;
 
     // Lock modifiers must not make an otherwise valid shortcut stop working.
     let lock_variants = [
@@ -3442,7 +3364,7 @@ mod tests {
                 _ => panic!("unexpected tray item"),
             })
             .collect();
-        assert_eq!(labels.len(), 11);
+        assert_eq!(labels.len(), 12);
         assert_eq!(
             &labels[1..],
             &[
@@ -3455,6 +3377,7 @@ mod tests {
                 "|",
                 "Settings",
                 "Unload all models",
+                "|",
                 "Close Simple STT"
             ]
         );
