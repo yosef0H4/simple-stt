@@ -4,7 +4,7 @@ RUN dnf -y install \
     libX11-devel libXtst-devel make nodejs npm openssl-devel binutils \
     pipewire-devel clang-devel pango-devel pkgconf-pkg-config python3 rpm-build rustup tar \
     at-spi2-core-devel vulkan-loader wl-clipboard xdg-utils libsecret \
-    xclip systemd && dnf clean all
+    xclip systemd webkit2gtk4.1-devel && dnf clean all
 RUN useradd --create-home --uid 1000 builder && mkdir -p /work && chown builder:builder /work
 ENV HOME=/home/builder RUSTUP_HOME=/home/builder/.rustup CARGO_HOME=/home/builder/.cargo PATH=/home/builder/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
 USER builder

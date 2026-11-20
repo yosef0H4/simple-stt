@@ -42,7 +42,11 @@ echo INFO: running AHK smoke tests
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\action-replay-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\ipcclient-missing-response-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\ipc-smoke.ahk" || exit /b 1
-"%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\full-smoke.ahk" || exit /b 1
+if "%SIMPLE_STT_SKIP_MODEL_SMOKE%"=="1" (
+  echo INFO: skipping the full AHK smoke that loads real speech models
+) else (
+  "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\full-smoke.ahk" || exit /b 1
+)
 
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\localization-smoke.ahk" || exit /b 1
 "%AHK%" /ErrorStdOut=UTF-8 "ahk\tests\tray-smoke.ahk" || exit /b 1

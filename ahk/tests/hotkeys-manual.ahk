@@ -43,6 +43,14 @@ for label in ["CapsLock+S", "LCtrl+S", "AltGr+S", "RAlt+S", "LShift+X"] {
     if !spec.Has("down") || !spec.Has("up")
         Fail("parsed hotkey spec is incomplete for " . label)
 }
+for label in ["CapsLock", "Ctrl", "Ctrl+Shift"] {
+    try {
+        HotkeySpec.Parse(label)
+        Fail("a normal shortcut accepted modifier-only input: " . label)
+    } catch {
+        continue
+    }
+}
 
 manager.Configure("LCtrl+S", true, "preserve_tap")
 manager.Configure("LCtrl+S", true, "preserve_tap", false)

@@ -22,6 +22,8 @@ if re.search(r"^AppVersion=\d", setup, re.M):
     errors.append("installer version is hardcoded")
 if "'runtime\\action-replay.ahk'" not in builder:
     errors.append("recorded keyboard action helper is not required in the package")
+if "'runtime\\simple-stt-settings-window.exe'" not in builder:
+    errors.append("the native Settings window is not required in the package")
 icon = r"runtime\icons\simple-stt.ico"
 if f"'{icon}'" not in builder or f"SetupIconFile=simple-stt-portable\\{icon}" not in setup:
     errors.append("the branded Windows icon is missing from the package or setup")

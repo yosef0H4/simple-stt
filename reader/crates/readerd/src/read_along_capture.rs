@@ -20,6 +20,7 @@ fn private_capture_path() -> Result<PathBuf> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(windows, derive(serde::Serialize, serde::Deserialize))]
 pub struct Rect {
     pub x: i32,
     pub y: i32,
@@ -310,7 +311,17 @@ fn native_backend() -> Result<Box<dyn WindowBackend>> {
 }
 
 #[cfg(windows)]
+mod windows_graphics;
+#[cfg(windows)]
 mod windows_picker;
+
+#[cfg(windows)]
+pub(crate) fn capture_windows_frame(request: &str, path: &std::path::Path) -> Result<()> {
+    let request = serde_json::from_str(request)?;
+    let frame = windows_graphics::graphics_frame(&request)?;
+    ensure!(frame.has_color(), "The capture returned an empty image");
+    Ok(std::fs::write(path, frame.pixels)?)
+}
 
 #[cfg(windows)]
 pub(crate) fn capture_windows_region(
@@ -329,7 +340,7 @@ mod windows_backend {
     use std::fs;
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Output, Stdio};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
     use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
     const HELPER: &str = include_str!("../../../assets/windows-read-along.ps1");
@@ -387,8 +398,8 @@ mod windows_backend {
             let WindowId::Windows { hwnd, process_id } = window.id else {
                 bail!("target is not a Windows window")
             };
-            let deadline = Instant::now() + Duration::from_secs(5);
-            let mut child = Command::new(std::env::current_exe()?)
+            let mut command = Command::new(std::env::current_exe()?);
+            command
                 .arg("capture-window")
                 .args([
                     hwnd.to_string(),
@@ -398,32 +409,8 @@ mod windows_backend {
                     region.width.to_string(),
                     region.height.to_string(),
                 ])
-                .arg(path)
-                .creation_flags(CREATE_NO_WINDOW)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .context("starting Windows window capture")?;
-            loop {
-                let canceled = !current();
-                if canceled || Instant::now() >= deadline {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    if canceled {
-                        bail!("read-along capture canceled");
-                    }
-                    bail!("the selected window took too long to capture");
-                }
-                if let Some(status) = child.try_wait()? {
-                    ensure!(
-                        status.success(),
-                        "the selected window could not be captured"
-                    );
-                    return Ok(());
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
+                .arg(path);
+            windows_graphics::await_capture(&mut command, current, Duration::from_secs(5))
         }
 
         fn recorded(

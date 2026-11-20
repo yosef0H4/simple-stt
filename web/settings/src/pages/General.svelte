@@ -24,11 +24,13 @@
         : selected,
   );
   const portalShortcuts = $derived(ui.state?.platform === "linux" && backend === "portal");
+  const capsOnlyHint = $derived(ui.config?.general.show_shortcuts_hotkey.trim().toLowerCase() === "capslock");
   const shortcutPaths = [
     "general.enabled",
     "general.shortcut_reminders",
     "general.linux_hotkey_backend",
     "general.recording_mode",
+    "general.show_shortcuts_mode",
     ...hotkeys.map(([path]) => path),
   ];
   let configuringShortcuts = $state(false);
@@ -56,6 +58,38 @@
   }
 </script>
 
+{#snippet appShortcut(index: number)}
+  {@const [path, label] = hotkeys[index]}
+  {#if portalShortcuts}
+    {@const id = ["record", "cancel", "delivery", "cleanup", "retry", "shortcuts"][index]}
+    <div class="field" data-setting-path={`linux.shortcut.${id}`}>
+      <span>{t(label)}</span><output>{ui.state?.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output>
+    </div>
+  {:else if ui.state?.platform === "linux" && backend !== "x11"}
+    {@const command = ["toggle", "cancel", "cycle-delivery", "toggle-cleanup", "retry-delivery", "show-shortcuts"][index]}
+    <div class="field"><span>{t(label)}</span><code>simple-stt-linux {command}</code></div>
+  {:else}
+    <Shortcut {path} {label} />
+  {/if}
+{/snippet}
+
+{#snippet readerShortcut([id, key]: (typeof readerHotkeys)[number])}
+  {#if portalShortcuts}
+    <div class="field" data-setting-path={`reader.shortcuts.${key}`}><span>{t(`reading.${key}`)}</span><output>{ui.state?.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output></div>
+  {:else if reading.config}
+    {#if ui.state?.platform === "windows"}
+      <Shortcut path={`reader.shortcuts.${key}`} inputId={`reader-shortcut-${key}`} label={`reading.${key}`}
+        value={reading.config.shortcuts[key]} onchange={(value)=>setReaderShortcut(key,value)} />
+    {:else}
+      <div class="field" data-setting-path={`reader.shortcuts.${key}`}><label for={`reader-shortcut-${key}`}>{t(`reading.${key}`)}</label><div class="control"><input id={`reader-shortcut-${key}`} dir="ltr" value={reading.config.shortcuts[key]} oninput={(e)=>setReaderShortcut(key,e.currentTarget.value)} /></div></div>
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet cardHeading(id: string, label: string, icon: string)}
+  <h3 id={id}><Icon name={icon} size={17} />{t(label)}</h3>
+{/snippet}
+
 <Group
   title="ui.shortcuts.90c935"
   icon="keyboard"
@@ -78,23 +112,6 @@
   <button type="button" class="quiet" onclick={() => run(() => platformAction("show_shortcuts"))}>{t("ui.show_shortcuts")}</button>
   {#if ui.state?.platform === "linux"}
     <Field spec={fields.shortcutSystem} />
-    {#if backend === "x11"}{#each hotkeys as [path, label]}<Shortcut
-          {path}
-          {label}
-        />{/each}
-    {:else if backend === "portal"}{#each ["record", "cancel", "delivery", "cleanup", "retry", "shortcuts"] as id, i}<div
-          class="field"
-          data-setting-path={`linux.shortcut.${id}`}
-        >
-          <span>{t(hotkeys[i][1])}</span><output
-          >{ui.state.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output
-          >
-        </div>{/each}
-    {:else}{#each ["toggle", "cancel", "cycle-delivery", "toggle-cleanup", "retry-delivery", "show-shortcuts"] as command, i}<div
-          class="field"
-        >
-          <span>{t(hotkeys[i][1])}</span><code>simple-stt-linux {command}</code>
-        </div>{/each}{/if}
     <details class="guide">
       <summary>{t("ui.setup_guide.6b2f07")}</summary>
       <p>
@@ -115,23 +132,37 @@
           "systemctl --user start simple-stt-linux.service"}</code
       ><code>{tools.stop_command || "simple-stt-linux shutdown"}</code>
     </details>
-  {:else}<Field
-      spec={fields.recordingMode}
-    />{#each hotkeys as [path, label]}<Shortcut {path} {label} />{/each}{/if}
-  {#if portalShortcuts}
-    {#each readerHotkeys as [id,key]}
-      <div class="field" data-setting-path={`reader.shortcuts.${key}`}><span>{t(`reading.${key}`)}</span><output>{ui.state?.shortcut_state?.[id] || t("ui.not_assigned.b781e6")}</output></div>
-    {/each}
-  {:else if reading.config}
-    {#each readerHotkeys as [, key]}
-      {#if ui.state?.platform === "windows"}
-        <Shortcut path={`reader.shortcuts.${key}`} inputId={`reader-shortcut-${key}`} label={`reading.${key}`}
-          value={reading.config.shortcuts[key]} onchange={(value)=>setReaderShortcut(key,value)} />
-      {:else}
-        <div class="field" data-setting-path={`reader.shortcuts.${key}`}><label for={`reader-shortcut-${key}`}>{t(`reading.${key}`)}</label><div class="control"><input id={`reader-shortcut-${key}`} dir="ltr" value={reading.config.shortcuts[key]} oninput={(e)=>setReaderShortcut(key,e.currentTarget.value)} /></div></div>
-      {/if}
-    {/each}
   {/if}
+  <div class="shortcut-cards">
+    <section class="shortcut-card" aria-labelledby="shortcuts-app-heading">
+      {@render cardHeading("shortcuts-app-heading", "settings.app_wide_shortcuts", "keyboard")}
+      {@render appShortcut(5)}
+      {#if ui.state?.platform === "windows"}
+        <Field spec={{ ...fields.showShortcutsMode, disabled: capsOnlyHint }} />
+        {#if capsOnlyHint}<p class="inline-status">{t("ui.caps_lock_hint_hold_only")}</p>{/if}
+      {/if}
+      {#each [1, 4] as index}{@render appShortcut(index)}{/each}
+    </section>
+    <section class="shortcut-card" aria-labelledby="shortcuts-dictation-heading">
+      {@render cardHeading("shortcuts-dictation-heading", "settings.dictation", "audio")}
+      {#if ui.state?.platform !== "linux"}<Field spec={fields.recordingMode} />{/if}
+      {#each [0, 2, 3] as index}{@render appShortcut(index)}{/each}
+    </section>
+    {#if portalShortcuts || reading.config}
+      <section class="shortcut-card" aria-labelledby="shortcuts-reading-heading">
+        {@render cardHeading("shortcuts-reading-heading", "settings.reading", "text")}
+        {#each readerHotkeys as shortcut}
+          {#if shortcut[1] !== "copy_region" && shortcut[1] !== "read_region"}{@render readerShortcut(shortcut)}{/if}
+        {/each}
+      </section>
+      <section class="shortcut-card" aria-labelledby="shortcuts-image-heading">
+        {@render cardHeading("shortcuts-image-heading", "module.ocr", "screen")}
+        {#each readerHotkeys as shortcut}
+          {#if shortcut[1] === "copy_region" || shortcut[1] === "read_region"}{@render readerShortcut(shortcut)}{/if}
+        {/each}
+      </section>
+    {/if}
+  </div>
 </Group>
 <Group
   title="ui.system.bc0792"
@@ -156,6 +187,43 @@
 </Group>
 
 <style>
+  .shortcut-cards {
+    display: grid;
+    gap: 14px;
+    margin-block-start: 18px;
+  }
+
+  .shortcut-card {
+    min-inline-size: 0;
+    padding: 0 12px 6px;
+    border: 1px solid var(--frame);
+    border-radius: var(--radius);
+    background: var(--raised);
+  }
+
+  .shortcut-card h3 {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 0 -12px 4px;
+    padding: 6px 12px;
+    background: var(--title-bar);
+    color: var(--title-ink);
+    border-block-end: 1px solid var(--frame);
+    border-radius: 2px 2px 0 0;
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  .shortcut-card h3 :global(svg) {
+    color: inherit;
+  }
+
+  .shortcut-card :global(.field) {
+    padding-block: 8px;
+  }
+
+
   .shortcut-setup {
     display: inline-flex;
     align-items: center;

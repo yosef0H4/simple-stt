@@ -33,17 +33,17 @@ simple-stt-capture.exe
     ├── optional bounded, in-memory screen context capture
     └── lazy supervision of simple-stt-infer.exe
 
-simple-stt-settings.exe
-    disposable authenticated loopback settings server
-    ├── one OS-locked server per installation; reopening reuses its URL
-    ├── Close shuts down the shared server for every tab; crashes release the lock
-    ├── serves bundled Svelte/TypeScript HTML/CSS/JavaScript to the default browser
+simple-stt-settings.exe → simple-stt-settings-window.exe
+    Settings launcher and on-demand native Settings process
+    ├── the Tauri window and authenticated loopback server share one process
+    ├── one OS-locked desktop session per installation; reopening focuses its window
+    ├── serves the same bundled Svelte/TypeScript UI to the window or explicit browser mode
     ├── edits canonical nested config.json with explicit Save
     ├── streams capture/model events to the browser
     ├── starts model refresh, download, selection, and test workflows
     ├── configures/tests AI cleanup and owns short-lived OAuth callbacks
     ├── stores provider credentials only in the operating-system vault
-    └── exits on Close or idle timeout; repeated opens reuse its session
+    └── exits when the desktop window closes; only local browser sessions use an idle timeout
 
 simple-stt-infer.exe
     disposable Rust inference worker
@@ -61,7 +61,7 @@ simple-stt-infer.exe
 | Tray icon/menu | AHK shell | `A_TrayMenu`, menu object APIs, `TraySetIcon()`. |
 | Linux global shortcuts | `simple-stt-linux` | Automatic backend selection uses GlobalShortcuts on Wayland, native X11 passive grabs on X11, and documented compositor commands when no Wayland portal exists. KDE Plasma on Fedora Wayland is the only real-hardware-tested Linux environment; other desktops remain experimental. |
 | Linux dictation output | `simple-stt-linux` + local reader controller | Action-only delivery settings. The controller serializes RemoteDesktop EIS typing, shortcuts and clicks with persistent grants, bounded cancellation and KDE foreground checks. Clipboard transactions preserve full formats. No legacy injector fallback; HTTP inference never exposes desktop input. |
-| Settings UI | `simple-stt-settings` | Cross-platform browser UI; built from Svelte/TypeScript and embedded in the Rust binary. Node is a build-time dependency only. |
+| Settings UI | `simple-stt-settings` and `simple-stt-settings-window` | A shared Tauri window on Windows and Linux with the embedded Svelte/TypeScript UI. Explicit browser mode uses the same server without loading the desktop helper. Node is a build-time dependency only. |
 | User hotkeys | AHK shell | Runtime `Hotkey()` bindings; CapsLock custom combination path. |
 | Final typing | AHK shell | Variable-paced per-character `SendText()`; target HWND checked before every character. |
 | Service PID supervision | AHK shell | PID from `Run()`; graceful request then `ProcessWaitClose()` and exact-PID `ProcessClose()` fallback. |

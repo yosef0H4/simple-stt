@@ -21,6 +21,7 @@ export interface Config {
     toggle_cleanup_hotkey: string;
     retry_delivery_hotkey: string;
     show_shortcuts_hotkey: string;
+    show_shortcuts_mode: "hold" | "press";
     shortcut_reminders: boolean;
     linux_hotkey_backend: "auto" | "portal" | "x11" | "desktop";
     capslock_behavior: "preserve_tap" | "always_off";
@@ -213,6 +214,7 @@ export function assertConfig(value: unknown): asserts value is Config {
       "toggle_cleanup_hotkey",
       "retry_delivery_hotkey",
       "show_shortcuts_hotkey",
+      "show_shortcuts_mode",
       "shortcut_reminders",
       "linux_hotkey_backend",
       "capslock_behavior",
@@ -329,6 +331,7 @@ export function assertConfig(value: unknown): asserts value is Config {
     }
   const enums: Record<string, string[]> = {
     "general.recording_mode": ["hold", "toggle"],
+    "general.show_shortcuts_mode": ["hold", "press"],
     "general.linux_hotkey_backend": ["auto", "portal", "x11", "desktop"],
     "general.capslock_behavior": ["preserve_tap", "always_off"],
     "general.ui_theme": ["auto", "light", "dark"],

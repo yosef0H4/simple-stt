@@ -44,7 +44,7 @@ if not any(path.startswith("tools/") for path in sources):
 
 expected_sources = {
     path.relative_to(WEB).as_posix()
-    for directory in (WEB / "src", WEB / "tools")
+    for directory in (WEB / "src", WEB / "tools", WEB / "public")
     for path in directory.rglob("*")
     if path.is_file()
 }
@@ -81,12 +81,16 @@ for relative, expected in sources.items():
     if actual != expected:
         ERRORS.append(f"source {relative!r} changed since the last frontend build")
 
-for name in ("index.html", "app.js", "styles.css", "arabic.woff2"):
+required_assets = {
+    "index.html", "app.js", "styles.css", "arabic.woff2",
+    "settings-sans.woff2", "settings-sans-license.txt",
+}
+for name in sorted(required_assets):
     if name not in assets:
         ERRORS.append(f"manifest omits required asset {name!r}")
 
-if set(assets) != {"index.html", "app.js", "styles.css", "arabic.woff2"}:
-    ERRORS.append("manifest assets must contain exactly index.html, app.js, styles.css, and arabic.woff2")
+if set(assets) != required_assets:
+    ERRORS.append("manifest asset list differs from expected Settings assets")
 
 asset_bytes = 0
 gzip_bytes = 0
@@ -105,8 +109,8 @@ for relative, expected in assets.items():
     if relative in ("app.js", "styles.css"):
         gzip_bytes += len(compress(content, mtime=0))
 
-if asset_bytes > 320 * 1024:
-    ERRORS.append(f"frontend assets total {asset_bytes} bytes; budget is 327680 bytes")
+if asset_bytes > 350 * 1024:
+    ERRORS.append(f"frontend assets total {asset_bytes} bytes; budget is 358400 bytes")
 if gzip_bytes > 100 * 1024:
     ERRORS.append(f"app.js + styles.css gzip to {gzip_bytes} bytes; budget is 102400 bytes")
 

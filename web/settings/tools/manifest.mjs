@@ -9,6 +9,7 @@ const walk = (dir) =>
 const files = [
   ...walk("src"),
   ...walk("tools"),
+  ...walk("public"),
   "index.html",
   "package.json",
   "package-lock.json",
@@ -16,7 +17,7 @@ const files = [
   "tsconfig.json",
   "svelte.config.js",
 ].sort();
-const assets = ["index.html", "app.js", "styles.css", "arabic.woff2"];
+const assets = ["index.html", "app.js", "styles.css", "arabic.woff2", "settings-sans.woff2", "settings-sans-license.txt"];
 const manifest = {
   sources: Object.fromEntries(files.map((p) => [p, hash(p)])),
   shared_sources: Object.fromEntries(["assets/fonts/NotoSansArabic-Regular.ttf", "assets/fonts/NotoSansArabic-Regular.woff2", "assets/fonts/LICENSE-NotoSansArabic.txt"].map(p => [p, hash(`../../${p}`)])),
@@ -26,7 +27,7 @@ const gzip = assets
   .filter((p) => p.endsWith(".js") || p.endsWith(".css"))
   .reduce((n, p) => n + gzipSync(readFileSync(`dist/${p}`)).length, 0);
 const total = assets.reduce((n, p) => n + readFileSync(`dist/${p}`).length, 0);
-if (gzip > 100 * 1024 || total > 320 * 1024)
+if (gzip > 100 * 1024 || total > 350 * 1024)
   throw Error(`Asset budget exceeded: ${gzip} gzip bytes, ${total} raw bytes`);
 const content = JSON.stringify(manifest, null, 2) + "\n";
 if (process.argv.includes("--verify")) {

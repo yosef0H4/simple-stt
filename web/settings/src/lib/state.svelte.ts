@@ -334,9 +334,15 @@ export async function download(file: string) {
 }
 export async function eventLoop(signal: AbortSignal) {
   let seq = 0;
+  let pid: number | undefined;
   while (!signal.aborted) {
     try {
-      const batch = await events(seq, signal);
+      const { events: batch, pid: currentPid } = await events(seq, signal, pid);
+      if (currentPid !== pid || !ui.state?.service_online) {
+        if (currentPid !== pid) seq = 0;
+        await refreshState(true, signal);
+        pid = currentPid;
+      }
       for (const e of batch) {
         seq = Math.max(seq, e.seq);
         if (e.kind === "model_download_queued") ui.downloads[e.values.filename] = { downloaded: 0, total: 0, phase: 'queued' };
@@ -362,7 +368,10 @@ export async function eventLoop(signal: AbortSignal) {
       }
       if (!batch.length) await delay(500, signal);
     } catch {
-      if (!signal.aborted) await delay(1000, signal);
+      if (!signal.aborted) {
+        if (ui.state?.service_online) ui.state.service_online = false;
+        await delay(1000, signal);
+      }
     }
   }
 }

@@ -156,11 +156,12 @@ A Windows target, AutoHotkey v2 for development, Cargo/Rust, CPAL-compatible mic
 
 Assigned shortcuts appear as a compact localized list beneath active overlay
 states and notices. General → Shortcuts → Shortcut reminders disables this list
-(default: on). Show shortcuts displays the list for eight seconds independently
-of the toggle and leaves recording/delivery running. Assign its shortcut in the
-same Settings group; KDE/Wayland assignments remain desktop-owned, while native
-X11 and Windows expose the usual shortcut recorder. Windows defaults to
-CapsLock+H and X11 to Meta+Ctrl+H. Unassigned actions are omitted. Linux uses
+(default: on). The Show shortcuts button displays the list for eight seconds.
+On Windows, hold the assigned shortcut to see the hints, even when reminders
+are disabled. Caps Lock is the default and a quick tap just toggles capitalization.
+A shortcut used while Caps Lock is held preserves the previous capitalization
+state. Show Shortcuts is the only action that accepts Caps Lock alone. KDE/Wayland
+assignments remain desktop-owned. Unassigned actions are omitted. Linux uses
 registered portal/X11 trigger descriptions, never suggested config defaults;
 compositor command bindings are not discoverable and are not invented.
 
@@ -172,8 +173,8 @@ late progress or completion cannot replace newer work.
 Overlay shortcuts use separate keycaps, such as [Meta][Ctrl][.], with standard
 Unicode emoji for recording, cancel, delivery, cleanup, retry and shortcut help.
 Linux uses the desktop's emoji font and draws only keycap outlines. Native
-Windows tooltips use the same status and shortcut labels, bracketed keycaps,
-and text prefixes compatible with Common Controls. The Windows tray and
+Windows tooltips use the same compact emoji shortcut rows and bracketed
+keycaps. Localized status text stays readable in Common Controls. The Windows tray and
 installer use the same microphone artwork as the Linux launcher. Windows
 tray menus display color emoji as native item icons.
 

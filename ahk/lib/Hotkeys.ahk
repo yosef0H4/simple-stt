@@ -11,6 +11,8 @@ class HotkeySpec {
         finalKey := Trim(parts.Pop())
         if finalKey = ""
             throw Error("The final hotkey key is empty.")
+        if this.NormalizeModifier(finalKey) != ""
+            throw Error("An app shortcut requires a non-modifier key.")
         required := Map()
         for part in parts {
             normalized := this.NormalizeModifier(Trim(part))
@@ -29,18 +31,13 @@ class HotkeySpec {
             display .= (index > 1 ? "+" : "") . part
 
         usesCapsLock := required.Has("CapsLock")
-        if usesCapsLock {
-            down := "CapsLock & " . finalKey
-            up := down . " up"
-        } else {
-            symbols := ""
-            for modifier in ["LCtrl", "RCtrl", "Ctrl", "LAlt", "RAlt", "AltGr", "Alt", "LShift", "RShift", "Shift", "LWin", "RWin", "Win"] {
-                if required.Has(modifier)
-                    symbols .= this.ModifierSymbol(modifier)
-            }
-            down := "$*" . symbols . finalKey
-            up := down . " up"
+        symbols := ""
+        for modifier in ["LCtrl", "RCtrl", "Ctrl", "LAlt", "RAlt", "AltGr", "Alt", "LShift", "RShift", "Shift", "LWin", "RWin", "Win"] {
+            if required.Has(modifier)
+                symbols .= this.ModifierSymbol(modifier)
         }
+        down := "$*" . symbols . finalKey
+        up := down . " up"
         return Map("label", display, "down", down, "up", up, "required", required, "uses_capslock", usesCapsLock)
     }
 
@@ -84,9 +81,9 @@ class HotkeySpec {
         return ""
     }
 
-    static RequiredModifiersDown(spec) {
+    static RequiredModifiersDown(spec, capsDown) {
         for modifier, _ in spec["required"] {
-            if !this.ModifierIsDown(modifier)
+            if !(modifier = "CapsLock" ? capsDown : this.ModifierIsDown(modifier))
                 return false
         }
         return true
@@ -122,6 +119,10 @@ class CapsLockTapController {
         this.capslockBehavior := "preserve_tap"
         this.capsDownCallback := ObjBindMethod(this, "HandleCapsDown")
         this.capsUpCallback := ObjBindMethod(this, "HandleCapsUp")
+        this.hintTimer := ObjBindMethod(this, "ShowHint")
+        this.hintWindow := ""
+        this.hintWake := ""
+        this.hintOnCaps := false
     }
 
     Register(capslockBehavior) {
@@ -141,8 +142,53 @@ class CapsLockTapController {
             try Hotkey("*CapsLock", "Off")
             try Hotkey("*CapsLock up", "Off")
             this.installed := false
+            this.HideHint()
             this.capsPending := false
             this.capsConsumed := false
+        }
+    }
+
+    ConfigureHint(label, capslockBehavior, instanceId) {
+        enabled := !HotkeySpec.IsNone(label)
+        bareCaps := StrLower(Trim(label)) = "capslock"
+        this.HideHint()
+        if enabled && !IsObject(this.hintWindow) {
+            ; This hidden window owns the hold state, so it is cleared even if the shell exits unexpectedly.
+            this.hintWindow := Gui("+ToolWindow", "SimpleSttShortcutHold-" . instanceId)
+            this.hintWake := "Local\SimpleSttShortcutWake-" . instanceId
+        } else if !enabled && IsObject(this.hintWindow) {
+            this.hintWindow.Destroy()
+            this.hintWindow := ""
+        }
+        if bareCaps && !this.hintOnCaps
+            this.Register(capslockBehavior)
+        else if !bareCaps && this.hintOnCaps
+            this.Unregister()
+        if enabled
+            this.capslockBehavior := capslockBehavior
+        this.hintOnCaps := bareCaps
+    }
+
+    ShowHint() {
+        if IsObject(this.hintWindow) && (!this.hintOnCaps || this.capsPending) {
+            DllCall("SetPropW", "ptr", this.hintWindow.Hwnd, "str", "SimpleSttShortcutHold", "ptr", 1)
+            this.WakeOverlay()
+        }
+    }
+
+    HideHint() {
+        SetTimer(this.hintTimer, 0)
+        if IsObject(this.hintWindow) {
+            DllCall("RemovePropW", "ptr", this.hintWindow.Hwnd, "str", "SimpleSttShortcutHold", "ptr")
+            this.WakeOverlay()
+        }
+    }
+
+    WakeOverlay() {
+        eventHandle := DllCall("OpenEventW", "uint", 2, "int", false, "str", this.hintWake, "ptr")
+        if eventHandle {
+            DllCall("SetEvent", "ptr", eventHandle)
+            DllCall("CloseHandle", "ptr", eventHandle)
         }
     }
 
@@ -151,13 +197,19 @@ class CapsLockTapController {
     }
 
     HandleCapsDown(*) {
+        if this.capsPending
+            return
         this.capsPending := true
         this.capsConsumed := false
+        if this.hintOnCaps
+            SetTimer(this.hintTimer, -150)
     }
 
     HandleCapsUp(*) {
         if !this.capsPending
             return
+        if this.hintOnCaps
+            this.HideHint()
         if !this.capsConsumed {
             if this.capslockBehavior = "always_off"
                 SetCapsLockState("Off")
@@ -184,6 +236,7 @@ class HotkeyManager {
         this.releaseStops := true
         this.downCallback := ObjBindMethod(this, "HandleDown")
         this.upCallback := ObjBindMethod(this, "HandleUp")
+        this.capsContextCallback := ObjBindMethod(this, "CapsContext")
     }
 
     Configure(label, enabled, capslockBehavior, releaseStops := true) {
@@ -201,11 +254,16 @@ class HotkeyManager {
     EnableBindings() {
         if !IsObject(this.spec)
             return
-        Hotkey(this.spec["down"], this.downCallback, "On")
-        Hotkey(this.spec["up"], this.upCallback, "On")
         if this.spec["uses_capslock"] {
             this.capsController.Register(this.capslockBehavior)
             this.capsRegistered := true
+            HotIf(this.capsContextCallback)
+        }
+        try {
+            Hotkey(this.spec["down"], this.downCallback, "On")
+            Hotkey(this.spec["up"], this.upCallback, "On")
+        } finally {
+            HotIf()
         }
     }
 
@@ -216,8 +274,14 @@ class HotkeyManager {
         }
         if !IsObject(this.spec)
             return
-        for binding in [this.spec["down"], this.spec["up"]]
-            try Hotkey(binding, "Off")
+        if this.spec["uses_capslock"]
+            HotIf(this.capsContextCallback)
+        try {
+            for binding in [this.spec["down"], this.spec["up"]]
+                try Hotkey(binding, "Off")
+        } finally {
+            HotIf()
+        }
         if this.capsRegistered {
             this.capsController.Unregister()
             this.capsRegistered := false
@@ -234,11 +298,15 @@ class HotkeyManager {
             this.EnableBindings()
     }
 
+    CapsContext(*) {
+        return this.recording || this.capsController.capsPending
+    }
+
     HandleDown(*) {
-        if !this.enabled || this.recording || !HotkeySpec.RequiredModifiersDown(this.spec)
+        if !this.enabled || this.recording || !HotkeySpec.RequiredModifiersDown(this.spec, this.capsController.capsPending)
             return
         this.recording := true
-        if this.spec["uses_capslock"]
+        if this.capsController.capsPending
             this.capsController.Consume()
         this.onDown.Call()
     }

@@ -71,7 +71,7 @@ Problems I had with other voice typing apps, and how this one tries to solve the
 | Many apps load the model only after recording ends, so you wait after speaking. | Start warming the selected model as soon as recording begins, so it is often ready by the time you release the hotkey. |
 | Unloading only the model often still leaves heavy runtime memory behind. | Put Parakeet and the model in a disposable inference process that can fully exit after the idle timeout. |
 | Compiled AutoHotkey apps can upset antivirus tools. | Ship the `.ahk` scripts with a bundled AutoHotkey binary and launch through `simple-stt.cmd`. It is less tidy, but easier to inspect and less likely to look like a packed script executable. |
-| Cross-platform settings easily become heavy or inconsistent. | Start a disposable authenticated loopback server only when Settings is opened and serve bundled vanilla browser assets. |
+| Cross-platform settings easily become heavy or inconsistent. | Open the same Settings UI in Tauri on Windows and Linux. Close the window to exit its webview and authenticated loopback server. |
 
 Loaded memory use is still not tiny, roughly hundreds of MB depending on CPU/GPU mode, but the idle state is the part that matters most for an always-running background tool.
 
@@ -84,7 +84,8 @@ simple-stt.cmd
         └── simple-stt-infer.exe  disposable Parakeet DLL/model process
 
 simple-stt-ctl.exe                 disposable AHK control helper
-simple-stt-settings.exe            disposable cross-platform browser settings
+simple-stt-settings.exe            Settings launcher and explicit browser server
+simple-stt-settings-window.exe     on-demand Tauri window with its Settings server
 ```
 
 The key memory-cleanup guarantee is process exit: `simple-stt-infer.exe` is the only active component allowed to load `parakeet.dll` or a GGUF model. Repeated dictations reuse a warm worker until the configured idle timeout. Cleanup terminates that worker so Windows can reclaim its process RAM and VRAM allocations.

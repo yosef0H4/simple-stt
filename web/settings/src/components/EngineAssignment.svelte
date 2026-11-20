@@ -6,9 +6,9 @@
  import IconButton from './IconButton.svelte';
  import Help from './Help.svelte';
  import {modules,refreshModules,type Feature,type Binding} from '../lib/modules.svelte';
- import {t,languageName} from '../lib/i18n';
+ import {t} from '../lib/i18n';
  import {notice} from '../lib/state.svelte';
- let {feature,binding,language='',showLanguageName=true,path,onchange}:{feature:Feature;binding:Binding;language?:string;showLanguageName?:boolean;path:string;onchange:(binding:Binding)=>void}=$props();
+ let {feature,binding,language='',path,onchange}:{feature:Feature;binding:Binding;language?:string;path:string;onchange:(binding:Binding)=>void}=$props();
  const runtime=$derived(modules.runtimes.find(r=>r.id===binding.runtime));
  const runtimes=$derived([{value:'',label:'None'},...modules.runtimes.filter(r=>r.feature===feature&&r.installed).sort((a,b)=>Number(!!b.recommended)-Number(!!a.recommended)||a.label.localeCompare(b.label)).map(r=>({value:r.id,label:runtimeLabel(r),meta:r.label,search:moduleSearchText(r,modules.models,modules.runtimes,modules.assets?.assets,false)}))]);
  const models=$derived([{value:'',label:'None'},...modules.models.filter(m=>m.feature===feature&&m.installed&&modules.runtimes.some(r=>r.feature===feature&&r.installed&&r.engine===m.engine)&&(!binding.runtime||(runtime?.installed&&m.engine===runtime.engine))&&(!language||!m.languages.length||m.languages.includes(language))).sort((a,b)=>Number(b.recommended)-Number(a.recommended)||a.label.localeCompare(b.label)).map(m=>({value:m.id,label:m.label,search:moduleSearchText(m,modules.models,modules.runtimes,modules.assets?.assets,false)}))]);
@@ -17,7 +17,6 @@
  const voices=$derived(binding.model==='supertonic3'?supertonicVoices():['af_heart','af_bella','af_nicole','af_sarah','am_adam','am_michael','bf_emma'].map(value=>({value,label:value})));
 </script>
 <div class="engine-assignment" data-module={feature} data-language={language||'single'}>
- {#if language && showLanguageName}<h3>{languageName(language)}</h3>{/if}
  <Combo label="module.runtime" path={`${path}.runtime`} value={binding.runtime||''} items={runtimes} unavailable onselect={changeRuntime}>
  {#snippet extra()}<IconButton icon="refresh" label="module.refresh" onclick={refresh}/>{/snippet}
  </Combo>
@@ -37,4 +36,3 @@
  <Combo label="ui.device.a5a74a" path={`${path}.device`} value={runtime?.backend==='cpu'?'cpu':binding.device} items={runtime?.backend==='cpu'?[{value:'cpu',label:'module.processor'}]:[{value:'auto',label:'ui.automatic.ac9041'},{value:'cpu',label:'module.processor'},{value:'gpu',label:runtime?.backend==='cuda'?'module.nvidia':'ui.gpu_backend'}]} onselect={value=>onchange({...binding,device:value as Binding['device']})}/>
 
 </div>
-<style>h3 {font-size:14px;margin-block:18px 6px;} </style>

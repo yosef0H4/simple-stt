@@ -62,6 +62,13 @@ enum Mode {
         no_desktop: bool,
     },
     Server,
+    ListOutputDevices,
+    #[cfg(windows)]
+    #[command(hide = true)]
+    CaptureFrame {
+        request: String,
+        path: PathBuf,
+    },
     #[cfg(windows)]
     #[command(hide = true)]
     CaptureWindow {
@@ -2440,20 +2447,6 @@ fn spawn_tts(
             .unwrap_or_default(),
         );
     }
-    if let Some(fallback) = &config.speech.remote_fallback {
-        command
-            .arg("--remote-fallback")
-            .arg(serde_json::to_string(fallback)?);
-        command.env(
-            "SIMPLE_TTS_FALLBACK_API_KEY",
-            if let Some(slot) = &fallback.key_slot {
-                reader_core::secrets::connection_key(slot)?
-            } else {
-                None
-            }
-            .unwrap_or_default(),
-        );
-    }
     if let Some(library) = &config.speech.worker_library {
         command.arg("--library").arg(library);
     }
@@ -2637,9 +2630,8 @@ fn fingerprint(config: &AppConfig) -> String {
         SpeechProvider::OpenAiCompatible { .. }
     ) {
         format!(
-            "{:?}|{:?}|{}",
+            "{:?}|{}",
             config.speech.key_slot,
-            config.speech.remote_fallback,
             reader_core::secrets::credential_revision()
         )
     } else {
@@ -2781,7 +2773,7 @@ impl AudioOutput {
             .stream
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut state = self
+        let state = self
             .inner
             .state
             .lock()
@@ -2792,8 +2784,6 @@ impl AudioOutput {
         if stream_lock.is_some() {
             return Ok(true);
         }
-        state.max_samples = self.inner.rate.load(Ordering::Relaxed) as usize
-            * max_buffer_seconds.clamp(1, 8) as usize;
         drop(state);
         *self
             .inner
@@ -2802,33 +2792,37 @@ impl AudioOutput {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
         self.inner.fatal_reported.store(false, Ordering::Relaxed);
         let stream_epoch = self.inner.stream_epoch.fetch_add(1, Ordering::AcqRel) + 1;
-        let host = cpal::default_host();
-        let preferred = preferred.filter(|name| !name.trim().is_empty());
-        let device = if let Some(name) = preferred {
-            host.output_devices()?
-                .find(|device| device.to_string() == name)
-                .with_context(|| {
-                    format!("configured audio output device '{name}' is unavailable")
-                })?
-        } else {
-            host.default_output_device()
-                .context("no default audio output device")?
-        };
+        let (stream, rate) =
+            open_preferred_output(preferred, |device| self.open_stream(device, stream_epoch))?;
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.generation != generation || !current() {
+            return Ok(false);
+        }
+        self.inner.rate.store(rate as u64, Ordering::Relaxed);
+        state.max_samples = rate as usize * max_buffer_seconds.clamp(1, 8) as usize;
+        state.stream_open = true;
+        *stream_lock = Some(stream);
+        Ok(true)
+    }
+    fn open_stream(&self, device: &cpal::Device, stream_epoch: u64) -> Result<(cpal::Stream, u32)> {
         let supported = device
             .default_output_config()
             .context("reading default output format")?;
         let sample_format = supported.sample_format();
         let config: cpal::StreamConfig = supported.into();
         let rate = config.sample_rate;
-        self.inner.rate.store(rate as u64, Ordering::Relaxed);
         let ctx = Arc::clone(&self.inner);
         let channels = config.channels as usize;
         let stream = match sample_format {
             cpal::SampleFormat::F32 => {
-                build_output::<f32>(&device, &config, ctx, channels, stream_epoch, |v| v, |s| s)
+                build_output::<f32>(device, &config, ctx, channels, stream_epoch, |v| v, |s| s)
             }
             cpal::SampleFormat::I16 => build_output::<i16>(
-                &device,
+                device,
                 &config,
                 ctx,
                 channels,
@@ -2837,7 +2831,7 @@ impl AudioOutput {
                 |s| (s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16,
             ),
             cpal::SampleFormat::U16 => build_output::<u16>(
-                &device,
+                device,
                 &config,
                 ctx,
                 channels,
@@ -2848,18 +2842,7 @@ impl AudioOutput {
             other => bail!("unsupported output format: {other:?}"),
         }?;
         stream.play().context("starting audio output")?;
-        let mut state = self
-            .inner
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.generation != generation || !current() {
-            return Ok(false);
-        }
-        state.max_samples = rate as usize * max_buffer_seconds.clamp(1, 8) as usize;
-        state.stream_open = true;
-        *stream_lock = Some(stream);
-        Ok(true)
+        Ok((stream, rate))
     }
     fn push(
         &self,
@@ -2936,6 +2919,11 @@ impl AudioOutput {
         Ok(())
     }
     fn replace(&self, generation: u64) {
+        let mut stream = self
+            .inner
+            .stream
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut s = self
             .inner
             .state
@@ -2944,10 +2932,19 @@ impl AudioOutput {
         if generation < s.generation {
             return;
         }
+        let previous = if s.generation != generation {
+            self.inner.stream_epoch.fetch_add(1, Ordering::AcqRel);
+            s.stream_open = false;
+            stream.take()
+        } else {
+            None
+        };
         s.generation = generation;
         s.queue.clear();
         s.paused = false;
         s.producer_done = false;
+        drop(s);
+        drop(previous);
         self.inner.changed.notify_all();
     }
     fn pause(&self, value: bool, generation: u64) {
@@ -3064,6 +3061,51 @@ impl AudioOutput {
     fn queued(&self) -> usize {
         self.inner.state.lock().unwrap().queue.len()
     }
+}
+
+fn open_preferred_output<T>(
+    preferred: Option<&str>,
+    mut open: impl FnMut(&cpal::Device) -> Result<T>,
+) -> Result<T> {
+    let host = cpal::default_host();
+    if let Some(preferred) = preferred.filter(|name| !name.trim().is_empty()) {
+        let device = host.output_devices().ok().and_then(|mut devices| {
+            if let Ok(id) = preferred.parse::<cpal::DeviceId>() {
+                devices.find(|device| device.id().is_ok_and(|candidate| candidate == id))
+            } else {
+                devices.find(|device| device.to_string() == preferred)
+            }
+        });
+        if let Some(device) = device {
+            match open(&device) {
+                Ok(output) => {
+                    tracing::info!("using preferred playback device");
+                    return Ok(output);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "preferred playback device failed; trying system default")
+                }
+            }
+        } else {
+            tracing::info!("preferred playback device unavailable; using system default");
+        }
+    }
+    let device = host
+        .default_output_device()
+        .context("no default audio output device")?;
+    open(&device)
+}
+
+fn list_output_devices() -> Result<()> {
+    let devices: Vec<_> = cpal::default_host()
+        .output_devices()?
+        .filter_map(|device| {
+            let id = device.id().ok()?.to_string();
+            Some(serde_json::json!({"id": id, "name": device.to_string()}))
+        })
+        .collect();
+    println!("{}", serde_json::to_string(&devices)?);
+    Ok(())
 }
 
 fn build_output<T>(
@@ -3407,6 +3449,11 @@ impl App {
             self.schedule_idle_lease_if_current();
         }
     }
+    fn show_read_phase(&self, generation: u64, phase: &'static str) {
+        self.inner.activity.lock().unwrap().set(generation, phase);
+        self.show_hud();
+    }
+
     fn show_hud(&self) {
         if !self.inner.desktop_enabled.load(Ordering::Relaxed) {
             return;
@@ -3568,11 +3615,7 @@ impl App {
         Ok(generation)
     }
     fn start_text_at(&self, source: String, text: String, generation: u64) -> Result<String> {
-        self.inner
-            .activity
-            .lock()
-            .unwrap()
-            .set(generation, "detecting_language");
+        self.show_read_phase(generation, "detecting_language");
         let saved = self.inner.store.load()?;
         let config =
             saved.routed_text(&text, self.inner.route_language.lock().unwrap().as_deref())?;
@@ -4313,6 +4356,7 @@ impl App {
     }
     fn action_read_region(&self) -> Result<String> {
         let generation = self.begin_read_intent_with_pending(true)?;
+        #[cfg(not(windows))]
         self.show_hud();
         let app = self.clone();
         std::thread::spawn(move || {
@@ -4348,7 +4392,9 @@ impl App {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set(generation, "selecting_region");
-        self.show_hud();
+        if cfg!(not(windows)) || saved_target.is_some() {
+            self.show_hud();
+        }
         let app = self.clone();
         std::thread::spawn(move || {
             let current = || app.inner.generation.accepts(generation);
@@ -4375,6 +4421,7 @@ impl App {
             if !app.inner.generation.accepts(generation) {
                 return;
             }
+            app.show_hud();
             app.complete_repeat_action(
                 repeat_revision,
                 repeat::RepeatPayload::ReadAlong {
@@ -5874,6 +5921,16 @@ impl App {
             self.inner.generation.accepts(generation),
             "OCR request was canceled"
         );
+        let background = self
+            .inner
+            .read_along
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|run| run.app_generation == generation);
+        if !background {
+            self.show_read_phase(generation, "recognizing");
+        }
         // End the picker-only prewarm phase before the real OCR can queue.
         // An older generation must never invalidate a newer selection.
         end_ocr_prewarm_phase(
@@ -5885,13 +5942,6 @@ impl App {
             reader_core::routing::Feature::Ocr,
             self.inner.route_language.lock().unwrap().as_deref(),
         )?;
-        let background = self
-            .inner
-            .read_along
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .is_some_and(|run| run.app_generation == generation);
         if !background {
             let mut activity = self.inner.activity.lock().unwrap();
             if activity.generation == generation {
@@ -5906,7 +5956,6 @@ impl App {
                     .runtime_dir
                     .file_name()
                     .map(|v| v.to_string_lossy().into_owned());
-                activity.set(generation, "recognizing");
             }
         }
         let recognized = run_ocr(
@@ -8770,16 +8819,12 @@ fn read_selection_hotkey(app: &App) -> Result<()> {
 #[cfg(target_os = "linux")]
 fn read_selection_hotkey_at(app: &App, generation: u64) -> Result<()> {
     let repeat_revision = app.begin_repeat_action("selection");
+    app.show_read_phase(generation, "acquiring_selection");
     let _region = app
         .inner
         .region_gate
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    app.inner
-        .activity
-        .lock()
-        .unwrap()
-        .set(generation, "acquiring_selection");
     let _clipboard_suppression = app.suppress_clipboard_watcher();
     let result = (|| {
         let config = app.inner.store.load()?;
@@ -8812,16 +8857,12 @@ fn read_selection_hotkey(app: &App) -> Result<()> {
 #[cfg(windows)]
 fn read_selection_hotkey_at(app: &App, generation: u64) -> Result<()> {
     let repeat_revision = app.begin_repeat_action("selection");
+    app.show_read_phase(generation, "acquiring_selection");
     let _region = app
         .inner
         .region_gate
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    app.inner
-        .activity
-        .lock()
-        .unwrap()
-        .set(generation, "acquiring_selection");
     let _clipboard_suppression = app.suppress_clipboard_watcher();
     let result = (|| {
         let config = app.inner.store.load()?;
@@ -8944,6 +8985,11 @@ fn copy_region_inner(
         let mut activity = app.inner.ocr_activity.lock().unwrap();
         activity.begin(epoch);
         activity.set(epoch, "selecting_region");
+    }
+    // A new Windows overlay can take an exclusive game out of fullscreen.
+    // Bring up the HUD after the initial screenshot is safely captured.
+    if cfg!(not(windows)) || saved_target.is_some() {
+        app.show_hud();
     }
     let result = (|| -> Result<()> {
         {
@@ -9082,6 +9128,7 @@ fn copy_region_inner(
                 activity.set(epoch, "recognizing");
             }
         }
+        app.show_hud();
         let text = run_ocr(app, &config, &image, 20_000_000, true, current, None)?;
         anyhow::ensure!(current(), "OCR copy canceled");
         // The guard rebaselines while suppression is still held, so delayed listener
@@ -9269,7 +9316,6 @@ fn read_region_hotkey_inner(app: &App, generation: u64, repeat_revision: u64) ->
 #[cfg(windows)]
 fn read_region_hotkey(app: &App) -> Result<()> {
     let generation = app.begin_read_intent_with_pending(true)?;
-    app.show_hud();
     read_region_hotkey_at(app, generation)
 }
 #[cfg(windows)]
@@ -10310,6 +10356,17 @@ fn start_media_bridge_command(mut command: Command) -> Result<MediaBridge> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if matches!(args.command, Mode::ListOutputDevices) {
+        return list_output_devices();
+    }
+    #[cfg(windows)]
+    if let Mode::CaptureFrame {
+        ref request,
+        ref path,
+    } = args.command
+    {
+        return read_along_capture::capture_windows_frame(request, path);
+    }
     #[cfg(windows)]
     if let Mode::CaptureWindow {
         hwnd,
@@ -10353,8 +10410,11 @@ fn main() -> Result<()> {
             serve_daemon(app, no_desktop)
         }
         Mode::Server => run_server(store),
+        Mode::ListOutputDevices => unreachable!("dispatched before loading configuration"),
         #[cfg(windows)]
-        Mode::CaptureWindow { .. } => unreachable!("dispatched before loading configuration"),
+        Mode::CaptureWindow { .. } | Mode::CaptureFrame { .. } => {
+            unreachable!("dispatched before loading configuration")
+        }
     }
 }
 

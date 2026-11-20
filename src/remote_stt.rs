@@ -84,13 +84,6 @@ fn transcribe_bytes(
 ) -> Result<String> {
     anyhow::ensure!(!audio.is_empty(), "audio is empty");
     anyhow::ensure!(
-        config
-            .fallback
-            .as_ref()
-            .is_none_or(|fallback| fallback.fallback.is_none()),
-        "Only one fallback server is supported"
-    );
-    anyhow::ensure!(
         !config.model.trim().is_empty() && config.model.len() <= 256,
         "remote STT model must contain 1 to 256 characters"
     );
@@ -106,13 +99,7 @@ fn transcribe_bytes(
     } else {
         None
     };
-    let result = transcribe_bytes_with_token(config, &endpoint, audio, language, token.as_deref());
-    if result.is_err() {
-        if let Some(fallback) = &config.fallback {
-            return transcribe_bytes(fallback, audio, language);
-        }
-    }
-    result
+    transcribe_bytes_with_token(config, &endpoint, audio, language, token.as_deref())
 }
 
 fn transcribe_bytes_with_token(
@@ -314,7 +301,6 @@ mod tests {
     fn config(base_url: String) -> RemoteSttConfig {
         RemoteSttConfig {
             key_slot: None,
-            fallback: None,
             use_feature_key: true,
             base_url,
             model: "whisper-test".to_owned(),
@@ -374,6 +360,34 @@ mod tests {
         .unwrap();
         assert_eq!(text, "Hello 世界");
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn saved_secondary_server_is_skipped_on_primary_failure() {
+        let primary = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let secondary = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let mut legacy =
+            serde_json::to_value(config(format!("http://{}/v1", primary.server_addr()))).unwrap();
+        legacy["use_feature_key"] = serde_json::json!(false);
+        legacy["fallback"] =
+            serde_json::to_value(config(format!("http://{}/v1", secondary.server_addr()))).unwrap();
+        let config: RemoteSttConfig = serde_json::from_value(legacy).unwrap();
+        let response = std::thread::spawn(move || {
+            primary
+                .recv_timeout(Duration::from_secs(3))
+                .unwrap()
+                .unwrap()
+                .respond(tiny_http::Response::empty(400))
+                .unwrap();
+        });
+        let result = with_local_fallback(
+            transcribe_pcm(&config, &[0; 160], Some("en")),
+            config.fallback_to_local,
+            || Ok("local fixture".to_owned()),
+        );
+        response.join().unwrap();
+        assert_eq!(result.unwrap(), "local fixture");
+        assert!(secondary.try_recv().unwrap().is_none());
     }
 
     #[test]

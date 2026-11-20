@@ -71,6 +71,18 @@ def main():
             XDG_DATA_HOME=str(directory / 'data'),
             LOCALAPPDATA=str(directory / 'data'),
         )
+        session_root = directory / 'data'
+        if os.name == 'nt':
+            # Windows resolves the user data directory through the OS Known Folder API.
+            paths = subprocess.check_output(
+                [str(BINARY.with_name('simple-stt-ctl.exe')), 'config-show'],
+                env=env, encoding='utf-8', timeout=10,
+            )
+            state_path = next(
+                line.split('\t', 2)[2] for line in paths.splitlines()
+                if line.startswith('value\tservice_state_path\t')
+            )
+            session_root = Path(state_path.replace('\\\\', '\\')).parent
         with output.open('w') as stdout, errors.open('w') as stderr:
             process = subprocess.Popen(
                 [str(BINARY), '--listen', f'0.0.0.0:{port}', '--public-url', origin,
@@ -129,7 +141,7 @@ def main():
                     f'stdout={local_output.read_text()!r}, stderr={local_errors.read_text()!r}'
                 )
             assert '#token=' in local_url
-            session_files = list((directory / 'data').rglob('settings-session*.json'))
+            session_files = list(session_root.rglob('settings-session*.json'))
             assert len(session_files) == 2, 'local and remote instances collided in session storage'
 
             time.sleep(1)
@@ -137,7 +149,7 @@ def main():
             status, raw = request(url, '/api/close', token=token, origin=origin, body={})
             assert status == 200 and json.loads(raw)['ok'] is True, raw.decode(errors='replace')
             assert process.wait(timeout=5) == 0, errors.read_text()
-            session_files = list((directory / 'data').rglob('settings-session*.json'))
+            session_files = list(session_root.rglob('settings-session*.json'))
             assert len(session_files) == 1, 'remote shutdown removed the localhost session'
             local_token = urlparse(local_url).fragment.removeprefix('token=')
             status, raw = request(local_url, '/api/state', token=local_token)

@@ -37,6 +37,29 @@ pub fn initialize() -> Result<()> {
 pub fn command(args: &[&str]) -> Result<String> {
     command_input(args, None)
 }
+
+pub fn output_devices() -> Result<Value> {
+    let exe = std::env::current_exe()?;
+    let executable = exe
+        .parent()
+        .context("Executable has no directory")?
+        .join(if cfg!(windows) {
+            "readerd.exe"
+        } else {
+            "readerd"
+        });
+    let mut command = Command::new(executable);
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut command, 0x0800_0000); // CREATE_NO_WINDOW
+    let output = command.arg("list-output-devices").output()?;
+    anyhow::ensure!(
+        output.status.success(),
+        "Playback device discovery failed: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
 fn command_input(args: &[&str], input: Option<&[u8]>) -> Result<String> {
     command_in_profile(args, input, &data_dir(), false)
 }
@@ -172,63 +195,72 @@ pub fn activity_text(
     locale: crate::localization::Locale,
     hide_text: bool,
 ) -> String {
-    let mut lines = Vec::new();
-    for name in ["activity", "ocr_activity"] {
-        let activity = &status[name];
-        let phase = activity["phase"].as_str().unwrap_or("idle");
-        if matches!(phase, "idle" | "error") {
-            continue;
-        }
-        let key = activity["message_id"].as_str().unwrap_or("");
-        if !crate::localization::contains(key) {
-            continue;
-        }
-        let icon = match phase {
-            "detecting_language" => "🌐",
-            "recognizing" | "selecting_region" => "🔍",
-            "copying" | "acquiring_selection" => "📋",
-            "paused" => "⏸️",
-            _ => "🔊",
-        };
-        let mut line = format!(
-            "{icon} {}",
-            crate::localization::translate(locale, key, &[])
-        );
-        let spoken = (name == "activity" && matches!(phase, "reading" | "paused") && !hide_text)
-            .then(|| status["chunk_text"].as_str())
-            .flatten()
-            .filter(|text| !text.trim().is_empty());
-        if let Some(text) = spoken {
-            // Isolate user prose from the overlay's UI direction and progress count.
-            let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            let mut preview: String = normalized.chars().take(240).collect();
-            if normalized.chars().count() > 240 {
-                preview.push('…');
-            }
-            line = format!("{icon} \u{2068}{preview}\u{2069}");
-        }
-        if let Some(language) = activity["language"].as_str().filter(|_| {
-            spoken.is_none()
-                && !matches!(
-                    phase,
-                    "detecting_language" | "selecting_region" | "acquiring_selection"
-                )
-        }) {
-            let code = reader_core::routing::primary(language);
-            let key = format!("reader.language.{code}");
-            let label = if crate::localization::contains(&key) {
-                crate::localization::translate(locale, &key, &[])
-            } else {
-                code
-            };
-            line.push_str(&format!(" · {label}"));
-        }
-        if name == "activity" && matches!(phase, "reading" | "playing" | "paused") {
-            append_chunk_counter(&mut line, status);
-        }
-        lines.push(line);
+    ["activity", "ocr_activity"]
+        .into_iter()
+        .filter_map(|name| feature_activity_text(status, name, locale, hide_text))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn feature_activity_text(
+    status: &Value,
+    name: &str,
+    locale: crate::localization::Locale,
+    hide_text: bool,
+) -> Option<String> {
+    let activity = &status[name];
+    let phase = activity["phase"].as_str().unwrap_or("idle");
+    if matches!(phase, "idle" | "error") {
+        return None;
     }
-    lines.join("\n")
+    let key = activity["message_id"].as_str().unwrap_or("");
+    if !crate::localization::contains(key) {
+        return None;
+    }
+    let icon = match phase {
+        "detecting_language" => "🌐",
+        "recognizing" | "selecting_region" => "🔍",
+        "copying" | "acquiring_selection" => "📋",
+        "paused" => "⏸️",
+        _ => "🔊",
+    };
+    let mut line = format!(
+        "{icon} {}",
+        crate::localization::translate(locale, key, &[])
+    );
+    let spoken = (name == "activity" && matches!(phase, "reading" | "paused") && !hide_text)
+        .then(|| status["chunk_text"].as_str())
+        .flatten()
+        .filter(|text| !text.trim().is_empty());
+    if let Some(text) = spoken {
+        // Isolate user prose from the overlay's UI direction and progress count.
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut preview: String = normalized.chars().take(240).collect();
+        if normalized.chars().count() > 240 {
+            preview.push('…');
+        }
+        line = format!("{icon} \u{2068}{preview}\u{2069}");
+    }
+    if let Some(language) = activity["language"].as_str().filter(|_| {
+        spoken.is_none()
+            && !matches!(
+                phase,
+                "detecting_language" | "selecting_region" | "acquiring_selection"
+            )
+    }) {
+        let code = reader_core::routing::primary(language);
+        let key = format!("reader.language.{code}");
+        let label = if crate::localization::contains(&key) {
+            crate::localization::translate(locale, &key, &[])
+        } else {
+            code
+        };
+        line.push_str(&format!(" · {label}"));
+    }
+    if name == "activity" && matches!(phase, "reading" | "playing" | "paused") {
+        append_chunk_counter(&mut line, status);
+    }
+    Some(line)
 }
 
 /// Compose the local progress HUD so a transient notice never hides ongoing work.
@@ -239,7 +271,7 @@ pub fn hud_text(
     now_ms: u64,
 ) -> (String, bool) {
     let mut lines = Vec::new();
-    let activity = activity_text(status, locale, false);
+    let activity = feature_activity_text(status, "activity", locale, false);
     let current_text = status["chunk_text"]
         .as_str()
         .filter(|text| !text.trim().is_empty())
@@ -268,7 +300,7 @@ pub fn hud_text(
         );
         append_chunk_counter(&mut line, status);
         lines.push(line);
-    } else if !activity.is_empty() {
+    } else if let Some(activity) = activity {
         lines.push(activity);
     } else if status["read_pending"] == true
         || matches!(status["state"].as_str(), Some("preparing" | "reading"))
@@ -277,6 +309,12 @@ pub fn hud_text(
             "🔊 {}",
             crate::localization::translate(locale, "reader.preparing", &[])
         ));
+    }
+    let copy_selecting = status["ocr_activity"]["phase"] == "selecting_region";
+    if let Some(ocr) =
+        feature_activity_text(status, "ocr_activity", locale, false).filter(|_| !copy_selecting)
+    {
+        lines.push(ocr);
     }
     if status["read_along_active"] == true {
         if let Some(phase) = status["next_page_activity"]["phase"].as_str() {
@@ -337,10 +375,10 @@ pub fn hud_text(
         }
     }
     let models = model_events_text(status, locale, now_ms);
-    if !models.is_empty() {
+    if !models.is_empty() && !copy_selecting {
         lines.push(models);
     }
-    let active = !lines.is_empty();
+    let active = copy_selecting || !lines.is_empty();
     (lines.join("\n"), active)
 }
 
@@ -507,6 +545,31 @@ mod hud_formatter_tests {
         )));
         let (text, active) = super::hud_text(&json!({"state":"idle"}), Locale::En, 0);
         assert!(!active && text.is_empty());
+    }
+
+    #[test]
+    fn screen_copy_progress_remains_visible_during_speech() {
+        let status = json!({
+            "state": "reading",
+            "chunk_text": "The current passage.",
+            "ocr_activity": {"phase":"recognizing", "message_id":"reader.phase.recognizing"},
+        });
+        let (text, active) = super::hud_text(&status, Locale::En, 0);
+        assert!(active);
+        assert!(text.contains("The current passage."));
+        assert!(text.contains("Recognizing text"));
+        assert!(!text.contains("Text copied"));
+    }
+
+    #[test]
+    fn screen_copy_selection_keeps_hud_warm_without_showing_it() {
+        let status = json!({
+            "ocr_activity": {"phase":"selecting_region", "message_id":"reader.phase.selecting_region"},
+        });
+        assert_eq!(
+            super::hud_text(&status, Locale::En, 0),
+            (String::new(), true)
+        );
     }
     #[test]
     fn normal_and_read_along_huds_share_visible_chunk_progress() {

@@ -14,11 +14,14 @@ use std::sync::{
 };
 use std::thread;
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM, POINT, RECT};
 use windows_sys::Win32::Graphics::Gdi::{
     AddFontMemResourceEx, CreateFontIndirectW, DeleteObject, GetMonitorInfoW, GetObjectW,
     GetStockObject, MonitorFromPoint, DEFAULT_GUI_FONT, HFONT, LOGFONTW, MONITORINFO,
     MONITOR_DEFAULTTONEAREST,
+};
+use windows_sys::Win32::System::Threading::{
+    CreateEventW, SetEvent, WaitForSingleObject, INFINITE,
 };
 use windows_sys::Win32::UI::Controls::{
     InitCommonControls, TOOLTIPS_CLASSW, TTF_ABSOLUTE, TTF_RTLREADING, TTF_TRACK, TTM_ADDTOOLW,
@@ -26,9 +29,9 @@ use windows_sys::Win32::UI::Controls::{
     TTS_ALWAYSTIP, TTS_NOANIMATE, TTS_NOFADE, TTS_NOPREFIX, TTTOOLINFOW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DestroyWindow, DispatchMessageW, FindWindowW, GetCursorPos, GetWindowRect,
-    IsWindow, PeekMessageW, SendMessageW, SetPropW, TranslateMessage, MSG, PM_REMOVE, WM_GETFONT,
-    WM_SETFONT, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DestroyWindow, DispatchMessageW, EnumWindows, FindWindowW, GetCursorPos,
+    GetPropW, GetWindowRect, IsWindow, IsWindowVisible, PeekMessageW, SendMessageW, SetPropW,
+    TranslateMessage, MSG, PM_REMOVE, WM_GETFONT, WM_SETFONT, WS_EX_TOPMOST, WS_POPUP,
 };
 
 const CURSOR_OFFSET: i32 = 16;
@@ -38,12 +41,55 @@ const MAX_TOOLTIP_WIDTH: i32 = 420;
 
 #[derive(Debug, Clone)]
 pub struct OverlayHandle {
-    tx: Sender<OverlayCommand>,
+    sender: Arc<OverlaySender>,
     latest_level: Arc<AtomicU32>,
+}
+
+#[derive(Debug)]
+struct OverlaySender {
+    tx: Sender<OverlayCommand>,
+    wake: Arc<WakeEvent>,
+}
+
+impl OverlaySender {
+    fn send(&self, command: OverlayCommand) -> Result<()> {
+        self.tx.send(command)?;
+        unsafe { SetEvent(self.wake.handle()) };
+        Ok(())
+    }
+}
+
+impl Drop for OverlaySender {
+    fn drop(&mut self) {
+        let _ = self.send(OverlayCommand::Stop);
+    }
+}
+
+#[derive(Debug)]
+struct WakeEvent(isize);
+
+impl WakeEvent {
+    fn handle(&self) -> HANDLE {
+        self.0 as HANDLE
+    }
+}
+
+impl Drop for WakeEvent {
+    fn drop(&mut self) {
+        unsafe { CloseHandle(self.handle()) };
+    }
+}
+
+fn profile_name(prefix: &str) -> Vec<u16> {
+    format!("{prefix}{}", crate::config::app_instance_id())
+        .encode_utf16()
+        .chain(Some(0))
+        .collect()
 }
 
 #[derive(Debug, Clone)]
 enum OverlayCommand {
+    Stop,
     SetLocale(Locale),
     SetShortcuts(String, bool),
     StartRecording(isize, RecordingIndicators),
@@ -60,20 +106,49 @@ enum OverlayCommand {
 
 impl OverlayHandle {
     pub fn spawn() -> Result<Self> {
+        Self::spawn_for(false)
+    }
+
+    pub fn spawn_reader() -> Result<Self> {
+        Self::spawn_for(true)
+    }
+
+    fn spawn_for(reader: bool) -> Result<Self> {
         let (tx, rx) = unbounded::<OverlayCommand>();
+        let name = profile_name("Local\\SimpleSttShortcutWake-");
+        let event = unsafe {
+            CreateEventW(
+                std::ptr::null(),
+                0,
+                0,
+                if reader {
+                    std::ptr::null()
+                } else {
+                    name.as_ptr()
+                },
+            )
+        };
+        if event.is_null() {
+            return Err(std::io::Error::last_os_error().into());
+        }
+        let wake = Arc::new(WakeEvent(event as isize));
         let latest_level = Arc::new(AtomicU32::new(0.0_f32.to_bits()));
         thread::spawn({
             let latest_level = Arc::clone(&latest_level);
-            move || overlay_thread(rx, latest_level)
+            let wake = Arc::clone(&wake);
+            move || overlay_thread(rx, latest_level, wake, reader)
         });
-        Ok(Self { tx, latest_level })
+        Ok(Self {
+            sender: Arc::new(OverlaySender { tx, wake }),
+            latest_level,
+        })
     }
 
     /// Starts a fresh dictation session. Any stale notice from a previous
     /// session is removed so the recording visualizer remains easy to read.
     pub fn start_recording(&self, target_window: isize, indicators: RecordingIndicators) {
         let _ = self
-            .tx
+            .sender
             .send(OverlayCommand::StartRecording(target_window, indicators));
     }
 
@@ -83,15 +158,17 @@ impl OverlayHandle {
     }
 
     pub fn set_shortcuts(&self, text: String, enabled: bool) {
-        let _ = self.tx.send(OverlayCommand::SetShortcuts(text, enabled));
+        let _ = self
+            .sender
+            .send(OverlayCommand::SetShortcuts(text, enabled));
     }
 
     pub fn set_locale(&self, locale: Locale) {
-        let _ = self.tx.send(OverlayCommand::SetLocale(locale));
+        let _ = self.sender.send(OverlayCommand::SetLocale(locale));
     }
 
     pub fn set_primary(&self, primary: OverlayPrimary) {
-        let _ = self.tx.send(OverlayCommand::SetPrimary(primary));
+        let _ = self.sender.send(OverlayCommand::SetPrimary(primary));
     }
 
     pub fn notify_info(&self, text: impl Into<String>, duration: Option<Duration>) {
@@ -107,11 +184,11 @@ impl OverlayHandle {
     }
 
     pub fn clear_notice(&self) {
-        let _ = self.tx.send(OverlayCommand::ClearNotice);
+        let _ = self.sender.send(OverlayCommand::ClearNotice);
     }
 
     fn notify(&self, level: NoticeLevel, text: impl Into<String>, duration: Option<Duration>) {
-        let _ = self.tx.send(OverlayCommand::Notify {
+        let _ = self.sender.send(OverlayCommand::Notify {
             level,
             text: text.into(),
             duration,
@@ -129,7 +206,7 @@ impl OverlayHandle {
 
     /// Immediately removes both the primary state and any transient notice.
     pub fn hide(&self) {
-        let _ = self.tx.send(OverlayCommand::Hide);
+        let _ = self.sender.send(OverlayCommand::Hide);
     }
 
     pub fn benchmark_latency(&self, iterations: usize) -> Vec<Duration> {
@@ -138,7 +215,7 @@ impl OverlayHandle {
             self.set_level((index % 2) as f32);
             let (tx, rx) = crossbeam_channel::bounded(1);
             if self
-                .tx
+                .sender
                 .send(OverlayCommand::Probe(Instant::now(), tx))
                 .is_err()
             {
@@ -152,28 +229,34 @@ impl OverlayHandle {
     }
 }
 
-fn overlay_thread(rx: Receiver<OverlayCommand>, latest_level: Arc<AtomicU32>) {
+fn overlay_thread(
+    rx: Receiver<OverlayCommand>,
+    latest_level: Arc<AtomicU32>,
+    wake: Arc<WakeEvent>,
+    reader: bool,
+) {
     let mut state = TooltipState::new();
+    state.reader = reader;
+    let hint_window = profile_name("SimpleSttShortcutHold-");
     loop {
-        let message = if state.should_render() {
-            rx.recv_timeout(state.poll_interval())
-        } else {
-            rx.recv()
-                .map_err(|_| crossbeam_channel::RecvTimeoutError::Disconnected)
-        };
-        match message {
-            Ok(command) => {
-                state.handle_command(command);
-                while let Ok(command) = rx.try_recv() {
-                    state.handle_command(command);
-                }
+        while let Ok(command) = rx.try_recv() {
+            if matches!(command, OverlayCommand::Stop) {
+                return;
             }
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            state.handle_command(command);
         }
         pump_messages();
+        let publisher = unsafe { FindWindowW(std::ptr::null(), hint_window.as_ptr()) };
+        state.shortcuts_held = !publisher.is_null()
+            && !unsafe { GetPropW(publisher, windows_sys::w!("SimpleSttShortcutHold")) }.is_null();
         state.set_level(f32::from_bits(latest_level.load(Ordering::Relaxed)));
         state.tick();
+        let timeout = if state.should_render() || (!reader && state.shortcuts_held) {
+            state.poll_interval().as_millis() as u32
+        } else {
+            INFINITE
+        };
+        unsafe { WaitForSingleObject(wake.handle(), timeout) };
     }
 }
 
@@ -211,6 +294,9 @@ struct TooltipState {
     locale: Locale,
     shortcuts: String,
     shortcut_reminders: bool,
+    shortcuts_held: bool,
+    reader: bool,
+    reader_marker: Vec<u16>,
     notice: Option<Notice>,
     target_level: f32,
     display_level: f32,
@@ -237,6 +323,9 @@ impl TooltipState {
             locale: Locale::En,
             shortcuts: String::new(),
             shortcut_reminders: true,
+            shortcuts_held: false,
+            reader: false,
+            reader_marker: profile_name("SimpleSttReaderOverlay-"),
             notice: None,
             target_level: 0.0,
             display_level: 0.0,
@@ -314,6 +403,7 @@ impl TooltipState {
             } => self.notify(level, text, duration),
             OverlayCommand::ClearNotice => self.notice = None,
             OverlayCommand::Hide => self.hide(),
+            OverlayCommand::Stop => self.hide(),
             OverlayCommand::Probe(sent_at, tx) => {
                 let _ = tx.try_send(sent_at.elapsed());
             }
@@ -327,7 +417,22 @@ impl TooltipState {
     }
 
     fn should_render(&self) -> bool {
-        self.primary != OverlayPrimary::Hidden || self.notice.is_some()
+        self.primary != OverlayPrimary::Hidden
+            || self.notice.is_some()
+            || (!self.reader
+                && self.shortcuts_held
+                && !self.shortcuts.is_empty()
+                && !self.reader_visible())
+    }
+
+    fn reader_visible(&self) -> bool {
+        unsafe extern "system" fn check(hwnd: HWND, marker: LPARAM) -> i32 {
+            unsafe {
+                (IsWindowVisible(hwnd) == 0 || GetPropW(hwnd, marker as *const u16).is_null())
+                    as i32
+            }
+        }
+        unsafe { EnumWindows(Some(check), self.reader_marker.as_ptr() as LPARAM) == 0 }
     }
 
     fn poll_interval(&self) -> Duration {
@@ -422,16 +527,20 @@ impl TooltipState {
     }
 
     fn render_text(&self) -> String {
+        let content = render_overlay_text_with_locale(
+            self.primary,
+            self.notice.as_ref().map(|notice| notice.text.as_str()),
+            &self.visualizer_levels,
+            self.indicators,
+            self.locale,
+        );
+        if content.is_empty() && !self.reader && self.shortcuts_held {
+            return self.shortcuts.clone();
+        }
         crate::shortcuts::append(
-            render_overlay_text_with_locale(
-                self.primary,
-                self.notice.as_ref().map(|notice| notice.text.as_str()),
-                &self.visualizer_levels,
-                self.indicators,
-                self.locale,
-            ),
+            content,
             &self.shortcuts,
-            self.shortcut_reminders,
+            self.shortcut_reminders || self.shortcuts_held,
         )
     }
 
@@ -482,6 +591,9 @@ impl TooltipState {
             return Err(anyhow!("CreateWindowExW TOOLTIPS_CLASSW failed"));
         }
         self.hwnd = hwnd;
+        if self.reader {
+            unsafe { SetPropW(hwnd, self.reader_marker.as_ptr(), 1_usize as _) };
+        }
         if unsafe { SetPropW(hwnd, WINDOWS_TOOLTIP_PROPERTY, 1_usize as _) } == 0 {
             self.destroy_tooltip();
             return Err(anyhow!("Could not mark the Simple STT tooltip"));
@@ -744,6 +856,40 @@ mod tests {
         state.tick();
         assert_ne!(unsafe { IsWindowVisible(state.hwnd) }, 0);
         state.hide();
+    }
+
+    #[test]
+    fn held_shortcuts_preserve_recording_and_use_the_existing_reader_tooltip() {
+        use super::{NoticeLevel, RecordingIndicators, TooltipState};
+
+        let mut capture = TooltipState::new();
+        capture.shortcuts = "🔴 \u{2066}[CapsLock][S]\u{2069}".into();
+        capture.shortcut_reminders = false;
+        capture.shortcuts_held = true;
+        assert!(capture.should_render());
+        assert_eq!(capture.render_text(), capture.shortcuts);
+
+        let mut reader = TooltipState::new();
+        reader.reader = true;
+        reader.shortcuts.clone_from(&capture.shortcuts);
+        reader.shortcut_reminders = false;
+        reader.shortcuts_held = true;
+        reader.notify(NoticeLevel::Info, "Reading a passage.".into(), None);
+        reader.tick();
+        assert!(reader.render_text().starts_with("Reading a passage.\n"));
+        assert!(
+            !capture.should_render(),
+            "idle hint should use the visible reader tooltip"
+        );
+
+        capture.start_recording(0, RecordingIndicators::default());
+        assert!(capture.should_render());
+        assert!(capture.render_text().starts_with('🎙'));
+        capture.shortcuts_held = false;
+        assert!(capture.should_render());
+        assert!(!capture.render_text().contains("[CapsLock]"));
+        reader.shortcuts_held = false;
+        assert_eq!(reader.render_text(), "Reading a passage.");
     }
 
     #[test]

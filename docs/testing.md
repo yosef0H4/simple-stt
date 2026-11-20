@@ -29,7 +29,7 @@ binaries are allowed only in isolated tests. During targeted
 development, run `cd web/settings && npm ci && npm run build`. The build writes
 `dist/index.html`, `dist/app.js`, `dist/styles.css`, and a deterministic
 `dist/manifest.json`. `python scripts/verify-settings-frontend.py` checks source
-and output hashes plus the 100 KiB gzipped JS/CSS and 300 KiB total asset budgets.
+and output hashes plus the 100 KiB gzipped JS/CSS and 350 KiB total asset budgets.
 The Rust build script independently rejects missing or stale frontend output.
 
 On Linux, also run `python scripts/test-linux-static.py`. Run the browser model
@@ -59,6 +59,7 @@ scripts\test-ahk-full.cmd
 ```
 
 The AutoHotkey portion rebuilds current release binaries first, so runtime smoke tests cannot accidentally validate stale executables.
+Set `SIMPLE_STT_SKIP_MODEL_SMOKE=1` to skip only the AHK smoke that loads real speech models. The other Windows checks still run.
 
 If a Windows host is unavailable, report native Windows runtime checks as
 unvalidated. They do not block committing changes validated on Linux.
@@ -194,6 +195,14 @@ state-file reconnect after simulated service restart
 ```
 
 ## Browser Settings coverage
+
+On Windows, build the desktop targets with
+`cargo build -p simple-stt -p simple-stt-settings-window --bin simple-stt-settings --bin simple-stt-settings-window --bin simple-stt-capture --bin simple-stt-ctl`.
+Run `node scripts/test-settings-desktop.cjs` with Playwright and Python
+available. The test opens the native window, restores it on a second launch,
+suspends the page while capture restarts, saves a draft and verifies that
+closing Settings exits its WebView2 processes while capture keeps running.
+It uses a temporary profile without loading inference models.
 
 `node scripts/test-settings-modules.cjs` checks the empty first install, keyboard routing default, compatible installed choices, download queue and filters, and a narrow Arabic layout using an isolated fixture.
 

@@ -7,7 +7,7 @@ use simple_stt::common::shell_protocol::{
 };
 use simple_stt::config::{
     replace_file_atomic, unique_atomic_temp_path, AppConfig, CapsLockBehavior, InferenceDevice,
-    LogLevel, RecordingMode, TextDeliveryMode, UiTheme,
+    LogLevel, RecordingMode, ShortcutHintMode, TextDeliveryMode, UiTheme,
 };
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
@@ -499,6 +499,14 @@ fn config_show() -> Result<ShellResponse> {
         config.general.show_shortcuts_hotkey.clone(),
     );
     response.values.insert(
+        "show_shortcuts_mode".into(),
+        match config.general.show_shortcuts_mode {
+            ShortcutHintMode::Hold => "hold",
+            ShortcutHintMode::Press => "press",
+        }
+        .into(),
+    );
+    response.values.insert(
         "shortcut_reminders".into(),
         config.general.shortcut_reminders.to_string(),
     );
@@ -913,6 +921,13 @@ fn apply_enum_config(config: &mut AppConfig, key: &str, value: &str) -> Result<b
     match key {
         "capslock_behavior" => config.general.capslock_behavior = parse_capslock_behavior(value)?,
         "recording_mode" => config.general.recording_mode = parse_recording_mode(value)?,
+        "show_shortcuts_mode" => {
+            config.general.show_shortcuts_mode = match value {
+                "hold" => ShortcutHintMode::Hold,
+                "press" => ShortcutHintMode::Press,
+                _ => anyhow::bail!("invalid show_shortcuts_mode: {value}"),
+            };
+        }
         "text_delivery_mode" => config.output.delivery_mode = parse_text_delivery_mode(value)?,
         "log_level" => config.diagnostics.log_level = parse_log_level(value)?,
         "inference_device" => config.speech.inference_device = parse_inference_device(value)?,

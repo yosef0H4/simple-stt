@@ -1,0 +1,15 @@
+[package]
+name = "simple-stt-settings-window"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+open = "5"
+simple-stt = { path = "../.." }
+tauri = { version = "2.12.7", default-features = false, features = ["wry", "image-ico", "x11"] }
+
+[build-dependencies]
+tauri-build = { version = "2.7.6" }

@@ -420,7 +420,7 @@ const f = require("./settings-fixture.cjs");
         .getPropertyValue("--paper")
         .trim(),
     ),
-    "#151a23",
+    "#15141e",
   );
   f.getConfig().speech.selection_mode = "single_model";
   f.getConfig().speech.single_model_filename =

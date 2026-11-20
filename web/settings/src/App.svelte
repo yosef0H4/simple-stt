@@ -14,6 +14,7 @@
   import Advanced from "./pages/Advanced.svelte";
   import type { Page } from "./lib/types";
   import { direction, locale, t, tEnglish } from "./lib/i18n";
+  const desktop = "__SIMPLE_STT_DESKTOP__" in window;
   let query = $state(""),
     searchIndex = $state(0);
   let authenticated = $state(hasToken());
@@ -21,13 +22,47 @@
   let signInError = $state("");
   let signingIn = $state(false);
   let stopSession: (() => void) | undefined;
+  const minSidebarWidth = 220;
+  let sidebarWidth = $state(272);
+  let viewportWidth = $state(window.innerWidth);
+  const maxSidebarWidth = $derived(Math.max(minSidebarWidth, Math.min(420, viewportWidth - 460)));
+  const visibleSidebarWidth = $derived(Math.min(sidebarWidth, maxSidebarWidth));
+  let dragOffset = 0;
+  const sidebarDirection = () => direction() === "rtl" ? -1 : 1;
+
+  function resizeSidebar(width: number) {
+    sidebarWidth = Math.max(minSidebarWidth, Math.min(maxSidebarWidth, width));
+  }
+
+  function startSidebarDrag(event: PointerEvent) {
+    if (event.button !== 0 || !event.isPrimary) return;
+    event.preventDefault();
+    const grip = event.currentTarget as HTMLElement;
+    grip.setPointerCapture(event.pointerId);
+    dragOffset = visibleSidebarWidth - sidebarDirection() * event.clientX;
+  }
+
+  function dragSidebar(event: PointerEvent) {
+    if ((event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId))
+      resizeSidebar(dragOffset + sidebarDirection() * event.clientX);
+  }
+
+  function resizeSidebarWithKeys(event: KeyboardEvent) {
+    const step = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
+    if (!step) return;
+    event.preventDefault();
+    resizeSidebar(visibleSidebarWidth + step * sidebarDirection());
+  }
+
   const results = $derived(
     query.trim()
       ? searchEntries
           .filter(
             (e) =>
-              ui.state?.platform === "linux" ||
-              e.path !== "diagnostics.clipboard_buffer_notices",
+              (ui.state?.platform === "linux" ||
+                e.path !== "diagnostics.clipboard_buffer_notices") &&
+              (ui.state?.platform === "windows" ||
+                e.path !== "general.show_shortcuts_mode"),
           )
           .map((e) => ({
             ...e,
@@ -46,7 +81,7 @@
     const controller = new AbortController();
     void run(async () => {
       await load();
-      if (!controller.signal.aborted && ui.state?.service_online)
+      if (!controller.signal.aborted)
         void eventLoop(controller.signal);
     });
     return () => {
@@ -58,7 +93,11 @@
   }
   onMount(() => {
     if (authenticated) stopSession = startSession();
-    return () => stopSession?.();
+    window.addEventListener("settings-close-request", close);
+    return () => {
+      window.removeEventListener("settings-close-request", close);
+      stopSession?.();
+    };
   });
   async function signIn(event: SubmitEvent) {
     event.preventDefault();
@@ -77,7 +116,7 @@
   }
   $effect(() => {
     document.documentElement.dataset.theme =
-      ui.config?.general.ui_theme || "auto";
+      ui.config?.general.ui_theme || "dark";
     document.documentElement.lang = locale();
     document.documentElement.dir = direction();
     document.title = `${t("ui.settings.c7f73b")} · Simple STT`;
@@ -122,12 +161,15 @@
     if (event.key === "Escape") query = "";
   }
   async function close() {
+    if (ui.dirty && !window.confirm(t("settings.discard_changes"))) return;
+    if (!window.dispatchEvent(new Event("settings-close-approved", { cancelable: true }))) return;
     await api("/api/close", {});
     window.close();
   }
 </script>
 
 <svelte:window
+  onresize={() => (viewportWidth = window.innerWidth)}
   onbeforeunload={(event) => {
     if (ui.dirty) {
       event.preventDefault();
@@ -147,8 +189,8 @@
     </form>
   </main>
 {:else}
-<div class="app-shell">
-  <aside class="rail">
+<div class="app-shell" style:--sidebar-width={visibleSidebarWidth + "px"}>
+  <aside id="settings-sidebar" class="rail">
     <div class="brand">
       <span class="brand-mark"><Icon name="audio" size={23} /></span><strong
         >Simple STT</strong
@@ -200,7 +242,7 @@
           ><Icon name={page.icon} /><span class="nav-copy"><span>{t(page.name)}</span><small>{t(page.description)}</small></span></button
         >{/each}
     </nav>
-    <div class="rail-bottom">
+    {#if !desktop}<div class="rail-bottom">
       <span
         id="service"
         class="service-pill"
@@ -211,10 +253,17 @@
         ><i></i><span>{t(ui.state?.service_online ? "Connected" : "Offline")}</span
         ></span
       ><IconButton icon="close" label="ui.close_settings.5bd91a" onclick={close} />
-    </div>
+    </div>{/if}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (ARIA window splitters are focusable and interactive) -->
+    <div class="sidebar-grip" role="separator" tabindex="0"
+      aria-label={t("ui.resize_sidebar")} aria-orientation="vertical" aria-controls="settings-sidebar"
+      aria-valuemin={minSidebarWidth} aria-valuemax={maxSidebarWidth} aria-valuenow={visibleSidebarWidth}
+      onpointerdown={startSidebarDrag} onpointermove={dragSidebar} onkeydown={resizeSidebarWithKeys}></div>
   </aside>
   <main>
-    <header class="page-head"><h1>{t(current.name)}</h1><p class="page-description">{t(current.description)}</p></header>
+    <header class="page-head">
+      <h1>{t(current.name)}</h1>
+    </header>
     <form
       id="settings"
       inert={ui.configLoading}
@@ -241,6 +290,7 @@
 {#if ui.notice}<div
     id="notice"
     class="notice"
+    class:notice-raised={ui.dirty || !desktop}
     data-kind={ui.noticeKind}
     role="status"
     aria-live="polite"

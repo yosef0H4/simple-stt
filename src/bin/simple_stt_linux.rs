@@ -85,7 +85,14 @@ enum LinuxCommand {
     Shutdown,
     Status,
     Launch,
-    Settings,
+    Settings {
+        /// Open Settings in the default browser.
+        #[arg(long, conflicts_with = "no_browser")]
+        browser: bool,
+        /// Serve Settings and print its URL without opening a window.
+        #[arg(long)]
+        no_browser: bool,
+    },
     ConfigureShortcuts,
     CycleDelivery,
     ToggleCleanup,
@@ -195,7 +202,10 @@ fn main() -> Result<()> {
         LinuxCommand::Shutdown => shutdown(),
         LinuxCommand::Status => status(),
         LinuxCommand::Launch => launch(),
-        LinuxCommand::Settings => settings(),
+        LinuxCommand::Settings {
+            browser,
+            no_browser,
+        } => settings(browser, no_browser),
         LinuxCommand::ConfigureShortcuts => configure_shortcuts(),
         LinuxCommand::CycleDelivery => toggle_linux_delivery_mode(),
         LinuxCommand::ToggleCleanup => toggle_linux_cleanup(),
@@ -1349,16 +1359,24 @@ fn print_shortcut_commands() -> Result<()> {
     Ok(())
 }
 
-fn settings() -> Result<()> {
+fn settings(browser: bool, no_browser: bool) -> Result<()> {
     ensure_dirs()?;
     let executable = find_exe("simple-stt-settings")?;
-    ProcessCommand::new(executable)
+    let mut command = ProcessCommand::new(executable);
+    command
         .arg("--state-file")
         .arg(state_file())
         .arg("--service-token")
-        .arg(token()?)
-        .spawn()
-        .context("starting Simple STT Settings")?;
+        .arg(token()?);
+    if no_browser {
+        let status = command.arg("--no-browser").status()?;
+        anyhow::ensure!(status.success(), "Settings exited with {status}");
+    } else {
+        if browser {
+            command.arg("--browser");
+        }
+        command.spawn().context("starting Simple STT Settings")?;
+    }
     Ok(())
 }
 
@@ -1373,7 +1391,7 @@ fn launch() -> Result<()> {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
             if run_ctl(["ping"], Duration::from_secs(1), false).is_ok() {
-                return settings();
+                return settings(false, false);
             }
             std::thread::sleep(Duration::from_millis(150));
         }
@@ -1381,7 +1399,7 @@ fn launch() -> Result<()> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        settings()
+        settings(false, false)
     }
 }
 

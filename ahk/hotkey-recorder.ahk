@@ -4,10 +4,11 @@
 #Include lib\Utils.ahk
 #Include lib\Hotkeys.ahk
 
-if A_Args.Length != 1
+if A_Args.Length < 1 || A_Args.Length > 2
     ExitApp 2
 
 outputPath := A_Args[1]
+allowCapsLock := A_Args.Length = 2 && A_Args[2] = "--allow-caps-lock"
 capsHeld := false
 Hotkey("*CapsLock", CaptureCapsDown, "On")
 Hotkey("*CapsLock up", CaptureCapsUp, "On")
@@ -45,6 +46,11 @@ CaptureCapsDown(*) {
 }
 
 CaptureCapsUp(*) {
-    global capsHeld
+    global capsHeld, input, allowCapsLock, outputPath
+    if allowCapsLock && capsHeld && input.InProgress {
+        try FileDelete(outputPath)
+        FileAppend("CapsLock", outputPath, "UTF-8")
+        ExitApp 0
+    }
     capsHeld := false
 }

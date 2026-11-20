@@ -56,6 +56,8 @@ SOFTWARE.
 
 JetBrains Mono is used for waveform glyphs; Noto Sans Arabic is used for Arabic UI text. Both are licensed under SIL Open Font License 1.1. The font license texts are in `assets/fonts/LICENSE-JetBrainsMono.txt` and `assets/fonts/LICENSE-NotoSansArabic.txt`, and Windows packages include them in `licenses/`. Noto Sans Arabic's Regular face and browser WOFF2 are derived from the upstream variable face at weight 400.
 
+The English Settings typeface, Simple STT Paper Sans, is a subset of Adobe Source Sans 3. The SIL Open Font License 1.1 and Adobe copyright notice ship with the font in `web/settings/public/settings-sans-license.txt` and in distribution packages.
+
 ## fastText language identification
 
 The unmodified Facebook AI Research `lid.176.ftz` model is distributed under CC BY-SA 3.0. See `assets/language/ATTRIBUTION.md` and `LICENSE-CC-BY-SA-3.0.txt` (also installed with the package licenses). The fastText library is MIT licensed.

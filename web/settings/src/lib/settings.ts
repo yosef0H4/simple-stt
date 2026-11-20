@@ -17,6 +17,16 @@ export const deliveryOptions: [DeliveryMode, string][] = [
 ];
 export const fields: Record<string, FieldSpec> = {
   shortcutReminders: { path: "general.shortcut_reminders", label: "ui.shortcut_reminders", type: "checkbox", help: "ui.shortcut_reminders_help" },
+  showShortcutsMode: {
+    path: "general.show_shortcuts_mode",
+    label: "ui.show_shortcuts_mode",
+    type: "select",
+    help: "ui.show_shortcuts_mode_help",
+    options: [
+      ["hold", "ui.hold_to_show_shortcuts"],
+      ["press", "ui.press_to_show_shortcuts"],
+    ],
+  },
   enabled: { path: "general.enabled", label: "ui.simple_stt.d84a2c", type: "checkbox" },
   shortcutSystem: {
     path: "general.linux_hotkey_backend",

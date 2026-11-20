@@ -1,4 +1,20 @@
-# Media CLI
+# Command-line usage
+
+## Settings
+
+On Linux, `simple-stt settings` opens or focuses the native Settings window. The
+Windows tray and `runtime\simple-stt-settings.exe` open the same window.
+Closing it exits the webview and Settings server while the background app
+continues to run. The native window uses WebKitGTK on Linux and Microsoft Edge
+WebView2 on Windows.
+
+Pass `--browser` to open Settings in an external browser. For a headless
+session, pass `--no-browser` to print the authenticated loopback URL without
+starting a window. Both flags work with `simple-stt settings` on Linux and
+`simple-stt-settings.exe` on Windows. An SSH tunnel can forward the loopback
+port to a browser on another machine.
+
+## Media
 
 On Linux, `simple-stt-linux` exposes non-interactive media operations under
 `simple-stt-linux media`. They use the same saved model, voice, device, and provider

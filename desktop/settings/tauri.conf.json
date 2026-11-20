@@ -1,0 +1,11 @@
+{
+  "productName": "Simple STT Settings",
+  "identifier": "io.github.yosef0h4.simple-stt.settings",
+  "app": {
+    "windows": [],
+    "security": { "capabilities": [] }
+  },
+  "bundle": {
+    "icon": ["../../ahk/icons/simple-stt.ico", "icons/icon.png"]
+  }
+}

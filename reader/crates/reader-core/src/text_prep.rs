@@ -101,6 +101,42 @@ fn slash_words(token: &str) -> Option<String> {
     Some(format!("{left}, {right}{punctuation}"))
 }
 
+fn omit_pronunciations(text: &str, mut in_code: bool) -> String {
+    static PRONUNCIATION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\([ \t]*/[^/\x60\r\n]{1,120}/[ \t]*\)|/[^/\s\x60][^/\x60\r\n]{0,119}/")
+            .unwrap()
+    });
+    let mut result = String::with_capacity(text.len());
+    let mut position = 0;
+    for span in PRONUNCIATION.find_iter(text) {
+        let before = &text[position..span.start()];
+        in_code = code_after(before, in_code);
+        result.push_str(before);
+        let is_ipa = span
+            .as_str()
+            .chars()
+            .any(|c| matches!(c, '\u{0250}'..='\u{02af}' | 'ˈ' | 'ˌ' | 'ː'));
+        let bracketed = span.as_str().starts_with('(');
+        let bounded = text[..span.start()]
+            .chars()
+            .next_back()
+            .is_none_or(char::is_whitespace)
+            && text[span.end()..].chars().next().is_none_or(|c| {
+                c.is_whitespace() || matches!(c, '.' | ',' | ':' | ';' | '?' | '!')
+            });
+        position = span.end();
+        if !in_code && is_ipa && (bracketed || bounded) {
+            if result.ends_with([' ', '\t']) && text[position..].starts_with([' ', '\t']) {
+                position += 1;
+            }
+        } else {
+            result.push_str(span.as_str());
+        }
+    }
+    result.push_str(&text[position..]);
+    result
+}
+
 /// Track runs of backticks consistently across independently planned units.
 pub fn code_after(text: &str, mut in_code: bool) -> bool {
     let mut in_ticks = false;
@@ -155,12 +191,14 @@ fn clean_words(
             } else {
                 prepared
             };
-            let converted = (if binding.currency_words {
+            let converted = (if binding.currency_words && matches!(model, "kokoro" | "supertonic3")
+            {
                 dollar_token(&prepared, language)
             } else {
                 None
             })
-            .or_else(|| slash_words(&prepared));
+            .or_else(|| slash_words(&prepared))
+            .or_else(|| (prepared == "/").then(String::new));
             result.push_str(converted.as_deref().unwrap_or(&prepared));
         }
         *code = next_code;
@@ -182,6 +220,29 @@ pub fn normalize(text: &str, model: &str, language: &str, binding: &Binding) -> 
     normalize_with_context(text, model, language, binding, false)
 }
 
+#[cfg(test)]
+#[test]
+fn skips_inline_ipa_and_prose_slashes_on_each_speech_route() {
+    let text = "Sherlock Holmes (/ˈʃɜːrlɒk ˈhoʊmz/) is here and / or there.";
+    let binding = Binding::default();
+    for model in ["kokoro", "supertonic3", ""] {
+        assert_eq!(
+            normalize(text, model, "en", &binding)
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            "Sherlock Holmes is here and or there."
+        );
+    }
+    let literal = Binding {
+        clean_text: false,
+        ..binding.clone()
+    };
+    assert_eq!(normalize(text, "kokoro", "en", &literal), text);
+    let technical = "`/ˈfəʊ/` and https://example.test/a/b and 1/2";
+    assert_eq!(normalize(technical, "kokoro", "en", &binding), technical);
+}
+
 pub fn normalize_with_context(
     text: &str,
     model: &str,
@@ -189,12 +250,12 @@ pub fn normalize_with_context(
     binding: &Binding,
     starts_in_code: bool,
 ) -> String {
-    if !binding.clean_text || !matches!(model, "kokoro" | "supertonic3") {
+    if !binding.clean_text {
         return text.to_owned();
     }
     let primary = language.split(['-', '_']).next().unwrap_or("");
     clean_words(
-        text,
+        &omit_pronunciations(text, starts_in_code),
         &primary.to_ascii_lowercase(),
         model,
         binding,

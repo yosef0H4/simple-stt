@@ -116,7 +116,7 @@ path = "src/bin/overlay_e2e.rs"
 
 [workspace]
 resolver = "2"
-members = ["reader/crates/reader-core", "reader/crates/reader-tts", "reader/crates/reader-ocr", "reader/crates/readerd", "reader/crates/readerctl"]
+members = ["reader/crates/reader-core", "reader/crates/reader-tts", "reader/crates/reader-ocr", "reader/crates/readerd", "reader/crates/readerctl", "desktop/settings"]
 
 [workspace.package]
 version = "0.3.1"

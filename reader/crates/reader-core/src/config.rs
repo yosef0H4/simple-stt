@@ -124,7 +124,6 @@ pub struct SpeechRouteDefaults {
     pub provider: SpeechProvider,
     pub key_slot: Option<String>,
     pub use_feature_key: bool,
-    pub fallback: Option<crate::routing::Connection>,
     pub fallback_to_local: bool,
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -135,7 +134,6 @@ pub struct SpeechSettings {
     pub route_defaults: Option<SpeechRouteDefaults>,
     pub saved_remote: Option<SpeechProvider>,
     pub key_slot: Option<String>,
-    pub remote_fallback: Option<crate::routing::Connection>,
     pub use_feature_key: bool,
     pub selection: crate::routing::Selection,
     pub provider: SpeechProvider,
@@ -157,7 +155,6 @@ impl Default for SpeechSettings {
             route_defaults: None,
             saved_remote: None,
             key_slot: None,
-            remote_fallback: None,
             use_feature_key: true,
             selection: crate::routing::Selection {
                 mode: crate::routing::SelectionMode::AutoDetect,
@@ -214,6 +211,7 @@ impl Default for OcrSettings {
 pub struct PlaybackSettings {
     /// Seconds the TTS worker may remain ready after a job.
     pub keep_warm_seconds: u16,
+    /// Saved playback endpoint ID (or a legacy device name). None follows the system default.
     pub output_device: Option<String>,
     pub max_buffer_seconds: u8,
     pub sentence_gap_ms: u16,
@@ -469,9 +467,6 @@ impl AppConfig {
         );
         if let Some(slot) = &self.speech.key_slot {
             crate::secrets::validate_slot(slot)?;
-        }
-        if let Some(fallback) = &self.speech.remote_fallback {
-            fallback.validate(crate::routing::Feature::Tts)?;
         }
         if let SpeechProvider::OpenAiCompatible {
             base_url, model, ..

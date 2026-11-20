@@ -74,7 +74,7 @@ Copy-Item -LiteralPath (Join-Path $Root 'ahk\lib') -Destination (Join-Path $Runt
 Copy-Item -LiteralPath (Join-Path $Root 'ahk\icons') -Destination (Join-Path $Runtime 'icons') -Recurse -Force
 Copy-Item -LiteralPath $AhkBase -Destination (Join-Path $Runtime 'AutoHotkey64.exe') -Force
 
-foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe','simple-stt-settings.exe','readerd.exe','readerctl.exe','reader-tts.exe','reader-ocr.exe','reader-hud.exe')) {
+foreach ($Name in @('simple-stt-capture.exe','simple-stt-infer.exe','simple-stt-ctl.exe','simple-stt-settings.exe','simple-stt-settings-window.exe','readerd.exe','readerctl.exe','reader-tts.exe','reader-ocr.exe','reader-hud.exe')) {
     Copy-Item -LiteralPath (Join-Path $ResolvedTargetDir "release\$Name") -Destination $Runtime -Force
 }
 Copy-Item -LiteralPath (Join-Path $Root 'assets\language\lid.176.ftz') -Destination $Runtime -Force
@@ -83,6 +83,7 @@ New-Item -ItemType Directory -Path (Join-Path $Portable 'licenses') -Force | Out
 Copy-Item -LiteralPath (Join-Path $Root 'assets\language\LICENSE-CC-BY-SA-3.0.txt') -Destination (Join-Path $Portable 'licenses') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'assets\language\ATTRIBUTION.md') -Destination (Join-Path $Portable 'licenses\fastText-ATTRIBUTION.md') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'assets\fonts\LICENSE-NotoSansArabic.txt') -Destination (Join-Path $Portable 'licenses') -Force
+Copy-Item -LiteralPath (Join-Path $Root 'web\settings\public\settings-sans-license.txt') -Destination (Join-Path $Portable 'licenses') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'assets\fonts\LICENSE-JetBrainsMono.txt') -Destination (Join-Path $Portable 'licenses') -Force
 Copy-Item -LiteralPath (Join-Path $Root 'THIRD_PARTY_NOTICES.md') -Destination $Portable -Force
 Copy-Item -LiteralPath (Join-Path $Root 'START_HERE.txt') -Destination $Portable -Force
@@ -106,6 +107,7 @@ $Required = @(
     'runtime\simple-stt-infer.exe',
     'runtime\simple-stt-ctl.exe',
     'runtime\simple-stt-settings.exe',
+    'runtime\simple-stt-settings-window.exe',
     'runtime\readerd.exe',
     'runtime\readerctl.exe',
     'runtime\reader-tts.exe',

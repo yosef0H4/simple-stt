@@ -131,6 +131,7 @@ fn verify_frontend(root: &Path) -> Result<(), String> {
     let mut expected_sources = BTreeSet::new();
     collect_files(&frontend, &frontend.join("src"), &mut expected_sources)?;
     collect_files(&frontend, &frontend.join("tools"), &mut expected_sources)?;
+    collect_files(&frontend, &frontend.join("public"), &mut expected_sources)?;
     expected_sources.extend(
         [
             "index.html",
@@ -178,16 +179,21 @@ fn verify_frontend(root: &Path) -> Result<(), String> {
     let assets = manifest["assets"]
         .as_object()
         .expect("validated assets object");
-    for name in ["index.html", "app.js", "styles.css", "arabic.woff2"] {
+    let required_assets = [
+        "index.html",
+        "app.js",
+        "styles.css",
+        "arabic.woff2",
+        "settings-sans.woff2",
+        "settings-sans-license.txt",
+    ];
+    for name in required_assets {
         if !assets.contains_key(name) {
             return Err(format!("frontend manifest omits required asset `{name}`"));
         }
     }
-    if assets.len() != 4 {
-        return Err(
-            "frontend manifest assets must contain exactly index.html, app.js, styles.css, and arabic.woff2"
-                .into(),
-        );
+    if assets.len() != required_assets.len() {
+        return Err("frontend manifest contains unexpected assets".into());
     }
     for (relative, expected) in assets {
         let path = checked_path(&frontend.join("dist"), relative)?;

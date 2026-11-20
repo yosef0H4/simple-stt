@@ -145,6 +145,8 @@ def install_payload(iscc, version):
     libraries = (ROOT / "artifacts/simple-stt-portable").rglob("*.dll")
     assert not any(path.name.startswith(("parakeet", "ggml", "onnxruntime", "sherpa-onnx")) for path in libraries), "installer bundled an inference runtime"
     assert (target / "runtime/action-replay.ahk").is_file()
+    assert (target / "runtime/simple-stt-settings-window.exe").is_file()
+    assert (target / "licenses/settings-sans-license.txt").is_file()
     executable = target / "runtime/simple-stt-ctl.exe"
     env = dict(os.environ, SIMPLE_STT_CONFIG=str(target / "unused-test-config.json"))
     for scope in ["app", "reader"]:
@@ -152,8 +154,11 @@ def install_payload(iscc, version):
         result = result.get("config", result)
         if scope == "app":
             assert not result["speech"]["single_model_filename"]
-            for key in ["toggle_delivery_hotkey", "toggle_cleanup_hotkey", "retry_delivery_hotkey", "show_shortcuts_hotkey"]:
-                assert result["general"][key] == "None"
+            assert result["general"]["ui_theme"] == "dark"
+            for key in ["toggle_delivery_hotkey", "toggle_cleanup_hotkey", "retry_delivery_hotkey"]:
+                assert result["general"][key] == "None", key
+            assert result["general"]["show_shortcuts_hotkey"] == "CapsLock"
+            assert result["general"]["show_shortcuts_mode"] == "hold"
         else:
             assert all(value == "None" for value in result["shortcuts"].values())
     print("PASS isolated install: existing models/settings preserved, no models added, packaged defaults stay empty", flush=True)

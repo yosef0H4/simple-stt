@@ -37,10 +37,6 @@ struct Args {
     model: Option<String>,
     #[arg(long)]
     remote_voice: Option<String>,
-    #[arg(long)]
-    remote_fallback: Option<String>,
-    #[arg(skip)]
-    using_fallback_key: bool,
     #[arg(long, default_value = "wav")]
     format: String,
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
@@ -581,13 +577,16 @@ fn remote_stream(
         .model
         .as_deref()
         .context("remote speech needs --model")?;
-    let key = std::env::var(if args.using_fallback_key {
-        "SIMPLE_TTS_FALLBACK_API_KEY"
-    } else {
-        "SIMPLE_TTS_SPEECH_API_KEY"
-    })
-    .unwrap_or_default();
-    let mut request=client.post(reader_core::provider_url::operation(base,"audio/speech")?).json(&serde_json::json!({"model":model,"input":text,"voice":args.remote_voice.as_deref().unwrap_or(voice),"response_format":args.format,"speed":speed}));
+    let key = std::env::var("SIMPLE_TTS_SPEECH_API_KEY").unwrap_or_default();
+    let mut request = client
+        .post(reader_core::provider_url::operation(base, "audio/speech")?)
+        .json(&serde_json::json!({
+            "model": model,
+            "input": text,
+            "voice": args.remote_voice.as_deref().unwrap_or(voice),
+            "response_format": args.format,
+            "speed": speed
+        }));
     if !key.is_empty() {
         request = request.bearer_auth(&key)
     }
@@ -921,7 +920,7 @@ fn process_request(
                     return Ok(false);
                 }
             } else {
-                let mut result = synthesize_remote(
+                let result = synthesize_remote(
                     args,
                     client,
                     SynthesisRequest {
@@ -935,37 +934,6 @@ fn process_request(
                     },
                     cancelled,
                 );
-                if result.as_ref().is_err_and(is_transient_remote_error)
-                    && !cancelled.load(Ordering::Acquire)
-                {
-                    if let Some(fallback) = &args.remote_fallback {
-                        let fallback: reader_core::routing::Connection =
-                            serde_json::from_str(fallback)?;
-                        let next = Args {
-                            base_url: Some(fallback.base_url),
-                            model: Some(fallback.model),
-                            remote_voice: Some(fallback.voice),
-                            format: fallback.format,
-                            remote_fallback: None,
-                            using_fallback_key: true,
-                            ..args.clone()
-                        };
-                        result = synthesize_remote(
-                            &next,
-                            client,
-                            SynthesisRequest {
-                                job_id: &job_id,
-                                generation,
-                                sentence,
-                                unit,
-                                text: &text,
-                                voice: &voice,
-                                speed,
-                            },
-                            cancelled,
-                        );
-                    }
-                }
                 if cancelled.load(Ordering::Acquire) {
                     emit(&WorkerEvent::Cancelled { job_id, generation })?;
                     return Ok(false);
@@ -1534,8 +1502,6 @@ mod tests {
             base_url: Some(base_url),
             model: Some("fixture-model".into()),
             remote_voice: Some("alloy".into()),
-            remote_fallback: None,
-            using_fallback_key: false,
             format: "pcm".into(),
             fallback_to_local,
             fallback_provider: "local_kokoro".into(),
@@ -1660,8 +1626,6 @@ mod tests {
             base_url: Some(format!("http://{address}/v1")),
             model: Some("mock".into()),
             remote_voice: Some("alloy".into()),
-            remote_fallback: None,
-            using_fallback_key: false,
             format: "pcm".into(),
             fallback_to_local: false,
             fallback_provider: "local_kokoro".into(),

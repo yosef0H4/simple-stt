@@ -9,12 +9,19 @@
   import Range from "../components/Range.svelte";
   import SelectionCopy from "../components/SelectionCopy.svelte";
   import Group from "../components/Group.svelte";
-  import type { ReaderConfig } from "../lib/reader";
+  import Combo from "../components/Combo.svelte";
   let text = $state("");
   let serverToken = $state("");
   let speechKeySaved = $state(false); let ocrKeySaved = $state(false);
   let busy = $state(false);
   let status = $state<Record<string, unknown> | null>(null);
+  let outputDevices = $state<{id: string; name: string}[]>([]);
+  const outputDevice = $derived(reading.config?.playback.output_device || "");
+  const selectedDevice = $derived(outputDevices.find(device => device.id === outputDevice || device.name === outputDevice)?.id ?? outputDevice);
+  const outputChoices = $derived([
+    {value: "", label: "ui.system_default.9d8d38"},
+    ...outputDevices.map(device => ({value: device.id, label: device.name})),
+  ]);
 
   $effect(() => {markDirty();});
   async function showToken() {
@@ -42,9 +49,15 @@
   }
   onMount(() => {
     let disposed=false;
+    async function refreshDevices() {
+      const result = await api<{devices: {id: string; name: string}[]}>("/api/reader-output-devices").catch(() => null);
+      if (!disposed && result) outputDevices = result.devices;
+    }
+    void refreshDevices();
+    window.addEventListener("focus", refreshDevices);
     void refresh().catch(error=>notice(t("reading.failed"),"error",String(error)));
     const timer=setInterval(()=>{if(!disposed) void api<{status: Record<string,unknown>|null}>("/api/reader-status").then(value=>status=value.status).catch(()=>{});},1500);
-    return ()=>{disposed=true;clearInterval(timer);};
+    return ()=>{disposed=true;clearInterval(timer);window.removeEventListener("focus", refreshDevices);};
   });
 </script>
 
@@ -61,6 +74,11 @@
     <details class="guide"><summary>{t("reading.more")}</summary><div class="reading-actions">{#each ["read_selection","read_clipboard","listen_clipboard","pause","resume","previous","replay","next","unload"] as name}<button type="button" disabled={busy} onclick={()=>action(name)}>{t(`reading.${name}`)}</button>{/each}</div></details>
     <p role="status">{status ? t(`reading.${String(status.state)}`) : t("reading.offline")}{#if status?.clipboard_listening} · {t("reading.listening")}{/if}</p>
     {#if typeof status?.prepared_text === 'string' && status.prepared_text}<div class="spoken-text"><strong>{t('reading.spoken_text')}</strong><p dir="auto">{status.prepared_text}</p></div>{/if}
+  </Group>
+  <Group title="reading.playback" icon="audio">
+    <Combo label="reading.output_device" path="playback.output_device" value={selectedDevice}
+      items={outputChoices} unavailable help="reading.output_device_help"
+      onselect={value => { if (reading.config) reading.config.playback.output_device = value || null; }} />
   </Group>
   <Group title="reading.read_along" icon="keyboard">
     <div class="field"><label for="read-along-action">{t("reading.read_along_action")}</label><div class="control"><select id="read-along-action" bind:value={reading.config.read_along.action}><option value="key">{t("reading.read_along_key")}</option><option value="click">{t("reading.read_along_click")}</option></select></div></div>

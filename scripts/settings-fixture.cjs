@@ -30,6 +30,7 @@ const makeConfig = () => ({
     toggle_delivery_hotkey: "CapsLock+D",
     cancel_hotkey: "CapsLock+A",
     show_shortcuts_hotkey: "CapsLock+H",
+    show_shortcuts_mode: "hold",
     shortcut_reminders: true,
     retry_delivery_hotkey: "Ctrl+Alt+V",
     toggle_cleanup_hotkey: "None",
@@ -280,6 +281,7 @@ const server = http.createServer(async (req, res) => {
     if(url.pathname==="/api/provider-discovery") {const body=JSON.parse(await readBody(req));actions.push({action:'provider_discovery',...body});return sendJson(res,200,{models:[{id:'server-model',label:'Server model'}],voices:[{id:'af_bella',label:'Bella',model:'server-model'}],voices_supported:true});}
     if(url.pathname==="/api/reader") return sendJson(res,200,{config:clone(readerConfig),status:null,speech_key_saved:false,ocr_key_saved:false});
     if(url.pathname==="/api/reader-status") return sendJson(res,200,{status:null});
+    if(url.pathname==="/api/reader-output-devices") return sendJson(res,200,{devices:[{id:"fixture:headset",name:"Fixture headphones"}]});
     if(url.pathname==="/api/reader-save") {const body=JSON.parse(await readBody(req));assert.equal(body.expected_revision,readerConfig.revision);readerConfig=body.config;readerConfig.revision++;return sendJson(res,200,{config:clone(readerConfig)});}
     if(url.pathname==="/api/reader-action") {actions.push(JSON.parse(await readBody(req)));return sendJson(res,200,{message:"Reading started"});}
     if(url.pathname==="/api/state" && req.method === "GET")

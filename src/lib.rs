@@ -10,6 +10,7 @@ pub mod logging;
 pub mod models;
 pub mod provider_discovery;
 pub mod remote_stt;
+pub mod settings_server;
 pub mod shortcuts;
 
 pub mod reader;

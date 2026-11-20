@@ -38,8 +38,9 @@ export async function api<T>(
 export async function events(
   after: number,
   signal: AbortSignal,
-): Promise<import("./types").ServiceEvent[]> {
-  const response = await fetch(`/api/events?after=${after}`, {
+  pid?: number,
+): Promise<{ events: import("./types").ServiceEvent[]; pid?: number }> {
+  const response = await fetch(`/api/events?after=${after}${pid === undefined ? "" : `&pid=${pid}`}`, {
     headers: { "X-Simple-STT-Token": token },
     signal,
   });
@@ -47,5 +48,5 @@ export async function events(
   const line = (await response.text())
     .split("\n")
     .find((v) => v.startsWith("data: "));
-  return line ? JSON.parse(line.slice(6)).events : [];
+  return line ? JSON.parse(line.slice(6)) : { events: [] };
 }

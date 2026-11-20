@@ -33,7 +33,7 @@ tar -C "$root" --sort=name --mtime="@$source_date_epoch" \
   --exclude='./.vscode' --exclude='./.idea' --exclude='./lcov.info' \
   --exclude='./.env' \
   --exclude='__pycache__' --exclude='*.pyc' \
-  --exclude='./artifacts' --exclude='./web/settings/node_modules' \
+  --exclude='./artifacts' --exclude='./web/settings/node_modules' --exclude='./desktop/settings/gen' \
   --exclude='./resources/bin' -czf "$source_archive_tmp" .
 tar -xzf "$source_archive_tmp" -C "$snapshot"
 sha256sum "$source_archive_tmp" | awk '{print $1}' > "$source_hash_file"

@@ -29,7 +29,7 @@
       try {
         const result = await api<{ hotkey: string }>(
           "/api/hotkey-capture",
-          {},
+          { allow_caps_lock: path === "general.show_shortcuts_hotkey" && get("general.show_shortcuts_mode") === "hold" },
           controller?.signal,
         );
         if (

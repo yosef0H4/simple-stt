@@ -196,8 +196,8 @@ impl ModelSelectionMode {
 #[serde(rename_all = "snake_case")]
 pub enum UiTheme {
     Light,
-    Dark,
     #[default]
+    Dark,
     Auto,
 }
 
@@ -235,6 +235,14 @@ pub enum RecordingMode {
     #[default]
     Hold,
     Toggle,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutHintMode {
+    #[default]
+    Hold,
+    Press,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -315,6 +323,8 @@ pub struct GeneralConfig {
     pub toggle_cleanup_hotkey: String,
     pub retry_delivery_hotkey: String,
     pub show_shortcuts_hotkey: String,
+    #[serde(default)]
+    pub show_shortcuts_mode: ShortcutHintMode,
     pub shortcut_reminders: bool,
     pub linux_hotkey_backend: LinuxHotkeyBackend,
     pub capslock_behavior: CapsLockBehavior,
@@ -357,8 +367,6 @@ pub struct RemoteSttConfig {
     pub use_feature_key: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_slot: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fallback: Option<Box<RemoteSttConfig>>,
     pub base_url: String,
     pub model: String,
     pub fallback_to_local: bool,
@@ -398,21 +406,15 @@ impl SpeechConfig {
                 .get(&reader_core::routing::primary(language))
                 .filter(|route| route.enabled)
             {
-                let convert = |connection: &reader_core::routing::Connection| RemoteSttConfig {
+                let connection = &route.primary;
+                return RemoteSttConfig {
                     base_url: connection.base_url.clone(),
                     model: connection.model.clone(),
                     key_slot: connection.key_slot.clone(),
                     use_feature_key: false,
-                    fallback: None,
                     fallback_to_local: route.fallback_to_local,
                     timeout_ms: connection.timeout_ms,
                 };
-                let mut remote = convert(&route.primary);
-                remote.fallback = route
-                    .fallback
-                    .as_ref()
-                    .map(|connection| Box::new(convert(connection)));
-                return remote;
             }
         }
         self.remote_openai_compatible.clone()
@@ -527,12 +529,13 @@ impl Default for AppConfig {
                 .to_owned(),
                 toggle_cleanup_hotkey: "None".to_owned(),
                 retry_delivery_hotkey: "None".to_owned(),
-                show_shortcuts_hotkey: "None".to_owned(),
+                show_shortcuts_hotkey: if cfg!(windows) { "CapsLock" } else { "None" }.to_owned(),
+                show_shortcuts_mode: ShortcutHintMode::Hold,
                 shortcut_reminders: true,
                 linux_hotkey_backend: LinuxHotkeyBackend::Auto,
                 capslock_behavior: CapsLockBehavior::PreserveTap,
                 start_at_login: false,
-                ui_theme: UiTheme::Auto,
+                ui_theme: UiTheme::default(),
                 ui_language: UiLanguage::Auto,
             },
             audio: AudioConfig {
@@ -546,7 +549,6 @@ impl Default for AppConfig {
                 remote_openai_compatible: RemoteSttConfig {
                     key_slot: None,
                     use_feature_key: true,
-                    fallback: None,
                     base_url: String::new(),
                     model: String::new(),
                     fallback_to_local: true,
@@ -680,6 +682,15 @@ impl AppConfig {
         anyhow::ensure!(
             !self.general.show_shortcuts_hotkey.trim().is_empty(),
             "show_shortcuts_hotkey must not be empty"
+        );
+        anyhow::ensure!(
+            self.general.show_shortcuts_mode == ShortcutHintMode::Hold
+                || !self
+                    .general
+                    .show_shortcuts_hotkey
+                    .trim()
+                    .eq_ignore_ascii_case("CapsLock"),
+            "Caps Lock alone requires Hold to show"
         );
         anyhow::ensure!(
             !self.general.retry_delivery_hotkey.trim().is_empty(),
@@ -1424,7 +1435,6 @@ mod tests {
             &config.general.toggle_delivery_hotkey,
             &config.general.toggle_cleanup_hotkey,
             &config.general.retry_delivery_hotkey,
-            &config.general.show_shortcuts_hotkey,
         ] {
             assert_eq!(shortcut, "None");
         }
@@ -1438,14 +1448,29 @@ mod tests {
         ] {
             assert_eq!(shortcut, "None");
         }
+        assert_eq!(
+            config.general.show_shortcuts_hotkey,
+            if cfg!(windows) { "CapsLock" } else { "None" }
+        );
         let saved = AppConfig::normalize_json(
             &serde_json::json!({"general": {"retry_delivery_hotkey": "Ctrl+Alt+P", "show_shortcuts_hotkey": "Ctrl+Alt+H"}}),
         );
         assert_eq!(saved.general.retry_delivery_hotkey, "Ctrl+Alt+P");
         assert_eq!(saved.general.show_shortcuts_hotkey, "Ctrl+Alt+H");
+        assert_eq!(saved.general.show_shortcuts_mode, ShortcutHintMode::Hold);
         let reading: reader_core::config::ShortcutSettings =
             serde_json::from_value(serde_json::json!({"read_selection":"Ctrl+Alt+R"})).unwrap();
         assert_eq!(reading.read_selection, "Ctrl+Alt+R");
+    }
+
+    #[test]
+    fn pressing_for_shortcut_hints_requires_a_chord_if_caps_lock_is_used() {
+        let mut config = AppConfig::default();
+        config.general.show_shortcuts_mode = ShortcutHintMode::Press;
+        config.general.show_shortcuts_hotkey = " capslock ".into();
+        assert!(config.validate().is_err());
+        config.general.show_shortcuts_hotkey = "CapsLock+H".into();
+        config.validate().unwrap();
     }
 
     #[test]
@@ -1463,7 +1488,6 @@ mod tests {
                         ..Default::default()
                     },
                     fallback_to_local: language == "ar",
-                    ..Default::default()
                 },
             );
         }

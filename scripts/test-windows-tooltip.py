@@ -28,6 +28,7 @@ callback = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 samples = []
 shot = False
 shortcut_shot = False
+all_shortcuts_shot = False
 command = [str(ROOT / "target/debug/overlay-e2e.exe")]
 if arabic:
     command.append("--arabic")
@@ -60,8 +61,13 @@ with (OUTPUT / ("tooltip-live" + suffix + ".log")).open("w") as log:
                     ImageGrab.grab(bbox=found[0]).save(OUTPUT / (name + suffix + ".png"))
                     shot = True
                 if reader and found and 3.5 < elapsed < 5 and not shortcut_shot:
-                    ImageGrab.grab(bbox=found[0]).save(OUTPUT / ("tooltip-shortcuts" + suffix + ".png"))
+                    picture = ImageGrab.grab(bbox=found[0])
+                    assert picture.width > 3 * picture.height, "shortcut tooltip lost its two-column layout"
+                    picture.save(OUTPUT / ("tooltip-shortcuts" + suffix + ".png"))
                     shortcut_shot = True
+                if reader and found and 6.5 < elapsed < 8 and not all_shortcuts_shot:
+                    ImageGrab.grab(bbox=found[0]).save(OUTPUT / ("tooltip-all-shortcuts" + suffix + ".png"))
+                    all_shortcuts_shot = True
                 time.sleep(0.03)
             assert process.poll() is not None, "tooltip helper timed out"
             assert process.returncode == 0, "tooltip helper failed"
@@ -70,7 +76,7 @@ with (OUTPUT / ("tooltip-live" + suffix + ".log")).open("w") as log:
                 process.kill()
                 process.wait(timeout=5)
 if reader:
-    assert shot and shortcut_shot, "reader passage or shortcut tooltip was missing"
+    assert shot and shortcut_shot and all_shortcuts_shot, "reader passage or shortcut tooltip was missing"
     print("PASS native reader and shortcut tooltip screenshots")
     sys.exit(0)
 active = [visible for elapsed, visible in samples if 1 < elapsed < 4.5]

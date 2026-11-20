@@ -42,7 +42,7 @@ class SimpleSttShell {
         this.deliveryToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleDeliveryModeHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.cleanupToggleHotkey := HotkeyManager(ObjBindMethod(this, "ToggleCleanupHotkey"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
         this.retryDeliveryHotkey := HotkeyManager(ObjBindMethod(this, "RetryLastDelivery"), ObjBindMethod(this, "RetryReleased"), this.logger, this.capsController)
-        this.showShortcutsHotkey := HotkeyManager(ObjBindMethod(this, "ShowShortcuts"), ObjBindMethod(this, "NoopHotkeyUp"), this.logger, this.capsController)
+        this.showShortcutsHotkey := HotkeyManager(ObjBindMethod(this, "ShowShortcutsDown"), ObjBindMethod(this.capsController, "HideHint"), this.logger, this.capsController)
         this.readerHotkeys := Map()
         for key, action in Map("reader_read_selection", "read_selection", "reader_read_region", "read_region", "reader_copy_region", "copy_region", "reader_listen_clipboard", "listen_clipboard", "reader_read_along", "read_along")
             this.readerHotkeys[key] := HotkeyManager(ObjBindMethod(this, "NoopHotkeyUp"), ObjBindMethod(this, "ReaderAction", action), this.logger, this.capsController)
@@ -63,7 +63,11 @@ class SimpleSttShell {
             this.cancelHotkey.Configure(this.config.Get("cancel_hotkey", "CapsLock+A"), true, capsMode)
             this.deliveryToggleHotkey.Configure(this.config.Get("toggle_delivery_hotkey", "CapsLock+D"), true, capsMode)
             this.cleanupToggleHotkey.Configure(this.config.Get("toggle_cleanup_hotkey", "None"), true, capsMode)
-            this.showShortcutsHotkey.Configure(this.config.Get("show_shortcuts_hotkey", "CapsLock+H"), true, capsMode)
+            hint := this.config.Get("show_shortcuts_hotkey", "CapsLock")
+            bareCaps := StrLower(Trim(hint)) = "capslock"
+            this.holdShortcutHint := bareCaps || this.config.Get("show_shortcuts_mode", "hold") != "press"
+            this.capsController.ConfigureHint(this.holdShortcutHint ? hint : "None", capsMode, this.config.Get("instance_id"))
+            this.showShortcutsHotkey.Configure(bareCaps ? "None" : hint, true, capsMode, this.holdShortcutHint)
             this.retryDeliveryHotkey.Configure(this.config.Get("retry_delivery_hotkey", "CapsLock+V"), true, capsMode)
             for key, manager in this.readerHotkeys
                 manager.Configure(this.config.Get(key, "None"), true, capsMode)
@@ -73,14 +77,17 @@ class SimpleSttShell {
         }
     }
 
+    ShowShortcutsDown(*) {
+        if this.holdShortcutHint
+            this.capsController.ShowHint()
+        else if this.ipc.ready
+            this.ipc.CallService("show-shortcuts")
+    }
+
     ReaderAction(action, *) {
         try Run(SimpleSttQuote(this.ctlExe) . " reader-action " . action, A_ScriptDir, "Hide")
         catch Error as err
             this.logger.Write("error", "reading action failed: " . err.Message)
-    }
-
-    ShowShortcuts() {
-        this.ipc.CallService("show-shortcuts")
     }
 
     RecordDown() {
@@ -540,6 +547,7 @@ class SimpleSttShell {
         this.deliveryToggleHotkey.DisableBindings()
         this.retryDeliveryHotkey.DisableBindings()
         this.showShortcutsHotkey.DisableBindings()
+        this.capsController.ConfigureHint("None", "", "")
         for key, manager in this.readerHotkeys
             manager.DisableBindings()
         this.ReaderAction("shutdown")

@@ -20,6 +20,7 @@ Requires:       libsecret
 Requires:       xclip
 Requires:       wl-clipboard
 Requires:       slurp
+Requires:       webkit2gtk4.1
 
 %description
 Simple STT provides local microphone dictation, reading aloud, and screen text
@@ -45,6 +46,7 @@ cp -a %{_sourcedir}/stage/. %{buildroot}/
 %attr(0755,root,root) /usr/lib/simple-stt/simple-stt-infer
 %attr(0755,root,root) /usr/lib/simple-stt/simple-stt-ctl
 %attr(0755,root,root) /usr/lib/simple-stt/simple-stt-settings
+%attr(0755,root,root) /usr/lib/simple-stt/simple-stt-settings-window
 %attr(0755,root,root) /usr/lib/simple-stt/linux-fast-paste
 %attr(0755,root,root) /usr/lib/simple-stt/readerd
 %attr(0755,root,root) /usr/lib/simple-stt/readerctl
@@ -67,6 +69,7 @@ cp -a %{_sourcedir}/stage/. %{buildroot}/
 %license /usr/share/licenses/simple-stt/THIRD_PARTY_NOTICES.md
 %license /usr/share/licenses/simple-stt/OFL-JetBrainsMono.txt
 %license /usr/share/licenses/simple-stt/OFL-NotoSansArabic.txt
+%license /usr/share/licenses/simple-stt/settings-sans-license.txt
 %license /usr/share/licenses/simple-stt/LICENSE-CC-BY-SA-3.0.txt
 %license /usr/share/licenses/simple-stt/fastText-ATTRIBUTION.md
 

@@ -400,14 +400,22 @@ fn main() {
         overlay.notify_info(
             shortcuts::summary(
                 &[
-                    ("read-along".to_owned(), "CapsLock+Z".to_owned()),
-                    ("read-selection".to_owned(), "CapsLock+R".to_owned()),
+                    ("record".to_owned(), "CapsLock+S".to_owned()),
+                    ("cancel".to_owned(), "CapsLock+A".to_owned()),
+                    ("copy-region".to_owned(), "CapsLock+Z".to_owned()),
                 ]
                 .into(),
                 locale,
             ),
             None,
         );
+        std::thread::sleep(Duration::from_secs(3));
+        let all = shortcuts::ACTIONS
+            .into_iter()
+            .zip('A'..='K')
+            .map(|((id, _), key)| (id.to_owned(), format!("Ctrl+Alt+{key}")))
+            .collect();
+        overlay.notify_info(shortcuts::summary(&all, locale), None);
         std::thread::sleep(Duration::from_secs(3));
         overlay.hide();
         return;

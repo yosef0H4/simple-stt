@@ -19,7 +19,7 @@ def main():
     assert os.geteuid() != 0, 'Run the installed smoke as an ordinary user'
     assert not os.access(root, os.W_OK), 'Package directory must be root-owned'
     names = ['simple-stt-linux', 'simple-stt-capture', 'simple-stt-infer',
-             'simple-stt-ctl', 'simple-stt-settings', 'linux-fast-paste',
+             'simple-stt-ctl', 'simple-stt-settings', 'simple-stt-settings-window', 'linux-fast-paste',
              'readerd', 'readerctl', 'reader-tts', 'reader-ocr', 'reader-hud']
     for name in names:
         executable = root / name

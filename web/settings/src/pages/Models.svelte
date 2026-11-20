@@ -10,7 +10,6 @@
   import Cleanup from "./Cleanup.svelte";
   import ModelFiles from "../components/ModelFiles.svelte";
   import {loadReading} from "../lib/reading-state.svelte";
-  import ModuleSelection from '../components/ModuleSelection.svelte';
   import Group from '../components/Group.svelte';
   import Help from '../components/Help.svelte';
   import { api } from '../lib/api';

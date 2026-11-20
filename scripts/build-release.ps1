@@ -33,11 +33,11 @@ $env:CARGO_TARGET_DIR = $ResolvedTargetDir
 if (-not $SkipTests) {
     cargo test --workspace --all-targets
 }
-cargo build --release --bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl --bin simple-stt-settings --bin reader-hud
+cargo build --release -p simple-stt -p simple-stt-settings-window --bin simple-stt-capture --bin simple-stt-infer --bin simple-stt-ctl --bin simple-stt-settings --bin simple-stt-settings-window --bin reader-hud
 if ($LASTEXITCODE -ne 0) { throw "Core binary build failed" }
 cargo build --release -p readerd -p readerctl -p reader-tts -p reader-ocr
 if ($LASTEXITCODE -ne 0) { throw "Reader binary build failed" }
-$Expected = @("simple-stt-capture.exe", "simple-stt-infer.exe", "simple-stt-ctl.exe", "simple-stt-settings.exe", "readerd.exe", "readerctl.exe", "reader-tts.exe", "reader-ocr.exe", "reader-hud.exe")
+$Expected = @("simple-stt-capture.exe", "simple-stt-infer.exe", "simple-stt-ctl.exe", "simple-stt-settings.exe", "simple-stt-settings-window.exe", "readerd.exe", "readerctl.exe", "reader-tts.exe", "reader-ocr.exe", "reader-hud.exe")
 foreach ($Name in $Expected) {
     $Path = Join-Path $ResolvedTargetDir "release\$Name"
     if (-not (Test-Path -LiteralPath $Path)) { throw "Expected binary was not built: $Path" }

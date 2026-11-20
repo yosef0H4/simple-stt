@@ -13,7 +13,7 @@ for 31 languages, including Arabic. Automatic text-language routing has a genera
 fallback and optional language overrides. Local OCR uses the bilingual Arabic/
 English PaddleOCR model with a CPU or CUDA ONNX runtime. These inference runtimes and models are optional downloads; the package includes the compressed fastText language-identification model (CC BY-SA 3.0) for automatic text routing. No Python interpreter is needed.
 No source checkout, Cargo, Node.js or Python is needed to run the installed app.
-A browser and a working ALSA/PipeWire audio setup are needed. GPU inference uses the selected runtime and a compatible installed graphics driver. CPU inference is also available inside the runtimes.
+Settings opens in a Tauri window using the package's WebKitGTK dependency. A working ALSA/PipeWire audio setup is needed for dictation and playback. GPU inference uses the selected runtime and a compatible installed graphics driver. CPU inference is also available inside the runtimes.
 
 ## Install
 

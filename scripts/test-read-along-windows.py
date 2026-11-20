@@ -39,17 +39,60 @@ user32.FindWindowW.argtypes = (W.LPCWSTR, W.LPCWSTR)
 user32.FindWindowW.restype = W.HWND
 
 
+def reader_tooltip(executable):
+    """Find a visible tooltip from the isolated reader executable."""
+    kernel = C.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (W.DWORD, W.BOOL, W.DWORD)
+    kernel.OpenProcess.restype = W.HANDLE
+    kernel.QueryFullProcessImageNameW.argtypes = (W.HANDLE, W.DWORD, W.LPWSTR, C.POINTER(W.DWORD))
+    kernel.CloseHandle.argtypes = (W.HANDLE,)
+    callback = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
+    found = []
+
+    @callback
+    def visit(hwnd, _):
+        name = C.create_unicode_buffer(64)
+        if not user32.IsWindowVisible(hwnd) or not user32.GetClassNameW(hwnd, name, len(name)) or name.value != "tooltips_class32":
+            return True
+        pid = W.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, C.byref(pid))
+        process = kernel.OpenProcess(0x1000, False, pid)
+        if process:
+            try:
+                path = C.create_unicode_buffer(1024)
+                size = W.DWORD(len(path))
+                if kernel.QueryFullProcessImageNameW(process, 0, path, C.byref(size)) and Path(path.value) == executable:
+                    found.append(hwnd)
+                    return False
+            finally:
+                kernel.CloseHandle(process)
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return next(iter(found), None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bin-dir", type=Path, default=DEFAULT_BIN)
     parser.add_argument("--recovery", choices=("resume", "next"), default="resume")
     parser.add_argument("--read-screen", action="store_true")
+    parser.add_argument("--feedback", choices=("copy-region", "read-region", "read-selection"),
+                        help="Require a visible reader tooltip while OCR or speech is still blocked")
     parser.add_argument("--fullscreen", action="store_true", help="Use the Windows borderless fullscreen target")
+    parser.add_argument("--require-fullscreen-graphics", action="store_true",
+                        help="Require native fullscreen selection and window capture beneath a covering window")
     parser.add_argument("--prewarm-assets", type=Path, help="Use installed reader assets for a warm-worker test")
     parser.add_argument("--local-read-along", action="store_true", help="Verify local OCR and speech overlapped in Read Along")
     parser.add_argument("--ocr-device", choices=("cpu", "cuda"), default="cpu")
     parser.add_argument("--advance", choices=("sequence", "space"), default="sequence")
+    parser.add_argument("--playback-device", choices=("preferred", "missing"),
+                        help="Check endpoint selection or fallback during model-free speech feedback")
     args = parser.parse_args()
+    if args.require_fullscreen_graphics and (
+        not args.fullscreen or args.feedback != "read-region" or args.prewarm_assets
+    ):
+        parser.error("--require-fullscreen-graphics needs --fullscreen --feedback read-region with mock providers")
     assets = args.prewarm_assets.resolve() if args.prewarm_assets else None
     if args.local_read_along and not assets:
         parser.error("--local-read-along requires --prewarm-assets")
@@ -59,8 +102,25 @@ def main():
     output = ROOT / "artifacts/windows-validation"
     output.mkdir(parents=True, exist_ok=True)
     captures, failures, key_releases, spoken = [], [], [], []
+    ocr_response, speech_response = threading.Event(), threading.Event()
     rejected_pages = {2}
     page = 0
+
+    def page_at(color):
+        palette = [tuple(bytes.fromhex(value[1:])) for value in PAGE_COLORS]
+        if color in palette:
+            return palette.index(color)
+        if args.fullscreen:
+            # HDR conversion can change saturation and brightness. An unrelated
+            # screen, black frame, or different page must still fail the check.
+            if max(color) - min(color) < 64:
+                return None
+            if color[0] > color[1] > color[2] + 15:
+                return 3
+            high = color.index(max(color))
+            if abs(color[(high + 1) % 3] - color[(high + 2) % 3]) <= 4:
+                return high
+        return None
 
     class Fixture(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -82,12 +142,11 @@ def main():
                 with Image.open(io.BytesIO(base64.b64decode(image_url.split(",", 1)[1]))) as image:
                     image = image.convert("RGB")
                     color = image.getpixel((image.width // 2, image.height // 2))
-                palette = [tuple(bytes.fromhex(value[1:])) for value in PAGE_COLORS]
-                if color not in palette:
+                captured_page = page_at(color)
+                if captured_page is None:
                     failures.append(f"unexpected crop pixel {color}")
                     self.send_error(400)
                     return
-                captured_page = palette.index(color)
                 captures.append((captured_page, time.monotonic()))
                 if captured_page in rejected_pages:
                     self.send_error(400, "simulated unreadable page")
@@ -96,21 +155,29 @@ def main():
                     {"choices": [{"message": {"content": PAGE_NAMES[captured_page]}}]}
                 ).encode()
                 content_type = "application/json"
+                if args.feedback:
+                    ocr_response.wait(timeout=15)
             elif self.path.endswith("/audio/speech"):
                 if self.headers.get("Authorization") != "Bearer desktop-tts-fixture":
                     self.send_error(401)
                     return
                 spoken.append(body["input"])
+                if args.feedback:
+                    speech_response.wait(timeout=15)
                 response = bytes(24000 * 2 * DURATION)
                 content_type = "audio/pcm"
             else:
                 self.send_error(404)
                 return
-            self.send_response(200)
-            self.send_header("Content-Type", content_type)
-            self.send_header("Content-Length", str(len(response)))
-            self.end_headers()
-            self.wfile.write(response)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+            except (ConnectionResetError, BrokenPipeError):
+                if args.feedback != "copy-region":
+                    raise
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -186,6 +253,14 @@ def main():
                 capture_output=True, check=True, timeout=10, **options,
             )
             settings = json.loads(defaults.stdout)
+            if args.playback_device == "preferred":
+                devices = subprocess.run([binaries / "readerd.exe", "list-output-devices"],
+                                         capture_output=True, check=True, timeout=5, **options)
+                settings["playback"]["output_device"] = json.loads(devices.stdout)[0]["id"]
+            elif args.playback_device == "missing":
+                settings["playback"]["output_device"] = "wasapi:simple-stt-missing-endpoint-fixture"
+            if args.playback_device or args.require_fullscreen_graphics:
+                settings["privacy"]["log_content"] = True
             base = f"http://127.0.0.1:{server.server_port}/v1"
             settings["speech"].update(provider=dict(kind="open_ai_compatible", base_url=base,
                 model="desktop-tts", voice="fixture", format="pcm"), fallback_to_local=False)
@@ -223,6 +298,28 @@ def main():
             def status():
                 return json.loads(cli("status", "--json").stdout)
 
+            def check_fullscreen_recapture():
+                root = user32.GetAncestor(app.winfo_id(), 2)
+                cover = tk.Toplevel(app, background="magenta")
+                cover.overrideredirect(True)
+                cover.attributes("-topmost", True)
+                cover.geometry(f"220x150+{app.winfo_rootx()+20}+{app.winfo_rooty()+20}")
+                cover.lift()
+                pump(0.12)
+                try:
+                    crop = profile / "occluded-fullscreen-region.png"
+                    subprocess.run(
+                        [binaries / "readerd.exe", "capture-window", str(root), str(os.getpid()),
+                         "40", "40", "120", "90", crop],
+                        capture_output=True, check=True, timeout=5, **options,
+                    )
+                    with Image.open(crop) as screenshot:
+                        assert screenshot.size == (120, 90)
+                        assert page_at(screenshot.convert("RGB").getpixel((60, 45))) == 0
+                finally:
+                    cover.destroy()
+                    app.update()
+
             def next_page():
                 # The Windows reader HUD sends this action through the profile pipe.
                 fingerprint = hashlib.sha256(str(profile.resolve()).lower().encode()).hexdigest()
@@ -236,12 +333,63 @@ def main():
 
             with (output / "desktop-read-along.log").open("wb") as log:
                 daemon = subprocess.Popen(
-                    [binaries / "readerd.exe", "daemon", "--no-desktop"],
+                    [binaries / "readerd.exe", "daemon", *([] if args.feedback else ["--no-desktop"])],
                     stdout=log, stderr=log, **options,
                 )
                 try:
                     pump(0.5)
                     focus_target()
+                    if args.feedback:
+                        frames = status()["audio_callback_frames"]
+                        if args.feedback == "read-selection":
+                            selection = tk.Entry(app)
+                            selection.insert(0, "Selected test text.")
+                            selection.pack()
+                            selection.focus_force()
+                            selection.selection_range(0, tk.END)
+                            app.update()
+                        cli(args.feedback)
+                        if args.feedback != "read-selection":
+                            assert pump(5, picker_ready), "screen picker did not appear"
+                            x, y = app.winfo_rootx(), app.winfo_rooty()
+                            user32.SetCursorPos(x + 48, y + 48)
+                            user32.mouse_event(2, 0, 0, 0, 0)
+                            pump(0.12)
+                            user32.SetCursorPos(x + 530, y + 250)
+                            released = time.monotonic()
+                            user32.mouse_event(4, 0, 0, 0, 0)
+                            phase = "ocr_activity" if args.feedback == "copy-region" else "activity"
+                            assert pump(3, lambda: not picker_ready() and reader_tooltip(binaries / "reader-hud.exe")
+                                        and status()[phase]["phase"] == "recognizing"), status()
+                            print(f"PASS {args.feedback} showed OCR progress {1000*(time.monotonic()-released):.0f} ms after release, before OCR returned", flush=True)
+                            if args.feedback == "copy-region":
+                                # Cancel the private test before it can replace the user's clipboard.
+                                cli("stop")
+                                ocr_response.set()
+                                assert pump(3, lambda: status()["ocr_activity"]["phase"] == "idle"), status()
+                                assert status()["notice_text"] != "Text copied"
+                                return
+                        ocr_response.set()
+                        assert pump(5, lambda: spoken and reader_tooltip(binaries / "reader-hud.exe")
+                                    and status()["activity"]["phase"] in ("loading_voice", "synthesizing")), status()
+                        assert status()["audio_callback_frames"] == frames
+                        speech_response.set()
+                        assert pump(5, lambda: status()["audio_callback_frames"] > frames), status()
+                        if args.playback_device:
+                            expected = ("using preferred playback device" if args.playback_device == "preferred"
+                                        else "preferred playback device unavailable; using system default")
+                            assert pump(3, lambda: expected in (output / "desktop-read-along.log").read_text(encoding="utf-8"))
+                            assert json.loads(config.read_text(encoding="utf-8"))["playback"]["output_device"] == settings["playback"]["output_device"]
+                            print(f"PASS playback device: {expected}, and the saved preference remains", flush=True)
+                        print(f"PASS {args.feedback} showed speech progress before audio arrived", flush=True)
+                        cli("stop")
+                        if args.require_fullscreen_graphics:
+                            assert captures[0][0] == 0
+                            logs = (output / "desktop-read-along.log").read_text(encoding="utf-8")
+                            assert "wgc_picker_capture" in logs, logs
+                            check_fullscreen_recapture()
+                            print("PASS native fullscreen selection and window-specific capture beneath an occluding window", flush=True)
+                        return
                     if assets:
                         def loaded():
                             return [event for event in status()["model_events"] if event["event"] == "loaded"]
@@ -394,6 +542,8 @@ def main():
                     cli("stop")
                 finally:
                     cli("shutdown", check=False)
+                    ocr_response.set()
+                    speech_response.set()
                     try:
                         daemon.wait(timeout=6)
                     except subprocess.TimeoutExpired:

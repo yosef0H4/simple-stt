@@ -1,49 +1,37 @@
-# Read-along capture for games on KDE Wayland
+# Game screen capture on Windows and Linux
 
-Research note for selecting a fixed dialogue-box region once and capturing each
-new page. No commercial game was launched or tested for this note; Ace Attorney
-behavior remains unverified.
+Scope covers Read Screen, OCR Copy, and selecting a dialogue box once for
+Read-along or Repeat. The Windows findings are from source review and API
+documentation. See the recorded KDE fixture result below. Ace Attorney and
+native Windows exclusive fullscreen remain unverified.
 
 ## What the current capture paths do
 
 ### KDE Wayland
 
-Simple STT selects a visible KWin window and stores the selected rectangle in
-that window's logical frame coordinates (`reader/crates/readerd/src/read_along_capture.rs:151-176`).
-The current KWin query uses `workspace.stackingOrder`, filters to the current
-desktop/activity, and returns window IDs and frame geometry
-(`reader/crates/readerd/src/read_along_capture/kde_backend.rs:184-207`).
+Simple STT selects a rectangle, finds the visible KWin window at its center,
+then stores the rectangle relative to that window's logical frame. The KWin
+query uses `workspace.stackingOrder` on the current desktop and activity.
+[Window query](../../reader/crates/readerd/src/read_along_capture/kde_backend.rs#L225-L247),
+[selection](../../reader/crates/readerd/src/read_along_capture/kde_backend.rs#L478-L512),
+[saved target](../../reader/crates/readerd/src/read_along_capture.rs#L196-L211).
 
 For each capture, the backend calls KWin ScreenShot2 `CaptureWindow` with
 `native-resolution=true`, `include-decoration=true`, and
 `include-shadow=false`, then crops the selected region after scaling from KWin
-logical frame dimensions to screenshot pixel dimensions
-(`reader/crates/readerd/src/read_along_capture/kde_backend.rs:294-365`). KWin's
-implementation maps those options to screenshot flags. Its window capture path
-gets the compositor's primary render device, allocates a GL texture/framebuffer,
-renders the requested window scene item, and reads the pixels back
-([option mapping](https://github.com/KDE/kwin/blob/master/src/plugins/screenshot/screenshotdbusinterface2.cpp#L104-L128),
-[window render path](https://github.com/KDE/kwin/blob/master/src/plugins/screenshot/screenshot.cpp#L192-L253)).
-That is a compositor-rendered *window* capture, rather than a crop from the
-visible desktop image. The KWin implementation derives image size from the
-window's target scale; it does not special-case the `native-resolution` flag in
-the window-specific render function.
+logical frame dimensions to screenshot pixel dimensions.
+The compositor uses the window's target scale and renders its scene item into
+an offscreen buffer. This is a window capture and can exclude overlapping
+windows. [Simple STT capture](../../reader/crates/readerd/src/read_along_capture/kde_backend.rs#L335-L419),
+[KWin window rendering](https://github.com/KDE/kwin/blob/master/src/plugins/screenshot/screenshot.cpp#L192-L281).
 
-This design is a good fit for a fullscreen game whose dialogue is part of a
-KWin-managed window surface: it avoids unrelated windows covering the selected
-dialogue region in the screenshot. It also avoids relying on a game's own
-`WM_PRINT` handler. This is an inference from the render path, not an Ace
-Attorney test result.
-
-**Fullscreen/direct-scanout limit:** KWin's source proves that ScreenShot2
-attempts to render the selected scene item into an offscreen GL target. It does
-not establish that every Vulkan/OpenGL/Proton surface remains capturable during
-every direct-scanout, Gamescope, protected-content, driver, or compositor state.
-The game's presented surface must be represented by a renderable KWin window
-item for this path to succeed. KWin logs and a real capture of the specific
-game are needed to distinguish an unsupported surface from a bad window/region
-selection. A Gamescope session is a different compositor and is outside this
-KWin backend.
+Wayland compositors can scan out a fullscreen client's buffer directly. KWin
+still needs a renderable window item for its screenshot path, and that path
+honors windows excluded from capture. The practical inference is that KDE has
+a suitable API for fullscreen games it manages. Vulkan, Proton, direct-scanout
+states, and separate Gamescope sessions need their own checks.
+[Wayland compositor model](https://wayland.freedesktop.org/docs/book/Compositors.html),
+[KWin window rendering](https://github.com/KDE/kwin/blob/master/src/plugins/screenshot/screenshot.cpp#L192-L281).
 
 Keyboard advancement uses a keyboard-only XDG RemoteDesktop portal session;
 the portal requires permission, and Simple STT checks the selected KWin window
@@ -55,34 +43,55 @@ background-window message API. Page-turn input can work with a fullscreen game
 without clicking the dialogue box, provided the game retains keyboard focus
 and its own controls advance dialogue with the configured key.
 
-### Windows capture path
+### Other Linux desktops
 
-The current Windows helper is **not a BitBlt implementation**. It calls
-`PrintWindow(hwnd, dc, 2)` (`reader/assets/windows-read-along.ps1:25,52-67`).
-Microsoft documents `PrintWindow` as asking the window-owning application to
-render itself into a supplied DC via `WM_PRINT` or `WM_PRINTCLIENT`
-([PrintWindow](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-printwindow)).
-That contract depends on the target application handling that request; a
-successful call is not a documented guarantee that a custom GPU swapchain has
-been drawn into the DC. For a game, a blank or incomplete result is therefore
-plausible, but not universal.
+On X11, Simple STT binds a window but reads the selected pixels from the root
+drawable through `GetImage`. Overlap can therefore change which pixels appear
+in the region. Outside KDE on Wayland, one-off Read Screen and OCR Copy use
+Lumine when installed and fall back to the interactive Screenshot portal.
+Saving a target for Repeat and Read-along needs a window-bound backend. A
+future portable Wayland approach could request a ScreenCast window stream
+where the portal backend offers one, then crop the authorized PipeWire stream.
+[X11 capture](../../reader/crates/readerd/src/read_along_capture/linux_backend.rs#L135-L165),
+[desktop support](../../reader/crates/readerd/src/read_along_capture.rs#L174-L194),
+[one-off capture](../../reader/crates/readerd/src/region_capture.rs#L38-L69),
+[XDG Screenshot](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.Screenshot.html),
+[XDG ScreenCast](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html).
 
-`BitBlt` is a separate GDI operation. Microsoft documents that `CAPTUREBLT`
-includes layered windows above the source window, and that the source DC
-determines copied color data
-([BitBlt](https://learn.microsoft.com/en-us/windows/desktop/api/wingdi/nf-wingdi-bitblt)).
-That is not an API guarantee for all full-screen GPU swapchains. Do not describe
-the current helper as failing because it uses BitBlt; it does not.
+### Windows
 
-Microsoft's Desktop Duplication API is more explicit about games: it does not
-depend on the app's graphics API and can duplicate full-screen DirectX apps, but
-protected video content is protected against access
-([Desktop Duplication](https://learn.microsoft.com/en-us/windows-hardware/drivers/display/desktop-duplication-api)).
-Windows.Graphics.Capture has a supported window/display capture model with a
-system picker and active-capture border
-([screen capture](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture)).
-Those APIs are Windows alternatives, not evidence that GDI or KWin capture is
-universally broken.
+The picker freezes a frame before showing its window. It captures a fullscreen
+foreground window by HWND and remembers its identity and bounds before the game
+can lose focus. The picker draws from that captured frame and translates the
+selection back to the original pixels if the display mode changes.
+[Windows picker](../../reader/crates/readerd/src/read_along_capture/windows_picker.rs)
+
+Windows Graphics Capture supplies the same frame pipeline for a single-monitor
+preview and saved-window capture. Short-lived helper processes keep a capture
+failure from stopping the reader. Windows 10 version 1903 added the Win32 window
+and monitor targeting APIs. Capturing by window keeps a covering app out of
+Repeat and Read Along. GDI covers a virtual desktop spanning several monitors
+and serves as a compatibility fallback. A monitor-based fullscreen recapture
+requires the original game to be foreground and its selected region uncovered.
+[Frame pipeline](../../reader/crates/readerd/src/read_along_capture/windows_graphics.rs),
+[Windows Graphics Capture](https://learn.microsoft.com/en-us/windows/apps/develop/media-authoring-processing/screen-capture),
+[CreateForWindow](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createforwindow),
+[CreateForMonitor](https://learn.microsoft.com/en-us/windows/win32/api/windows.graphics.capture.interop/nf-windows-graphics-capture-interop-igraphicscaptureiteminterop-createformonitor)
+
+A game in true exclusive fullscreen can lose focus or minimize when a desktop
+picker appears. Borderless fullscreen allows the compositor to draw overlays
+and remains the workaround for a game that prevents capture or restores
+exclusive presentation while the picker is open. Windows Fullscreen
+Optimizations can present a game that requests exclusive mode through an
+optimized borderless path.
+[Microsoft Fullscreen Optimizations](https://devblogs.microsoft.com/directx/demystifying-full-screen-optimizations/)
+
+The test fixture exercises region capture before OCR, then verifies a saved
+region under a covering window. Run it with mock OCR and speech using
+`python scripts/test-read-along-windows.py --fullscreen --feedback read-region --require-fullscreen-graphics`.
+A Direct3D test window can also request exclusive mode. Test actual games
+separately because Direct3D's reported swap chain state does not rule out
+Fullscreen Optimizations.
 
 ## Game-reading application references
 
@@ -106,6 +115,19 @@ after input/render delay, and avoid speaking duplicate OCR—but their documente
 Windows capture methods do not prove GPU capture works for every game.
 
 ## Practical next validation
+
+On Windows, `python scripts/test-read-along-windows.py --read-screen` and its
+`--fullscreen` variant exercise the picker on a private Tk window, including
+startup time, cancellation, and whether the OCR crop comes from the frozen
+preview. Add a GPU-presenting fixture with separate borderless and true
+exclusive modes for the capture change. Start from the game hotkey, inspect
+the preview and OCR a known line, then refocus the same game and verify that
+Repeat reads the changed line. Test a second monitor and a focus change during
+selection or before advancing. Require the selected game crop or a clear
+failure, with no OCR or key sent to the competing window. Compare hotkey-to-
+preview latency against the current ordinary-window baseline.
+[Windows test contract](../testing.md#recorded-actions),
+[Windows harness](../../scripts/test-read-along-windows.py#L78-L86).
 
 The user-facing workflow can remain: focus the game, select the dialogue box
 once, then read one page and advance with the configured key. For a bounded

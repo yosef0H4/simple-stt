@@ -22,6 +22,8 @@ export default defineConfig({
   },
   build: {
     target: "es2022",
+    // Settings ships a single script with no chunks to preload.
+    modulePreload: false,
     cssCodeSplit: false,
     assetsInlineLimit: 0,
     rolldownOptions: {

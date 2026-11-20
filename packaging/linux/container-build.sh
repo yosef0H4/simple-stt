@@ -23,8 +23,9 @@ grep -q atspi_ "$work/linux-fast-paste.symbols"
 grep -q g_dbus_ "$work/linux-fast-paste.symbols"
 ! grep -q XTestFakeKeyEvent "$work/linux-fast-paste.symbols"
 cargo +1.99.0 build --release --locked --jobs "${CARGO_BUILD_JOBS:-2}" \
+  -p simple-stt -p simple-stt-settings-window \
   --bin simple-stt-linux --bin simple-stt-capture --bin simple-stt-infer \
-  --bin simple-stt-ctl --bin simple-stt-settings --bin reader-hud
+  --bin simple-stt-ctl --bin simple-stt-settings --bin simple-stt-settings-window --bin reader-hud
 cargo +1.99.0 build --release --locked --jobs "${CARGO_BUILD_JOBS:-2}" \
   -p readerd -p readerctl -p reader-tts -p reader-ocr
 
@@ -36,7 +37,7 @@ mkdir -p "$stage/usr/bin" "$app" \
   "$stage/usr/lib/systemd/user" "$stage/usr/share/licenses/simple-stt"
 install -m 0755 packaging/linux/simple-stt "$stage/usr/bin/simple-stt"
 ln -s ../lib/simple-stt/simple-stt-ctl "$stage/usr/bin/simple-stt-ctl"
-for binary in simple-stt-linux simple-stt-capture simple-stt-infer simple-stt-ctl simple-stt-settings readerd readerctl reader-tts reader-ocr reader-hud; do
+for binary in simple-stt-linux simple-stt-capture simple-stt-infer simple-stt-ctl simple-stt-settings simple-stt-settings-window readerd readerctl reader-tts reader-ocr reader-hud; do
   install -m 0755 "$CARGO_TARGET_DIR/release/$binary" "$app/$binary"
 done
 install -m 0755 resources/bin/linux-fast-paste "$app/linux-fast-paste"
@@ -56,6 +57,7 @@ install -m 0644 assets/language/LICENSE-CC-BY-SA-3.0.txt "$stage/usr/share/licen
 install -m 0644 assets/language/ATTRIBUTION.md "$stage/usr/share/licenses/simple-stt/fastText-ATTRIBUTION.md"
 install -m 0644 assets/fonts/LICENSE-JetBrainsMono.txt "$stage/usr/share/licenses/simple-stt/OFL-JetBrainsMono.txt"
 install -m 0644 assets/fonts/LICENSE-NotoSansArabic.txt "$stage/usr/share/licenses/simple-stt/OFL-NotoSansArabic.txt"
+install -m 0644 web/settings/public/settings-sans-license.txt "$stage/usr/share/licenses/simple-stt/"
 printf 'Installed runtime root; models use the per-user data directory.\n' > "$app/linux-installation"
 if [[ "$distro" == fedora ]]; then
   topdir="$work/rpmbuild"

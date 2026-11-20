@@ -3,6 +3,9 @@ use anyhow::Result;
 use simple_stt::capture::overlay::OverlayHandle;
 use std::time::{Duration, Instant};
 fn main() -> Result<()> {
+    #[cfg(windows)]
+    let overlay = OverlayHandle::spawn_reader()?;
+    #[cfg(not(windows))]
     let overlay = OverlayHandle::spawn()?;
     let config = simple_stt::config::AppConfig::load()?;
     overlay.set_locale(simple_stt::localization::resolve(

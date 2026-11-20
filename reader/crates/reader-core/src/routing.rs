@@ -90,16 +90,12 @@ impl Connection {
 pub struct RemoteRoute {
     pub enabled: bool,
     pub primary: Connection,
-    pub fallback: Option<Connection>,
     pub fallback_to_local: bool,
 }
 impl RemoteRoute {
     pub fn validate(&self, feature: Feature) -> Result<()> {
         if self.enabled {
             self.primary.validate(feature)?;
-            if let Some(fallback) = &self.fallback {
-                fallback.validate(feature)?;
-            }
         }
         Ok(())
     }
@@ -428,14 +424,12 @@ impl crate::AppConfig {
                 provider: self.speech.provider.clone(),
                 key_slot: self.speech.key_slot.clone(),
                 use_feature_key: self.speech.use_feature_key,
-                fallback: self.speech.remote_fallback.clone(),
                 fallback_to_local: self.speech.fallback_to_local,
             }
         });
         config.speech.provider = defaults.provider.clone();
         config.speech.key_slot = defaults.key_slot.clone();
         config.speech.use_feature_key = defaults.use_feature_key;
-        config.speech.remote_fallback = defaults.fallback.clone();
         config.speech.fallback_to_local = defaults.fallback_to_local;
         config.speech.route_defaults = Some(defaults);
         let binding = self.speech.selection.binding(language);
@@ -453,7 +447,6 @@ impl crate::AppConfig {
                     };
                     config.speech.key_slot = remote.primary.key_slot.clone();
                     config.speech.use_feature_key = false;
-                    config.speech.remote_fallback = remote.fallback.clone();
                     config.speech.fallback_to_local = remote.fallback_to_local;
                 } else {
                     config.speech.provider = crate::SpeechProvider::LocalKokoro;
@@ -505,7 +498,6 @@ impl crate::AppConfig {
             {
                 let (runtime, model) = resolve(&self.speech.selection, feature, language, &assets)?;
                 config.speech.key_slot = None;
-                config.speech.remote_fallback = None;
                 config.speech.runtime_dir =
                     assets.join(runtime.asset.context("Speech runtime has no asset")?);
                 config.speech.model_dir = assets.join(model.asset);
@@ -566,6 +558,28 @@ impl crate::AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_secondary_endpoints_are_ignored_without_changing_local_fallback() {
+        let mut json = serde_json::to_value(crate::AppConfig::default()).unwrap();
+        json["speech"]["remote_fallback"] = serde_json::json!({"base_url":"invalid"});
+        json["speech"]["selection"]["languages"]["ar"] = serde_json::json!({
+            "remote": {
+                "enabled": true,
+                "primary": {"base_url":"https://primary.example/v1", "model":"speech"},
+                "fallback": {"base_url":"invalid"},
+                "fallback_to_local": true
+            }
+        });
+        let config: crate::AppConfig = serde_json::from_value(json).unwrap();
+        config.validate().unwrap();
+        let canonical = serde_json::to_value(config).unwrap();
+        assert!(canonical["speech"].get("remote_fallback").is_none());
+        let route = &canonical["speech"]["selection"]["languages"]["ar"]["remote"];
+        assert!(route.get("fallback").is_none());
+        assert_eq!(route["primary"]["base_url"], "https://primary.example/v1");
+        assert_eq!(route["fallback_to_local"], true);
+    }
     #[test]
     fn local_language_routing_selects_independent_remote_models_voices_and_keys() {
         let mut config = crate::AppConfig::default();
@@ -583,12 +597,6 @@ mod tests {
                             key_slot: Some(format!("tts.{language}.primary")),
                             ..Default::default()
                         },
-                        fallback: Some(Connection {
-                            base_url: format!("https://{language}-backup.example/v1"),
-                            model: "backup".into(),
-                            key_slot: Some(format!("tts.{language}.fallback")),
-                            ..Default::default()
-                        }),
                         fallback_to_local: false,
                     }),
                     ..Default::default()
@@ -601,15 +609,6 @@ mod tests {
         assert_eq!(ar.speech.key_slot.as_deref(), Some("tts.ar.primary"));
         assert_eq!(en.speech.key_slot.as_deref(), Some("tts.en.primary"));
         assert!(!en.speech.use_feature_key);
-        assert_eq!(
-            ar.speech
-                .remote_fallback
-                .as_ref()
-                .unwrap()
-                .key_slot
-                .as_deref(),
-            Some("tts.ar.fallback")
-        );
         match en.speech.provider {
             crate::SpeechProvider::OpenAiCompatible {
                 model,

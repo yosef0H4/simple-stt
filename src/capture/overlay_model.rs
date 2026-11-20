@@ -161,8 +161,8 @@ pub fn render_overlay_text_with_locale(
     }
 }
 
-// Common Controls draws plain text. Strip decorative prefixes at the Windows
-// boundary so status labels and the user's passage stay readable.
+// Common Controls draws plain text. Keep shortcut rows and the recording
+// marker while stripping decorative prefixes from status and passage text.
 pub fn native_tooltip_text(text: &str, locale: Locale, primary: OverlayPrimary) -> String {
     use crate::localization::translate;
     fn unsupported_control(ch: char) -> bool {
@@ -170,12 +170,29 @@ pub fn native_tooltip_text(text: &str, locale: Locale, primary: OverlayPrimary) 
     }
 
     let mut result = String::with_capacity(text.len());
-    for (index, line) in text.split(['\n', '\t']).enumerate() {
-        let line = line.trim().trim_start_matches(unsupported_control);
+    for (index, line) in text.lines().enumerate() {
+        let line = line.trim();
+        let row = line
+            .strip_prefix('\u{2066}')
+            .and_then(|row| row.strip_suffix('\u{2069}'))
+            .unwrap_or(line);
+        if row.contains(" \u{2066}[") && row.ends_with("]\u{2069}") {
+            if locale == Locale::Ar {
+                // The native control uses a right-to-left base direction in Arabic.
+                result.push('\u{202a}');
+            }
+            result.push_str(&row.replace(unsupported_control, "").replace('\t', "   "));
+            if locale == Locale::Ar {
+                result.push('\u{202c}');
+            }
+            result.push('\n');
+            continue;
+        }
+        let line = line.trim_start_matches(unsupported_control);
         let body = if let Some((prefix, rest)) = line.split_once(' ') {
             match prefix.trim_end_matches('\u{fe0f}') {
                 "🎙" if index == 0 && primary == OverlayPrimary::Recording => {
-                    result.push_str(&translate(locale, "shortcut.record", &[]));
+                    result.push('🎙');
                     result.push(' ');
                     result.push_str(
                         &rest
@@ -199,7 +216,11 @@ pub fn native_tooltip_text(text: &str, locale: Locale, primary: OverlayPrimary) 
         } else {
             line
         };
-        result.extend(body.chars().filter(|ch| !unsupported_control(*ch)));
+        result.extend(
+            body.chars()
+                .filter(|ch| !unsupported_control(*ch))
+                .map(|ch| if ch == '\t' { '\n' } else { ch }),
+        );
         result.push('\n');
     }
     result.trim_end().to_owned()
@@ -293,11 +314,7 @@ mod tests {
     #[test]
     fn native_tooltip_uses_readable_labels() {
         let cases = [
-            (
-                "🎙 🤖 📷 ▁▂▃",
-                OverlayPrimary::Recording,
-                "Record AI Screen ▁▂▃",
-            ),
+            ("🎙 🤖 📷 ▁▂▃", OverlayPrimary::Recording, "🎙 AI Screen ▁▂▃"),
             (
                 "🎙 Transcribing...",
                 OverlayPrimary::Transcribing,
@@ -325,6 +342,28 @@ mod tests {
             ),
             "نص Simple STT"
         );
+    }
+
+    #[test]
+    fn native_tooltip_keeps_emoji_shortcuts_in_compact_rows() {
+        let bindings = [
+            ("record".to_owned(), "CapsLock+S".to_owned()),
+            ("cancel".to_owned(), "CapsLock+A".to_owned()),
+            ("copy-region".to_owned(), "CapsLock+Z".to_owned()),
+        ]
+        .into();
+        for locale in [Locale::En, Locale::Ar] {
+            let shortcuts = crate::shortcuts::summary(&bindings, locale);
+            let text = native_tooltip_text(&shortcuts, locale, OverlayPrimary::Hidden);
+            let rows: Vec<_> = text
+                .lines()
+                .map(|line| line.trim_matches(['\u{202a}', '\u{202c}']))
+                .collect();
+            assert_eq!(
+                rows,
+                ["🔴 [CapsLock][S]   ❌ [CapsLock][A]", "📋 [CapsLock][Z]"]
+            );
+        }
     }
 
     #[test]
